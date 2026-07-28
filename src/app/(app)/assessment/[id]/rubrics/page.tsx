@@ -1,0 +1,269 @@
+'use client';
+
+import { useState } from 'react';
+import { useThemeColors } from '@/theme/ThemeProvider';
+import { Badge, Button, Card, Chip, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
+import { PlanGate } from '@/components/PlanGate';
+import { useTryoutQuery, useUpdateTryoutMutation } from '@/features/queries';
+import { useAssessmentId } from '@/features/useAssessmentId';
+import { useUser } from '@/state/authStore';
+import { getPlanDefinition } from '@/data/plans';
+import type { ScoringType, RankingDirection } from '@/data/types';
+
+export default function RubricsPage() {
+  const id = useAssessmentId();
+  const colors = useThemeColors();
+  const { alert } = useAlert();
+  const user = useUser();
+  const tryoutQuery = useTryoutQuery(id);
+  const updateTryout = useUpdateTryoutMutation();
+
+  const [role, setRole] = useState<'skater' | 'goalie' | 'all'>('skater');
+  const [label, setLabel] = useState('');
+  const [scoringType, setScoringType] = useState<ScoringType>('skill');
+  const [scale, setScale] = useState<'1-5' | '1-10'>('1-5');
+  const [unit, setUnit] = useState('');
+  const [minValStr, setMinValStr] = useState('');
+  const [maxValStr, setMaxValStr] = useState('');
+
+  if (tryoutQuery.isLoading || !id) return <LoadingState message="Loading rubrics..." />;
+  if (tryoutQuery.isError || !tryoutQuery.data) {
+    return <ErrorState message="Could not load rubrics." onRetry={() => tryoutQuery.refetch()} />;
+  }
+
+  const tryout = tryoutQuery.data;
+  const custom = tryout.settings.customRubrics ?? [];
+  const plan = getPlanDefinition(user?.planTier ?? 'free');
+  const customLimit = plan.limits.customRubrics;
+  const atCustomLimit = customLimit !== 'unlimited' && custom.length >= (customLimit as number);
+
+  const addCustom = async () => {
+    if (!label.trim() || atCustomLimit) return;
+    const key = label.trim().toLowerCase().replace(/\s+/g, '_');
+
+    let rankingDirection: RankingDirection = 'higher_is_better';
+    let defaultUnit = unit.trim();
+
+    if (scoringType === 'time') {
+      rankingDirection = 'lower_is_better';
+      if (!defaultUnit) defaultUnit = 'sec';
+    } else if (scoringType === 'distance') {
+      if (!defaultUnit) defaultUnit = 'ft';
+    } else if (scoringType === 'speed') {
+      if (!defaultUnit) defaultUnit = 'mph';
+    }
+
+    const minNum = minValStr.trim() !== '' ? parseFloat(minValStr) : undefined;
+    const maxNum = maxValStr.trim() !== '' ? parseFloat(maxValStr) : undefined;
+
+    const next = [
+      ...custom,
+      {
+        key,
+        label: label.trim(),
+        scoringType,
+        scale: scoringType === 'skill' ? scale : ('1-5' as const),
+        unit: scoringType !== 'skill' ? defaultUnit : undefined,
+        minVal: minNum != null && !isNaN(minNum) ? minNum : undefined,
+        maxVal: maxNum != null && !isNaN(maxNum) ? maxNum : undefined,
+        rankingDirection,
+        role,
+      },
+    ];
+
+    await updateTryout.mutateAsync({
+      id: tryout.id,
+      updates: { settings: { ...tryout.settings, customRubrics: next } },
+    });
+
+    setLabel('');
+    setUnit('');
+    setMinValStr('');
+    setMaxValStr('');
+  };
+
+  const removeCustom = async (keyToRemove: string) => {
+    const next = custom.filter((r) => r.key !== keyToRemove);
+    const nextSkaterWeights = { ...tryout.settings.skaterWeights };
+    const nextGoalieWeights = { ...tryout.settings.goalieWeights };
+    delete nextSkaterWeights[keyToRemove];
+    delete nextGoalieWeights[keyToRemove];
+
+    try {
+      await updateTryout.mutateAsync({
+        id: tryout.id,
+        updates: {
+          settings: {
+            ...tryout.settings,
+            customRubrics: next,
+            skaterWeights: nextSkaterWeights,
+            goalieWeights: nextGoalieWeights,
+          },
+        },
+      });
+      await alert('Success', 'Custom rubric removed successfully.');
+    } catch (err) {
+      await alert('Error', err instanceof Error ? err.message : 'Failed to remove custom rubric.');
+    }
+  };
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <div className="flex flex-col gap-5">
+        <Card accent className="flex flex-col gap-2">
+          <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+            Custom Rubric Builder
+          </span>
+          <span style={{ color: colors.inkMuted }}>
+            All rubrics are fully custom. Define drill categories, metric units, and min/max score benchmarks.
+          </span>
+        </Card>
+
+        <Card className="flex flex-col gap-3">
+          <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+            Created Rubrics ({custom.length}
+            {customLimit !== 'unlimited' ? ` / ${customLimit}` : ''})
+          </span>
+
+          {custom.map((r) => {
+            const typeLabel = r.scoringType ?? 'skill';
+            const ruleText = r.rankingDirection === 'lower_is_better' ? 'Shortest wins' : 'Highest wins';
+            let details =
+              r.scoringType === 'skill' || !r.scoringType
+                ? `${r.scale ?? '1-5'} scale`
+                : `${r.unit ?? ''} (${ruleText})`;
+            if (r.minVal != null && r.maxVal != null) details += ` · Range: ${r.minVal} to ${r.maxVal}`;
+
+            return (
+              <div
+                key={r.key}
+                className="flex items-center justify-between gap-2 border-b py-2"
+                style={{ borderColor: colors.border }}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base font-bold" style={{ color: colors.ink }}>
+                      {r.label}
+                    </span>
+                    <Badge label={typeLabel.toUpperCase()} variant="brand" />
+                    <Badge label={r.role ?? 'all'} />
+                  </div>
+                  <p className="text-xs" style={{ color: colors.inkMuted }}>
+                    {details}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeCustom(r.key)}
+                  aria-label={`Remove ${r.label}`}
+                  className="px-2 text-xl font-bold"
+                  style={{ color: colors.danger }}
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+
+          {custom.length === 0 ? (
+            <p style={{ color: colors.inkMuted }}>
+              No custom rubrics added yet. Use the builder to add drills &amp; categories.
+            </p>
+          ) : null}
+        </Card>
+      </div>
+
+      <PlanGate feature="customRubrics" title="Custom Rubrics (Coach+)">
+        <Card accent className="flex flex-col gap-4">
+          <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+            Add Custom Drill / Category
+          </span>
+
+          <div>
+            <SectionLabel className="mb-2">1. Role</SectionLabel>
+            <div className="flex flex-wrap gap-2">
+              <Chip label="Skater" active={role === 'skater'} onClick={() => setRole('skater')} />
+              <Chip label="Goalie" active={role === 'goalie'} onClick={() => setRole('goalie')} />
+              <Chip label="All Players" active={role === 'all'} onClick={() => setRole('all')} />
+            </div>
+          </div>
+
+          <Input
+            label="2. Drill / Category Name"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. 40-Yard Dash, Long Throw, Shot Speed"
+          />
+
+          <div>
+            <SectionLabel className="mb-2">3. Scoring Type</SectionLabel>
+            <div className="flex flex-wrap gap-2">
+              <Chip label="Skill / Technique" active={scoringType === 'skill'} onClick={() => setScoringType('skill')} />
+              <Chip label="Time-based" active={scoringType === 'time'} onClick={() => setScoringType('time')} />
+              <Chip label="Distance-based" active={scoringType === 'distance'} onClick={() => setScoringType('distance')} />
+              <Chip label="Speed-based" active={scoringType === 'speed'} onClick={() => setScoringType('speed')} />
+            </div>
+          </div>
+
+          {scoringType === 'skill' ? (
+            <div className="flex flex-col gap-2">
+              <SectionLabel>4. Scale Choice</SectionLabel>
+              <div className="flex flex-wrap gap-2">
+                <Chip label="1-5 Scale" active={scale === '1-5'} onClick={() => setScale('1-5')} />
+                <Chip label="1-10 Scale" active={scale === '1-10'} onClick={() => setScale('1-10')} />
+              </div>
+              <p className="text-xs italic" style={{ color: colors.inkMuted }}>
+                Ranking Rule: Highest number = highest rank (Score 5)
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <Input
+                label="4. Unit Label (Optional)"
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                placeholder={
+                  scoringType === 'time' ? 'sec (default)' : scoringType === 'speed' ? 'mph (default)' : 'ft (default)'
+                }
+              />
+
+              <SectionLabel className="mt-1">5. Score Range Benchmarks (Min &amp; Max)</SectionLabel>
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  label="Min Value"
+                  value={minValStr}
+                  onChange={(e) => setMinValStr(e.target.value)}
+                  inputMode="decimal"
+                  placeholder={scoringType === 'time' ? '12 (Best)' : '5 (Worst)'}
+                />
+                <Input
+                  label="Max Value"
+                  value={maxValStr}
+                  onChange={(e) => setMaxValStr(e.target.value)}
+                  inputMode="decimal"
+                  placeholder={scoringType === 'time' ? '25 (Worst)' : '25 (Best)'}
+                />
+              </div>
+
+              <p className="text-xs font-bold italic" style={{ color: colors.primary }}>
+                Interpolation Rule:{' '}
+                {scoringType === 'time'
+                  ? `Min (${minValStr || '12'}) = Score 5.0 · Max (${maxValStr || '25'}) = Score 1.0 (Shortest time wins)`
+                  : scoringType === 'distance'
+                    ? `Min (${minValStr || '5'}) = Score 1.0 · Max (${maxValStr || '25'}) = Score 5.0 (Largest distance wins)`
+                    : `Min (${minValStr || '10'}) = Score 1.0 · Max (${maxValStr || '60'}) = Score 5.0 (Fastest speed wins)`}
+              </p>
+            </div>
+          )}
+
+          <Button
+            label="Add Rubric Category"
+            onClick={addCustom}
+            loading={updateTryout.isPending}
+            disabled={atCustomLimit || !label.trim()}
+          />
+        </Card>
+      </PlanGate>
+    </div>
+  );
+}

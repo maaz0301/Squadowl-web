@@ -1,0 +1,122 @@
+'use client';
+
+import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { cn } from '@/lib/cn';
+import { useThemeColors } from '@/theme/ThemeProvider';
+import { Button } from './Button';
+
+interface ModalProps {
+  visible: boolean;
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  /** Wider shell for tables and multi-column forms. */
+  size?: 'sm' | 'md' | 'lg';
+  /** Omit the default "Close" footer button. */
+  hideDefaultFooter?: boolean;
+}
+
+const widths: Record<NonNullable<ModalProps['size']>, string> = {
+  sm: 'max-w-md',
+  md: 'max-w-xl',
+  lg: 'max-w-3xl',
+};
+
+export function Modal({
+  visible,
+  title,
+  onClose,
+  children,
+  footer,
+  size = 'md',
+  hideDefaultFooter,
+}: ModalProps) {
+  const colors = useThemeColors();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [visible, onClose]);
+
+  if (!mounted || !visible) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
+      style={{ backgroundColor: colors.overlay, animation: 'aas-fade-in 0.15s ease-out' }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={cn(
+          'flex max-h-[92vh] w-full flex-col rounded-t-3xl border sm:rounded-2xl',
+          widths[size],
+        )}
+        style={{
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+          animation: 'aas-rise 0.18s ease-out',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
+        }}
+      >
+        <div
+          className="flex items-center justify-between gap-4 border-b px-5 py-4"
+          style={{ borderColor: colors.border }}
+        >
+          <h2
+            className="text-lg font-bold"
+            style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+          >
+            {title}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-xl leading-none transition-colors hover:brightness-125"
+            style={{ backgroundColor: colors.tile, color: colors.inkMuted }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+
+        {footer ?? (hideDefaultFooter ? null : (
+          <div className="border-t px-5 py-4" style={{ borderColor: colors.border }}>
+            <Button label="Close" variant="secondary" fullWidth onClick={onClose} />
+          </div>
+        ))}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** Footer helper so screens don't repeat the border/padding wrapper. */
+export function ModalFooter({ children }: { children: ReactNode }) {
+  const colors = useThemeColors();
+  return (
+    <div className="flex flex-wrap justify-end gap-2 border-t px-5 py-4" style={{ borderColor: colors.border }}>
+      {children}
+    </div>
+  );
+}
