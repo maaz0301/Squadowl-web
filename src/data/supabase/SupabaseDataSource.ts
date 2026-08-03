@@ -884,6 +884,32 @@ export class SupabaseDataSource implements DataSource {
       joined_at: new Date().toISOString(),
     });
 
+    // When the assessment is created inside a team, auto-import the team's
+    // roster so the coach doesn't have to re-add every player manually.
+    if (form.teamId) {
+      try {
+        const teamRosterRows = unwrap(
+          await supabase
+            .from('team_roster')
+            .select('athlete_id, jersey, position')
+            .eq('team_id', form.teamId),
+        ) as Row[];
+
+        if (teamRosterRows.length > 0) {
+          const participants = teamRosterRows.map((r) => ({
+            tryout_id: row.id,
+            athlete_id: r.athlete_id,
+            jersey: r.jersey ?? null,
+            position: r.position ?? null,
+            registration_source: 'manual' as const,
+          }));
+          await supabase.from('tryout_participants').insert(participants);
+        }
+      } catch {
+        // Non-fatal: the assessment is created, the coach can add players later.
+      }
+    }
+
     await this.markOnboarding({ createAssessment: true });
     const [assembled] = await this.assembleTryouts([row]);
     return assembled;

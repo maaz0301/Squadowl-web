@@ -18,13 +18,22 @@ export default function RubricsPage() {
   const tryoutQuery = useTryoutQuery(id);
   const updateTryout = useUpdateTryoutMutation();
 
-  const [role, setRole] = useState<'skater' | 'goalie' | 'all'>('skater');
   const [label, setLabel] = useState('');
   const [scoringType, setScoringType] = useState<ScoringType>('skill');
   const [scale, setScale] = useState<'1-5' | '1-10'>('1-5');
   const [unit, setUnit] = useState('');
   const [minValStr, setMinValStr] = useState('');
   const [maxValStr, setMaxValStr] = useState('');
+  const [rankingDirection, setRankingDirection] = useState<RankingDirection>('higher_is_better');
+
+  const handleScoringTypeChange = (type: ScoringType) => {
+    setScoringType(type);
+    if (type === 'time') {
+      setRankingDirection('lower_is_better');
+    } else {
+      setRankingDirection('higher_is_better');
+    }
+  };
 
   if (tryoutQuery.isLoading || !id) return <LoadingState message="Loading rubrics..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -41,11 +50,9 @@ export default function RubricsPage() {
     if (!label.trim() || atCustomLimit) return;
     const key = label.trim().toLowerCase().replace(/\s+/g, '_');
 
-    let rankingDirection: RankingDirection = 'higher_is_better';
     let defaultUnit = unit.trim();
 
     if (scoringType === 'time') {
-      rankingDirection = 'lower_is_better';
       if (!defaultUnit) defaultUnit = 'sec';
     } else if (scoringType === 'distance') {
       if (!defaultUnit) defaultUnit = 'ft';
@@ -67,7 +74,6 @@ export default function RubricsPage() {
         minVal: minNum != null && !isNaN(minNum) ? minNum : undefined,
         maxVal: maxNum != null && !isNaN(maxNum) ? maxNum : undefined,
         rankingDirection,
-        role,
       },
     ];
 
@@ -146,7 +152,6 @@ export default function RubricsPage() {
                       {r.label}
                     </span>
                     <Badge label={typeLabel.toUpperCase()} variant="brand" />
-                    <Badge label={r.role ?? 'all'} />
                   </div>
                   <p className="text-xs" style={{ color: colors.inkMuted }}>
                     {details}
@@ -179,35 +184,26 @@ export default function RubricsPage() {
             Add Custom Drill / Category
           </span>
 
-          <div>
-            <SectionLabel className="mb-2">1. Role</SectionLabel>
-            <div className="flex flex-wrap gap-2">
-              <Chip label="Skater" active={role === 'skater'} onClick={() => setRole('skater')} />
-              <Chip label="Goalie" active={role === 'goalie'} onClick={() => setRole('goalie')} />
-              <Chip label="All Players" active={role === 'all'} onClick={() => setRole('all')} />
-            </div>
-          </div>
-
           <Input
-            label="2. Drill / Category Name"
+            label="1. Drill / Category Name"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="e.g. 40-Yard Dash, Long Throw, Shot Speed"
           />
 
           <div>
-            <SectionLabel className="mb-2">3. Scoring Type</SectionLabel>
+            <SectionLabel className="mb-2">2. Scoring Type</SectionLabel>
             <div className="flex flex-wrap gap-2">
-              <Chip label="Skill / Technique" active={scoringType === 'skill'} onClick={() => setScoringType('skill')} />
-              <Chip label="Time-based" active={scoringType === 'time'} onClick={() => setScoringType('time')} />
-              <Chip label="Distance-based" active={scoringType === 'distance'} onClick={() => setScoringType('distance')} />
-              <Chip label="Speed-based" active={scoringType === 'speed'} onClick={() => setScoringType('speed')} />
+              <Chip label="Skill / Technique" active={scoringType === 'skill'} onClick={() => handleScoringTypeChange('skill')} />
+              <Chip label="Time-based" active={scoringType === 'time'} onClick={() => handleScoringTypeChange('time')} />
+              <Chip label="Distance-based" active={scoringType === 'distance'} onClick={() => handleScoringTypeChange('distance')} />
+              <Chip label="Speed-based" active={scoringType === 'speed'} onClick={() => handleScoringTypeChange('speed')} />
             </div>
           </div>
 
           {scoringType === 'skill' ? (
             <div className="flex flex-col gap-2">
-              <SectionLabel>4. Scale Choice</SectionLabel>
+              <SectionLabel>3. Scale Choice</SectionLabel>
               <div className="flex flex-wrap gap-2">
                 <Chip label="1-5 Scale" active={scale === '1-5'} onClick={() => setScale('1-5')} />
                 <Chip label="1-10 Scale" active={scale === '1-10'} onClick={() => setScale('1-10')} />
@@ -219,13 +215,43 @@ export default function RubricsPage() {
           ) : (
             <div className="flex flex-col gap-3">
               <Input
-                label="4. Unit Label (Optional)"
+                label="3. Unit Label (Free-form)"
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
                 placeholder={
-                  scoringType === 'time' ? 'sec (default)' : scoringType === 'speed' ? 'mph (default)' : 'ft (default)'
+                  scoringType === 'time' ? 'e.g. sec, s, min' : scoringType === 'speed' ? 'e.g. mph, km/h' : 'e.g. ft, m, inches'
                 }
               />
+
+              <div>
+                <SectionLabel className="mb-2">4. Ranking Rule</SectionLabel>
+                <button
+                  type="button"
+                  onClick={() => setRankingDirection(rankingDirection === 'lower_is_better' ? 'higher_is_better' : 'lower_is_better')}
+                  className="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors hover:opacity-90"
+                  style={{ borderColor: colors.border, backgroundColor: colors.field }}
+                >
+                  <div className="flex-1 pr-3">
+                    <span className="text-sm font-bold" style={{ color: colors.ink }}>
+                      {rankingDirection === 'lower_is_better' ? 'Lowest / Shortest wins' : 'Highest / Farthest wins'}
+                    </span>
+                    <p className="mt-0.5 text-xs" style={{ color: colors.inkMuted }}>
+                      {rankingDirection === 'lower_is_better'
+                        ? 'Best performance = lowest value (e.g. fastest sprint)'
+                        : 'Best performance = highest value (e.g. longest throw)'}
+                    </p>
+                  </div>
+                  <div
+                    className="relative h-6 w-11 rounded-full transition-colors"
+                    style={{ backgroundColor: rankingDirection === 'lower_is_better' ? colors.primary : colors.border }}
+                  >
+                    <div
+                      className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                      style={{ transform: rankingDirection === 'lower_is_better' ? 'translateX(22px)' : 'translateX(2px)' }}
+                    />
+                  </div>
+                </button>
+              </div>
 
               <SectionLabel className="mt-1">5. Score Range Benchmarks (Min &amp; Max)</SectionLabel>
               <div className="grid grid-cols-2 gap-2">
@@ -246,12 +272,10 @@ export default function RubricsPage() {
               </div>
 
               <p className="text-xs font-bold italic" style={{ color: colors.primary }}>
-                Interpolation Rule:{' '}
-                {scoringType === 'time'
-                  ? `Min (${minValStr || '12'}) = Score 5.0 · Max (${maxValStr || '25'}) = Score 1.0 (Shortest time wins)`
-                  : scoringType === 'distance'
-                    ? `Min (${minValStr || '5'}) = Score 1.0 · Max (${maxValStr || '25'}) = Score 5.0 (Largest distance wins)`
-                    : `Min (${minValStr || '10'}) = Score 1.0 · Max (${maxValStr || '60'}) = Score 5.0 (Fastest speed wins)`}
+                Score Benchmark Rule:{' '}
+                {rankingDirection === 'lower_is_better'
+                  ? `Min value (${minValStr || '10'}) = 5.0 points (Best)  ·  Max value (${maxValStr || '25'}) = 1.0 points (Worst)`
+                  : `Min value (${minValStr || '5'}) = 1.0 points (Worst)  ·  Max value (${maxValStr || '25'}) = 5.0 points (Best)`}
               </p>
             </div>
           )}
