@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -40,6 +40,7 @@ import {
   useAddTeamEventMutation,
   useUpdateSeasonEventMutation,
   useDeleteSeasonEventMutation,
+  useUploadTeamLogoMutation,
 } from '@/features/queries';
 import { useUser } from '@/state/authStore';
 import { canUseFeature } from '@/data/plans';
@@ -87,7 +88,9 @@ export default function TeamDetailPage() {
   const updateTeam = useUpdateTeamMutation();
   const deleteTeam = useDeleteTeamMutation();
   const updateTryout = useUpdateTryoutMutation();
+  const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
+  const logoFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
   const [season, setSeason] = useState('');
@@ -364,6 +367,18 @@ export default function TeamDetailPage() {
       updates: { name: name.trim(), season: season.trim() || undefined },
     });
     setEditing(false);
+  };
+
+  const onLogoPicked = async (file: File | undefined) => {
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      await uploadLogo.mutateAsync({ teamId: team.id, fileUri: objectUrl, fileType: file.type || 'image/jpeg' });
+    } catch (e) {
+      await alert('Logo Upload Error', `Failed to upload logo: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   };
 
   const handleDelete = async () => {
@@ -644,6 +659,24 @@ export default function TeamDetailPage() {
 
       <Modal visible={editing} title="Edit Team" onClose={() => setEditing(false)} hideDefaultFooter>
         <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => logoFileRef.current?.click()}
+            disabled={uploadLogo.isPending}
+            className="flex flex-col items-center gap-1 self-center"
+          >
+            <Avatar first={team.name} last="" uri={team.logoUrl} size={72} />
+            <span className="text-xs" style={{ color: colors.primary }}>
+              {uploadLogo.isPending ? 'Uploading...' : 'Change Team Logo'}
+            </span>
+          </button>
+          <input
+            ref={logoFileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => onLogoPicked(e.target.files?.[0])}
+          />
           <Input label="Team name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Season" value={season} onChange={(e) => setSeason(e.target.value)} />
           <Button label="Save Changes" onClick={save} loading={updateTeam.isPending} />

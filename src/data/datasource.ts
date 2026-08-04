@@ -46,6 +46,7 @@ export interface DataSource {
   resendVerificationEmail(email: string): Promise<void>;
   checkUserExistsByEmail(email: string): Promise<boolean>;
   uploadCoachPhoto(userId: string, fileUri: string, fileType: string): Promise<string>;
+  uploadTeamLogo(teamId: string, fileUri: string, fileType: string): Promise<string>;
 
   // Database
   getDatabase(): Promise<Database>;

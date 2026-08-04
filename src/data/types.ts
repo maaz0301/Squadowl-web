@@ -231,6 +231,7 @@ export type Tryout = z.infer<typeof TryoutSchema>;
 export const TeamSchema = z.object({
   id: z.string(),
   name: z.string(),
+  logoUrl: z.string().optional(),
   season: z.string().optional(),
   createdAt: z.number(),
   updatedAt: z.number().optional(),

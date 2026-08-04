@@ -153,12 +153,16 @@ export function usePermissions() {
   // For demo: if they are the primary coach@example.com account, default to admin if not found.
   // In production, everyone must be an org member.
   const isDemoAdmin = user.email.toLowerCase() === 'coach@example.com';
-  
-  const myMember = members.find(
-    (m) => m.email.toLowerCase() === user.email.toLowerCase() && m.status === 'active'
+
+  // Find user's staff membership (ignore guardian roster entries)
+  const myStaffMember = members.find(
+    (m) => m.email.toLowerCase() === user.email.toLowerCase() && m.status === 'active' && m.role !== 'guardian'
   );
 
-  const role = user.role ?? myMember?.role ?? (isDemoAdmin ? 'admin' : 'guardian');
+  const rawRole = (user.role && user.role !== 'guardian')
+    ? user.role
+    : (myStaffMember?.role ?? user.role ?? (isDemoAdmin ? 'admin' : 'coach'));
+  const role = rawRole === 'owner' ? 'admin' : rawRole;
 
   return {
     role,

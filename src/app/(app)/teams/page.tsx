@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
+import { Avatar, Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { useSeasonsQuery, useTeamsQuery } from '@/features/queries';
 
 export default function TeamsPage() {
@@ -43,12 +43,15 @@ export default function TeamsPage() {
             return (
               <Link key={team.id} href={`/team/${team.id}`}>
                 <Card interactive className="flex h-full flex-col gap-1">
-                  <span
-                    className="text-lg font-bold"
-                    style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-                  >
-                    {team.name}
-                  </span>
+                  <div className="mb-1 flex items-center gap-3">
+                    <Avatar first={team.name} last="" uri={team.logoUrl} size={40} />
+                    <span
+                      className="text-lg font-bold"
+                      style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+                    >
+                      {team.name}
+                    </span>
+                  </div>
                   {team.season ? (
                     <span className="text-sm" style={{ color: colors.inkMuted }}>
                       {team.season}

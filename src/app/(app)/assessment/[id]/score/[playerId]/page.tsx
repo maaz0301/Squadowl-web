@@ -438,6 +438,7 @@ export default function ScorePage() {
                 unit={s.unit}
                 minVal={s.minVal}
                 maxVal={s.maxVal}
+                rankingDirection={s.rankingDirection}
                 value={scores?.[s.key]}
                 onChange={(v) => {
                   const newScores = { ...workingScores, [s.key]: v };

@@ -45,6 +45,18 @@ export function useCreateTeamMutation() {
   });
 }
 
+export function useUploadTeamLogoMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ teamId, fileUri, fileType }: { teamId: string; fileUri: string; fileType: string }) => {
+      const logoUrl = await getDataSource().uploadTeamLogo(teamId, fileUri, fileType);
+      await getDataSource().updateTeam(teamId, { logoUrl });
+      return logoUrl;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teams }),
+  });
+}
+
 // ---- Team roster ----
 const teamRosterKey = (teamId: string) => ['teams', teamId, 'roster'] as const;
 

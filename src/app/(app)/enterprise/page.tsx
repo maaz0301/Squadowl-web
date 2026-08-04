@@ -7,7 +7,6 @@ import { Badge, Card, ErrorState, LoadingState, PageHeader, Tabs } from '@/compo
 import { PlanGate } from '@/components/PlanGate';
 import {
   useOrgQuery,
-  useEnterprisePaymentsQuery,
   useOrgMembersQuery,
   useTryoutsQuery,
   useTeamsQuery,
@@ -83,7 +82,6 @@ export default function EnterprisePage() {
   const colors = useThemeColors();
   const [tab, setTab] = useState<EntTab>('overview');
   const orgQuery = useOrgQuery();
-  const paymentsQuery = useEnterprisePaymentsQuery();
   const membersQuery = useOrgMembersQuery();
   const tryoutsQuery = useTryoutsQuery(false);
   const teamsQuery = useTeamsQuery();
@@ -154,20 +152,6 @@ export default function EnterprisePage() {
       evalsPerPlayer: players ? (evaluations / players).toFixed(1) : '0',
     };
   }, [tryouts]);
-
-  const finance = useMemo(() => {
-    const rows = paymentsQuery.data ?? [];
-    const sum = (status: string) =>
-      rows.filter((p) => p.status === status).reduce((s, p) => s + (p.amount || 0), 0);
-    return {
-      rows,
-      collected: sum('paid'),
-      pending: sum('pending'),
-      refunded: sum('refunded'),
-      paidCount: rows.filter((p) => p.status === 'paid').length,
-      pendingCount: rows.filter((p) => p.status === 'pending').length,
-    };
-  }, [paymentsQuery.data]);
 
   if (orgQuery.isLoading) return <LoadingState message="Loading org..." />;
 

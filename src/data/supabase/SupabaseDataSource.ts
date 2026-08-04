@@ -665,6 +665,7 @@ export class SupabaseDataSource implements DataSource {
     return {
       id: t.id,
       name: t.name,
+      logoUrl: t.logo_url ?? undefined,
       season: t.season_label ?? undefined,
       createdAt: toMs(t.created_at),
       updatedAt: t.updated_at ? toMs(t.updated_at) : undefined,
@@ -794,8 +795,34 @@ export class SupabaseDataSource implements DataSource {
     if (updates.name !== undefined) patch.name = updates.name;
     if (updates.season !== undefined) patch.season_label = updates.season;
     if (updates.archived !== undefined) patch.archived = updates.archived;
+    if (updates.logoUrl !== undefined) patch.logo_url = updates.logoUrl;
     const row = unwrap(await supabase.from('teams').update(patch).eq('id', id).select().single()) as Row;
     return this.rowToTeam(row);
+  }
+
+  async uploadTeamLogo(teamId: string, fileUri: string, fileType: string): Promise<string> {
+    const { supabase } = await this.ctx();
+    const buffer = await (await fetch(fileUri)).arrayBuffer();
+
+    const fileExtension = fileType.split('/')[1] || 'jpg';
+    const filePath = `teams/${teamId}.${fileExtension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(filePath, buffer, {
+        contentType: fileType,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`Upload failed: ${uploadError.message}`);
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('avatars')
+      .getPublicUrl(filePath);
+
+    return `${publicUrl}?v=${Date.now()}`;
   }
 
   // ─── Tryouts ──────────────────────────────────────────────────────────────────
@@ -2859,13 +2886,13 @@ export class SupabaseDataSource implements DataSource {
 
     for (const t of tryouts) {
       const regs = t.registrations ?? [];
-      const fee = t.registrationFee && t.registrationFee > 0 ? t.registrationFee : 49.99;
+      const fee = 49.99;
 
       for (const r of regs) {
         const status: 'paid' | 'pending' | 'refunded' =
           r.paymentStatus === 'paid' || r.status === 'added'
             ? 'paid'
-            : r.paymentStatus === 'pending' || r.status === 'pending'
+            : r.paymentStatus === 'partial' || r.status === 'pending'
               ? 'pending'
               : 'refunded';
 
@@ -2873,9 +2900,9 @@ export class SupabaseDataSource implements DataSource {
           id: `pay-${t.id}-${r.id}`,
           playerName: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Registered Athlete',
           assessmentName: t.name,
-          amount: r.feePaid ? r.feePaid : fee,
+          amount: fee,
           status,
-          receivedAt: r.createdAt ? toMs(r.createdAt) : Date.now(),
+          receivedAt: r.createdAt ?? Date.now(),
         });
       }
 
@@ -3086,7 +3113,7 @@ export class SupabaseDataSource implements DataSource {
           existing.userId = a.guardian_user_id;
           existing.status = 'active';
         }
-        existing.role = 'guardian';
+        if (!existing.role) existing.role = 'guardian';
       }
     }
 
@@ -3236,10 +3263,23 @@ export class SupabaseDataSource implements DataSource {
   async linkGuardianToAthlete(guardianId: string, tryoutId: string, playerId: string): Promise<import('../types').Player> {
     const { supabase } = await this.ctx();
 
+    // Resolve actual athlete_id (playerId could be tryout_participant.id or athlete.id)
+    let athleteId = playerId;
+    const { data: tpCheck } = await supabase
+      .from('tryout_participants')
+      .select('id, athlete_id')
+      .or(`id.eq.${playerId},athlete_id.eq.${playerId}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (tpCheck?.athlete_id) {
+      athleteId = tpCheck.athlete_id;
+    }
+
     const { data, error } = await supabase
       .from('athletes')
       .update({ guardian_user_id: guardianId })
-      .eq('id', playerId)
+      .eq('id', athleteId)
       .select(`
         id,
         first_name,
@@ -3251,7 +3291,8 @@ export class SupabaseDataSource implements DataSource {
         guardian_phone,
         guardian_user_id
       `)
-      .single();
+      .limit(1)
+      .maybeSingle();
 
     if (error) throw error;
 
@@ -3272,20 +3313,22 @@ export class SupabaseDataSource implements DataSource {
           guardian_user_id
         )
       `)
-      .eq('athlete_id', playerId)
+      .eq('athlete_id', athleteId)
       .eq('tryout_id', tryoutId)
-      .single();
+      .limit(1)
+      .maybeSingle();
 
     if (fetchError) throw fetchError;
 
-    const ath = Array.isArray(updatedPlayer.athletes) ? updatedPlayer.athletes[0] : updatedPlayer.athletes;
+    const tp: any = updatedPlayer || {};
+    const ath = Array.isArray(tp.athletes) ? tp.athletes[0] : tp.athletes;
 
     return {
       id: ath.id,
       first: ath.first_name,
       last: ath.last_name,
-      pos: updatedPlayer.position,
-      jersey: updatedPlayer.jersey,
+      pos: tp.position,
+      jersey: tp.jersey,
       guardianName: ath.guardian_name,
       guardianEmail: ath.guardian_email,
       linkedGuardianId: ath.guardian_user_id,

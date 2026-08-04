@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { getScoreHeatLevel, normalizeScore } from '@/data/rubrics';
 import { themeTokens } from '@/theme/tokens';
-import type { ScoringType } from '@/data/types';
+import type { RankingDirection, ScoringType } from '@/data/types';
 
 interface ScorePadProps {
   rubricKey?: string;
@@ -15,6 +15,7 @@ interface ScorePadProps {
   minVal?: number;
   maxVal?: number;
   value?: number;
+  rankingDirection?: RankingDirection;
   onChange: (value: number) => void;
 }
 
@@ -26,6 +27,7 @@ export function ScorePad({
   minVal,
   maxVal,
   value,
+  rankingDirection,
   onChange,
 }: ScorePadProps) {
   const colors = useThemeColors();
@@ -37,12 +39,16 @@ export function ScorePad({
 
   if (scoringType && scoringType !== 'skill') {
     const unitText = unit ?? (scoringType === 'time' ? 'sec' : scoringType === 'speed' ? 'mph' : 'ft');
-    const ruleText =
-      scoringType === 'time'
+    const isLower = rankingDirection === 'lower_is_better' || (scoringType === 'time' && !rankingDirection);
+    const ruleText = isLower
+      ? scoringType === 'time'
         ? 'Shortest time = highest score'
-        : scoringType === 'speed'
-          ? 'Fastest speed = highest score'
-          : 'Largest distance = highest score';
+        : 'Lowest number = highest score'
+      : scoringType === 'speed'
+        ? 'Fastest speed = highest score'
+        : scoringType === 'distance'
+          ? 'Largest distance = highest score'
+          : 'Highest number = highest score';
 
     const parsed = parseFloat(textVal);
     const calculatedScore =

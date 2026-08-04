@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -8,7 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
-import { Button, Card, ErrorState, Input, LoadingState, PageHeader, SectionLabel, useAlert } from '@/components/ui';
+import { Avatar, Button, Card, ErrorState, Input, LoadingState, PageHeader, SectionLabel, useAlert } from '@/components/ui';
 import { canUseFeature, isAtTeamLimit } from '@/data/plans';
 import type { DummyTeamOptions } from '@/data/testDataGenerator';
 import {
@@ -17,6 +17,7 @@ import {
   useCreateTeamMutation,
   useGenerateDummyTeamsMutation,
   useTeamsQuery,
+  useUploadTeamLogoMutation,
 } from '@/features/queries';
 import { useUser } from '@/state/authStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -37,9 +38,17 @@ export default function NewTeamPage() {
   const teamsQuery = useTeamsQuery();
   const genDummy = useGenerateDummyTeamsMutation();
   const clearDummy = useClearDummyTeamsMutation();
+  const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [showDummy, setShowDummy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [logo, setLogo] = useState<{ uri: string; type: string } | null>(null);
+
+  const onLogoPicked = (file: File | undefined) => {
+    if (!file) return;
+    setLogo({ uri: URL.createObjectURL(file), type: file.type || 'image/jpeg' });
+  };
 
   const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
 
@@ -67,6 +76,13 @@ export default function NewTeamPage() {
       });
     } catch {
       // Non-fatal: the team exists, and its first event will create the season.
+    }
+    if (logo) {
+      try {
+        await uploadLogo.mutateAsync({ teamId: team.id, fileUri: logo.uri, fileType: logo.type });
+      } catch (e) {
+        await alert('Logo Upload Error', `The team was created, but uploading the logo failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      }
     }
     router.push(`/team/${team.id}`);
   });
@@ -124,6 +140,23 @@ export default function NewTeamPage() {
 
       <Card>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="flex flex-col items-center gap-1 self-center"
+          >
+            <Avatar first={logo ? '' : '+'} last="" uri={logo?.uri} size={72} />
+            <span className="text-xs" style={{ color: colors.primary }}>
+              {logo ? 'Change Team Logo' : 'Upload Team Logo'}
+            </span>
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => onLogoPicked(e.target.files?.[0])}
+          />
           <Controller
             control={control}
             name="name"
@@ -136,7 +169,12 @@ export default function NewTeamPage() {
             name="season"
             render={({ field }) => <Input label="Season (optional)" {...field} value={field.value ?? ''} />}
           />
-          <Button type="submit" label="Create Team" loading={createTeam.isPending} size="lg" />
+          <Button
+            type="submit"
+            label="Create Team"
+            loading={createTeam.isPending || createSeason.isPending || uploadLogo.isPending}
+            size="lg"
+          />
         </form>
       </Card>
 

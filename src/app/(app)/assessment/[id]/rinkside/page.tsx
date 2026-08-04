@@ -464,6 +464,7 @@ export default function RinksidePage() {
                 unit={s.unit}
                 minVal={s.minVal}
                 maxVal={s.maxVal}
+                rankingDirection={s.rankingDirection}
                 value={workingScores[s.key]}
                 onChange={(v) => setWorkingScores({ ...workingScores, [s.key]: v })}
               />
