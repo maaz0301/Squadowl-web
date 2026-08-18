@@ -2055,7 +2055,8 @@ export class SupabaseDataSource implements DataSource {
           players: t.players || [],
           skaters: t.skaters || [],
           goalies: t.goalies || []
-        }))
+        })),
+        unassigned: data.unassigned || [],
       };
     } else {
       result = buildTeams(tryout, config);

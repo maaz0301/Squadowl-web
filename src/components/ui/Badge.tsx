@@ -5,15 +5,22 @@ import { cn } from '@/lib/cn';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
 type BadgeVariant = 'default' | 'brand' | 'success' | 'warning' | 'danger' | 'info';
+type BadgeSize = 'sm' | 'lg';
 
 interface BadgeProps {
   label: ReactNode;
   variant?: BadgeVariant;
+  size?: BadgeSize;
   className?: string;
   title?: string;
 }
 
-export function Badge({ label, variant = 'default', className, title }: BadgeProps) {
+const SIZE_CLASSES: Record<BadgeSize, string> = {
+  sm: 'px-2 py-0.5 text-xs',
+  lg: 'px-3.5 py-1.5 text-base',
+};
+
+export function Badge({ label, variant = 'default', size = 'sm', className, title }: BadgeProps) {
   const colors = useThemeColors();
   const styles: Record<BadgeVariant, { bg: string; text: string; border: string }> = {
     default: { bg: colors.tile, text: colors.inkMuted, border: colors.border },
@@ -27,7 +34,7 @@ export function Badge({ label, variant = 'default', className, title }: BadgePro
   return (
     <span
       title={title}
-      className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-bold whitespace-nowrap', className)}
+      className={cn('inline-flex items-center rounded-full border font-bold whitespace-nowrap', SIZE_CLASSES[size], className)}
       style={{ backgroundColor: s.bg, borderColor: s.border, color: s.text }}
     >
       {label}

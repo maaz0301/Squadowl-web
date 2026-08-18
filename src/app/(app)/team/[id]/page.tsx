@@ -57,11 +57,11 @@ const RSVP_LABEL: Record<Rsvp, string> = {
   pending: 'No reply',
 };
 
-const RSVP_VARIANT: Record<Rsvp, 'success' | 'warning' | 'danger' | 'default'> = {
+const RSVP_VARIANT: Record<Rsvp, 'success' | 'warning' | 'danger' | 'info'> = {
   yes: 'success',
   maybe: 'warning',
   no: 'danger',
-  pending: 'default',
+  pending: 'info',
 };
 
 function StatTile({ label, value, colors }: { label: string; value: number; colors: AppTheme['colors'] }) {
@@ -469,10 +469,10 @@ export default function TeamDetailPage() {
                       onClick={() => setOpenRsvpEventId(expanded ? null : ev.id)}
                       className="flex flex-wrap items-center gap-2 py-1 text-left"
                     >
-                      <Badge label={`${rsvp.counts.yes} yes`} variant="success" />
-                      <Badge label={`${rsvp.counts.maybe} maybe`} variant="warning" />
-                      <Badge label={`${rsvp.counts.no} no`} variant="danger" />
-                      {rsvp.counts.pending > 0 ? <Badge label={`${rsvp.counts.pending} pending`} /> : null}
+                      <Badge label={`${rsvp.counts.yes} yes`} variant="success" size="lg" />
+                      <Badge label={`${rsvp.counts.maybe} maybe`} variant="warning" size="lg" />
+                      <Badge label={`${rsvp.counts.no} no`} variant="danger" size="lg" />
+                      {rsvp.counts.pending > 0 ? <Badge label={`${rsvp.counts.pending} pending`} size="lg" /> : null}
                       <span className="ml-auto text-xs font-bold" style={{ color: colors.primary }}>
                         {expanded ? 'Hide' : 'Who?'}
                       </span>
@@ -494,7 +494,7 @@ export default function TeamDetailPage() {
                               <span className="flex-1 text-sm" style={{ color: colors.ink }}>
                                 {r.name}
                               </span>
-                              <Badge label={RSVP_LABEL[r.response]} variant={RSVP_VARIANT[r.response]} />
+                              <Badge label={RSVP_LABEL[r.response]} variant={RSVP_VARIANT[r.response]} size="lg" />
                             </div>
                           ))
                         )}

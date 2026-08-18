@@ -37,6 +37,8 @@ export interface TeamBuilderState {
   warnings: string[];
   explanation?: string;
   teams: TeamBuilderTeam[];
+  /** Roster player IDs that didn't fit within the requested team count x team size and were left out on purpose, instead of being piled onto a team. */
+  unassigned: string[];
 }
 
 export interface TeamBuilderConfig {
@@ -206,6 +208,7 @@ export function buildTeams(tryout: Tryout, config: TeamBuilderConfig): TeamBuild
     ranks: ranked,
     warnings,
     teams,
+    unassigned: [],
   };
 }
 

@@ -190,6 +190,26 @@ export default function TeamBuilderPage() {
                 </Card>
               );
             })}
+
+            {teamBuilder?.unassigned?.length ? (
+              <Card className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    className="text-lg font-bold"
+                    style={{ color: colors.inkMuted, fontFamily: 'var(--font-space-grotesk)' }}
+                  >
+                    Unassigned
+                  </span>
+                  <Badge label={`${teamBuilder.unassigned.length} players`} />
+                </div>
+                <p className="text-sm" style={{ color: colors.inkMuted }}>
+                  These players didn&apos;t fit within the requested team count and size, so they were left out instead of being added to a team.
+                </p>
+                <p className="text-sm" style={{ color: colors.ink }}>
+                  {teamBuilder.unassigned.map((pid) => nameMap[pid] ?? pid).join(', ')}
+                </p>
+              </Card>
+            ) : null}
           </div>
         </div>
       </PlanGate>
