@@ -3,7 +3,16 @@ import { getSupabase } from '@/lib/supabase';
 import { type Session, type SupabaseClient } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
 import type { FeedbackSubmission } from '../extras';
-import { generateCloudCode, generateId, getDefaultWeights, getPlayerSubskills } from '../rubrics';
+import {
+  categoryAveragesAcrossEvals,
+  generateCloudCode,
+  generateId,
+  getDefaultWeights,
+  getPlayerCategories,
+  getPlayerSubskills,
+  isGoaliePosition,
+  weightedOverallAcrossEvals,
+} from '../rubrics';
 import type { TeamBuilderConfig, TeamBuilderState } from '../teamBuilder';
 import { buildTeams, formatExportCsv } from '../teamBuilder';
 import {
@@ -34,6 +43,7 @@ import type {
   Athlete,
   AthleteHistory,
   AuthSession,
+  ConnectAccountStatus,
   CreateAssessmentForm,
   CreateEventForm,
   CreateSeasonForm,
@@ -45,6 +55,8 @@ import type {
   ExportFormat,
   Org,
   Player,
+  PlayerProfile,
+  PlayerProfileAssessment,
   Recommendation,
   Registration,
   RegistrationSubmit,
@@ -52,7 +64,10 @@ import type {
   Season,
   SeasonEvent,
   SeasonPlayer,
+  Sport,
   Team,
+  TeamBuilderResult,
+  TeamMessage,
   TeamRosterPlayer,
   Tryout,
   UserProfile,
@@ -61,13 +76,82 @@ import type {
 // ─── small helpers ──────────────────────────────────────────────────────────
 type Row = Record<string, any>;
 
-function unwrap<T>(res: { data: T; error: { message: string } | null }): T {
-  if (res.error) throw new Error(res.error.message);
+function unwrap<T>(res: { data: T; error: { message: string; code?: string } | null }): T {
+  if (res.error) {
+    const err = new Error(res.error.message) as Error & { code?: string };
+    err.code = res.error.code;
+    throw err;
+  }
   return res.data;
+}
+
+const FETCH_PAGE_SIZE = 1000;
+
+/**
+ * PostgREST caps an unbounded select at a default row limit (1000). A single
+ * large roster fits under that on its own, but assembleTryouts batches every
+ * listed tryout's rows into one query — two 1000-player rosters together
+ * silently truncate to 1000 combined rows, undercounting whichever tryout's
+ * rows land past the cutoff. Page through with .range() so the result always
+ * reflects every matching row regardless of how large the batch gets.
+ */
+async function fetchAllRows<T>(
+  makeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string } | null }>,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let from = 0;
+  for (;;) {
+    const page = unwrap(await makeQuery(from, from + FETCH_PAGE_SIZE - 1)) ?? [];
+    rows.push(...page);
+    if (page.length < FETCH_PAGE_SIZE) break;
+    from += FETCH_PAGE_SIZE;
+  }
+  return rows;
+}
+
+/** Roles the RLS write policies (athletes/teams/tryouts) accept. */
+const WRITABLE_ROLES = ['owner', 'admin', 'coach'];
+
+function isStaleAccountError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | undefined;
+  return e?.code === '42501' || /row-level security/i.test(e?.message ?? '');
 }
 
 function toMs(iso: string | null | undefined): number {
   return iso ? new Date(iso).getTime() : 0;
+}
+
+// ─── bulk registration placement ────────────────────────────────────────────
+// addRegistrationsToRoster/addRegistrationsToTeam place registrations in
+// chunks rather than one full round trip per registration (fetch, create
+// athlete, insert participant, update status) — for a large selection that
+// per-item chain is the dominant cost of "Add to Roster" being slow.
+const REGISTRATION_CHUNK = 20;
+const REGISTRATION_CHUNK_CONCURRENCY = 6;
+const GUARDIAN_EMAIL_CONCURRENCY = 10;
+const GUARDIAN_RESOLVE_BATCH = 50;
+
+function concurrencyFor(chunkCount: number, max: number): number {
+  return Math.max(1, Math.min(chunkCount, max));
+}
+
+/**
+ * Run `task` over every item with at most `limit` in flight, returning results
+ * **in input order** — never completion order, since callers zip the returned
+ * ids against their own arrays. A worker pool rather than fixed-size waves, so
+ * one slow request doesn't hold back the rest of its group.
+ */
+async function mapPool<T, R>(items: T[], limit: number, task: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: concurrencyFor(items.length, limit) }, async () => {
+      for (let i = next++; i < items.length; i = next++) {
+        results[i] = await task(items[i], i);
+      }
+    }),
+  );
+  return results;
 }
 
 /**
@@ -122,6 +206,31 @@ const EVENT_KIND_FROM_DB: Record<string, EventKind> = {
   event: 'Event',
 };
 
+
+
+/**
+ * Converts a image URI (file://, ph://, blob:, data:, http) to an ArrayBuffer cross-platform.
+ */
+async function uriToArrayBuffer(fileUri: string): Promise<ArrayBuffer> {
+  // Web, Expo, or React Native Fetch API handles local blob/file URIs seamlessly
+  const response = await fetch(fileUri);
+  const blob = await response.blob();
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to convert file to ArrayBuffer'));
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
+
 export class SupabaseDataSource implements DataSource {
   private userId: string | null = null;
   private accountId: string | null = null;
@@ -131,36 +240,106 @@ export class SupabaseDataSource implements DataSource {
     throw new Error(`SupabaseDataSource.${method}() not implemented yet.`);
   }
 
-  private async ctx(): Promise<{ supabase: SupabaseClient; userId: string; accountId: string }> {
+  // Higher-privilege roles win when a user holds more than one membership.
+  private getRoleWeight(role: string): number {
+    const weights: Record<string, number> = { admin: 3, coach: 2, assessor: 1, guardian: 0 };
+    return weights[role] ?? 0;
+  }
+
+  // Resolves just the authenticated user id, without requiring an account/
+  // membership. Guardians are provisioned with a profile but intentionally no
+  // account/membership row, so guardian-only reads must use this instead of
+  // ctx().
+  private async userCtx(): Promise<{ supabase: SupabaseClient; userId: string }> {
     const supabase = getSupabase();
     let uId = this.userId;
     if (!uId) {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        uId = session.user.id;
-      } else {
-        const { data: u } = await supabase.auth.getUser();
-        if (!u.user) throw new Error('Not authenticated');
-        uId = u.user.id;
-      }
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+      if (error || !user) throw new Error('User not authenticated');
+      uId = user.id;
       this.userId = uId;
     }
+    return { supabase, userId: uId };
+  }
+
+  private async ctx(): Promise<{
+    supabase: SupabaseClient;
+    userId: string;
+    accountId: string;
+  }> {
+    const supabase = getSupabase();
+
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+
+    if (error || !user) {
+      throw new Error('User not authenticated');
+    }
+
+    const uId = user.id;
+
     if (!this.accountId) {
-      // Fetch all memberships to determine the best account to use
       const m = await supabase
         .from('memberships')
         .select('account_id, role')
-        .eq('user_id', uId)
-        .order('created_at', { ascending: true });
+        .eq('user_id', uId);
+
+      if (m.error) {
+        throw m.error;
+      }
+
       const memberships = m.data ?? [];
 
-      // Prefer a non-owner membership (e.g. guardian in a coach's org) over the user's own account
-      const nonOwner = memberships.find((r: any) => r.role !== 'owner');
-      const accId: string | null = nonOwner?.account_id ?? memberships[0]?.account_id ?? null;
-      if (!accId) throw new Error('No account for user');
-      this.accountId = accId;
+      if (memberships.length === 0) {
+        throw new Error('No account for user');
+      }
+
+      const sorted = memberships.sort(
+        (a: Row, b: Row) =>
+          this.getRoleWeight(b.role) - this.getRoleWeight(a.role)
+      );
+
+      this.accountId = sorted[0].account_id;
     }
-    return { supabase, userId: uId, accountId: this.accountId };
+
+    const accountId = this.accountId;
+    if (!accountId) {
+      throw new Error('No account for user');
+    }
+
+    return {
+      supabase,
+      userId: uId,
+      accountId,
+    };
+  }
+
+  private async writableAccountId(): Promise<string> {
+    const { supabase, userId, accountId } = await this.ctx();
+    const { data: m } = await supabase
+      .from('memberships')
+      .select('role')
+      .eq('user_id', userId)
+      .eq('account_id', accountId)
+      .single();
+    if (!m || !['owner', 'admin', 'coach'].includes(m.role)) {
+      throw new Error('Current account lacks write permissions for this operation.');
+    }
+    return accountId;
+  }
+
+  private async withFreshAccount<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error: any) {
+      this.accountId = null;
+      return await operation();
+    }
   }
 
   private async markOnboarding(patch: Record<string, boolean>): Promise<void> {
@@ -273,17 +452,32 @@ export class SupabaseDataSource implements DataSource {
     const supabase = getSupabase();
     const ids = tryoutRows.map((t) => t.id);
 
-    const [participants, assessors, evals, registrations] = await Promise.all([
-      supabase.from('tryout_participants').select('*, athletes(*)').in('tryout_id', ids),
-      supabase.from('tryout_assessors').select('*').in('tryout_id', ids),
-      supabase.from('evaluations').select('*, evaluation_scores(rubric_key, value)').in('tryout_id', ids),
-      supabase.from('registrations').select('*').in('tryout_id', ids),
+    const [pRows, aRows, eRows, rRows] = await Promise.all([
+      // Soft-removed players (see deletePlayer) stay in the table so their
+      // evaluations still count toward the athlete's permanent profile history,
+      // but they should no longer appear on this tryout's active roster. Filtering
+      // removed_at here (rather than after the fetch) keeps them from eating into
+      // Supabase's default row cap when batching many tryouts in one query — with
+      // a JS-side filter, soft-deleted rows from *other* tryouts in the batch could
+      // push a large roster's real participants past the cap and undercount it.
+      fetchAllRows<Row>((from, to) =>
+        supabase
+          .from('tryout_participants')
+          .select('*, athletes(*)')
+          .in('tryout_id', ids)
+          .is('removed_at', null)
+          .range(from, to),
+      ),
+      fetchAllRows<Row>((from, to) => supabase.from('tryout_assessors').select('*').in('tryout_id', ids).range(from, to)),
+      fetchAllRows<Row>((from, to) =>
+        supabase
+          .from('evaluations')
+          .select('*, evaluation_scores(rubric_key, value)')
+          .in('tryout_id', ids)
+          .range(from, to),
+      ),
+      fetchAllRows<Row>((from, to) => supabase.from('registrations').select('*').in('tryout_id', ids).range(from, to)),
     ]);
-
-    const pRows = unwrap(participants) as Row[];
-    const aRows = unwrap(assessors) as Row[];
-    const eRows = unwrap(evals) as Row[];
-    const rRows = unwrap(registrations) as Row[];
 
     const assessorNameById: Record<string, string> = {};
     for (const a of aRows) assessorNameById[a.id] = a.name;
@@ -412,6 +606,9 @@ export class SupabaseDataSource implements DataSource {
       avatarUrl: profile.avatar_url ?? undefined,
       planTier: (account?.plan_tier as UserProfile['planTier']) ?? 'free',
       subscriptionStatus: account?.subscription_status,
+      extraTeamLicenses: account?.extra_team_licenses ?? 0,
+      connectChargesEnabled: !!account?.stripe_connect_charges_enabled,
+      connectPayoutsEnabled: !!account?.stripe_connect_payouts_enabled,
       createdAt: toMs(profile.created_at),
       onboardingCompleted: profile.onboarding_completed,
       onboardingSteps: profile.onboarding_steps,
@@ -597,12 +794,12 @@ export class SupabaseDataSource implements DataSource {
     return !!data;
   }
 
+
+
   async uploadCoachPhoto(userId: string, fileUri: string, fileType: string): Promise<string> {
     const { supabase } = await this.ctx();
-    // On the web the picker hands us a blob:/data: URL for the chosen File;
-    // fetch reads either shape straight into bytes.
-    const buffer = await (await fetch(fileUri)).arrayBuffer();
 
+    const buffer = await uriToArrayBuffer(fileUri);
     const fileExtension = fileType.split('/')[1] || 'jpg';
     const filePath = `coaches/${userId}.${fileExtension}`;
 
@@ -633,6 +830,8 @@ export class SupabaseDataSource implements DataSource {
     return publicUrl;
   }
 
+
+
   // ─── Database aggregate (used by global search) ──────────────────────────────
   async getDatabase(): Promise<Database> {
     const [profile, tryouts, teams, seasons] = await Promise.all([
@@ -661,12 +860,30 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // ─── Teams ───────────────────────────────────────────────────────────────────
-  private rowToTeam(t: Row): Team {
+  private rowToTeam(t: Row, managed = false, ownerPlanTier?: string): Team {
+    let season = t.season_label ?? undefined;
+    let logoUrl = t.logo_url ?? undefined;
+
+    // A stale PostgREST schema cache (or a DB genuinely missing the logo_url
+    // column) rejects any write that touches it — updateTeam's fallback below
+    // packs the logo into season_label as "season|LOGO|url" instead of losing
+    // it, the same trick the mobile app uses. Decode it back out here.
+    if (season && season.includes('|LOGO|')) {
+      const parts = season.split('|LOGO|');
+      season = parts[0] || undefined;
+      logoUrl = parts[1];
+    }
+
     return {
       id: t.id,
       name: t.name,
-      logoUrl: t.logo_url ?? undefined,
-      season: t.season_label ?? undefined,
+      logoUrl,
+      season,
+      collectsFees: t.collects_fees ?? undefined,
+      registrationFeeCents: t.registration_fee_cents ?? undefined,
+      brandColor: t.brand_color ?? undefined,
+      managed: managed || undefined,
+      ownerPlanTier: managed ? ((ownerPlanTier as Team['ownerPlanTier']) ?? undefined) : undefined,
       createdAt: toMs(t.created_at),
       updatedAt: t.updated_at ? toMs(t.updated_at) : undefined,
       archived: t.archived || undefined,
@@ -683,11 +900,47 @@ export class SupabaseDataSource implements DataSource {
         .eq('archived', false)
         .order('created_at', { ascending: false }),
     ) as Row[];
-    return rows.map((t) => this.rowToTeam(t));
+
+    // Teams a club has delegated to this user (CLUB mode) live on someone
+    // else's account, so the query above can't see them. They come from a
+    // separate RPC rather than by dropping the account_id filter and leaning on
+    // RLS: has_account_access() is true for every account when the caller is a
+    // platform admin, so an unfiltered select would hand admins every team on
+    // the instance instead of their own. Mirrors mobile's listTeams().
+    const { data: managedRows, error: managedErr } = await supabase.rpc('list_teams_managed_by_me');
+    if (managedErr) {
+      // Pre-migration instances have no such function. Own teams are still
+      // correct without it, so degrade rather than failing the whole list.
+      console.log('list_teams_managed_by_me unavailable:', managedErr.message);
+      return rows.map((t) => this.rowToTeam(t));
+    }
+
+    const own = rows.map((t) => this.rowToTeam(t));
+    const ownIds = new Set(own.map((t) => t.id));
+
+    // Which club plan tier each delegated team should gate features against.
+    // Best-effort: if this lookup fails (pre-migration instance), managed
+    // teams just fall back to the caller's own tier via ownerPlanTier being
+    // undefined — same degrade-gracefully approach as managedRows above.
+    const { data: tierRows } = await supabase.rpc('list_managed_team_owner_tiers');
+    const tierByTeamId = new Map(((tierRows ?? []) as Row[]).map((r) => [r.team_id, r.plan_tier as string]));
+
+    const managed = ((managedRows ?? []) as Row[])
+      // An owner/admin delegating a team to themselves would otherwise show it
+      // twice; their own-account row wins, since it carries full rights.
+      .filter((t) => !ownIds.has(t.id))
+      .map((t) => this.rowToTeam(t, true, tierByTeamId.get(t.id)));
+
+    return [...own, ...managed];
   }
 
   async createTeam(name: string, season?: string): Promise<Team> {
-    const { supabase, accountId } = await this.ctx();
+    return this.withFreshAccount(() => this._createTeam(name, season));
+  }
+
+  private async _createTeam(name: string, season?: string): Promise<Team> {
+    const { supabase } = await this.ctx();
+    const accountId = await this.writableAccountId();
     const row = unwrap(
       await supabase
         .from('teams')
@@ -793,17 +1046,145 @@ export class SupabaseDataSource implements DataSource {
     const { supabase } = await this.ctx();
     const patch: Row = {};
     if (updates.name !== undefined) patch.name = updates.name;
-    if (updates.season !== undefined) patch.season_label = updates.season;
     if (updates.archived !== undefined) patch.archived = updates.archived;
-    if (updates.logoUrl !== undefined) patch.logo_url = updates.logoUrl;
-    const row = unwrap(await supabase.from('teams').update(patch).eq('id', id).select().single()) as Row;
-    return this.rowToTeam(row);
+    if (updates.brandColor !== undefined) patch.brand_color = updates.brandColor || null;
+    if (updates.collectsFees !== undefined) patch.collects_fees = updates.collectsFees;
+    if (updates.registrationFeeCents !== undefined) {
+      patch.registration_fee_cents = updates.registrationFeeCents || null;
+    }
+
+    // There is no real logo_url column (a stale/missing PostgREST schema entry
+    // rejects any write that touches it), so the logo is packed into
+    // season_label as "season|LOGO|url", the same trick the mobile app uses.
+    // Any write touching either half has to read back whichever half it isn't
+    // changing first — otherwise a plain season edit silently wipes out an
+    // already-uploaded logo (and vice versa).
+    if (updates.season !== undefined || updates.logoUrl !== undefined) {
+      let currentSeason: string | undefined;
+      let currentLogoUrl: string | undefined;
+      if (updates.season === undefined || updates.logoUrl === undefined) {
+        const existing = unwrap(await supabase.from('teams').select().eq('id', id).single()) as Row;
+        const currentTeam = this.rowToTeam(existing);
+        currentSeason = currentTeam.season;
+        currentLogoUrl = currentTeam.logoUrl;
+      }
+      const newSeason = updates.season !== undefined ? updates.season : currentSeason;
+      const newLogoUrl = updates.logoUrl !== undefined ? updates.logoUrl : currentLogoUrl;
+      patch.season_label = newLogoUrl ? `${newSeason || ''}|LOGO|${newLogoUrl}` : newSeason || null;
+    }
+
+    const { data, error } = await supabase.from('teams').update(patch).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    return this.rowToTeam(data as Row);
+  }
+
+  // --------------------------------------------------------------------------
+  // Team managers (CLUB mode): delegate one team to another coach/manager by email.
+  // --------------------------------------------------------------------------
+
+  async listTeamManagers(teamId: string): Promise<import('../types').TeamManager[]> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.rpc('list_team_managers', { team_uuid: teamId });
+    if (error) {
+      // Nothing in the UI should hard-fail because an instance predates the
+      // migration — an empty list reads the same as "nobody delegated yet".
+      console.log('list_team_managers unavailable:', error.message);
+      return [];
+    }
+    return ((data ?? []) as Row[]).map((r) => this.rowToTeamManager(r));
+  }
+
+  async inviteTeamManager(
+    teamId: string,
+    email: string,
+    role: import('../types').TeamManagerRole = 'manager',
+    name?: string,
+  ): Promise<import('../types').TeamManager> {
+    const { supabase } = await this.ctx();
+
+    // Read server-side rather than trusting a client-supplied team name — this
+    // is the only place that name reaches an email, and the RPC below already
+    // needs a round trip anyway.
+    const teamRow = (await supabase.from('teams').select('name').eq('id', teamId).maybeSingle()).data as
+      | Row
+      | null;
+    const teamName = teamRow?.name || 'a team';
+
+    const invite = async () =>
+      await supabase.rpc('invite_team_manager_by_email', {
+        team_uuid: teamId,
+        lookup_email: email.trim(),
+        manager_role: role,
+      });
+
+    let { data, error } = await invite();
+    let password: string | undefined;
+
+    // The invitee may not have an account yet. Stand one up the same way staff
+    // invites do (create-user edge function -> real GoTrue password hash), then
+    // retry the delegation once so the club isn't blocked on the coach signing
+    // up first.
+    if (error && error.message.includes('User not found')) {
+      password = Math.random().toString(36).slice(-8) + 'Aa1!';
+      const { data: created, error: fnError } = await supabase.functions.invoke('create-user', {
+        body: {
+          email: email.trim(),
+          password,
+          display_name: name?.trim() || email.trim().split('@')[0],
+          account_type: 'coach',
+        },
+      });
+      if (fnError) {
+        let msg = fnError.message;
+        try {
+          const body = await (fnError as any).context.json();
+          if (body?.error) msg = body.error;
+        } catch { }
+        throw new Error(msg || 'Could not create an account for that email address');
+      }
+      if ((created as any)?.error) throw new Error((created as any).error);
+
+      ({ data, error } = await invite());
+      if (error) throw error;
+    } else if (error) {
+      throw error;
+    }
+
+    // Sent either way now: an existing coach getting handed a team is exactly
+    // as much "you now have access to this" as one who needed an account
+    // created for them — only the credentials block differs (password is
+    // undefined on the existing-user path, so the email template omits it).
+    try {
+      await this.sendEmail('team_manager_invite', email.trim(), { teamName, role, password });
+    } catch (e) {
+      console.log('Failed to send team manager invite email:', e);
+    }
+
+    return this.rowToTeamManager(data);
+  }
+
+  async removeTeamManager(managerId: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('remove_team_manager', { manager_id: managerId });
+    if (error) throw error;
+  }
+
+  private rowToTeamManager(r: Row): import('../types').TeamManager {
+    return {
+      id: r.id,
+      teamId: r.teamId ?? r.team_id,
+      userId: r.userId ?? r.user_id,
+      email: r.email,
+      name: r.name ?? undefined,
+      role: (r.role ?? 'manager') as import('../types').TeamManagerRole,
+      createdAt: r.created_at ? toMs(r.created_at) : Date.now(),
+    };
   }
 
   async uploadTeamLogo(teamId: string, fileUri: string, fileType: string): Promise<string> {
     const { supabase } = await this.ctx();
-    const buffer = await (await fetch(fileUri)).arrayBuffer();
 
+    const buffer = await uriToArrayBuffer(fileUri);
     const fileExtension = fileType.split('/')[1] || 'jpg';
     const filePath = `teams/${teamId}.${fileExtension}`;
 
@@ -832,6 +1213,7 @@ export class SupabaseDataSource implements DataSource {
       .from('tryouts')
       .select('*')
       .eq('account_id', accountId)
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
     if (!includeArchived) q = q.eq('archived', false);
     const rows = unwrap(await q) as Row[];
@@ -840,7 +1222,9 @@ export class SupabaseDataSource implements DataSource {
 
   async getTryout(id: string): Promise<Tryout | null> {
     const { supabase } = await this.ctx();
-    const row = (await supabase.from('tryouts').select('*').eq('id', id).maybeSingle()).data as Row | null;
+    const row = (
+      await supabase.from('tryouts').select('*').eq('id', id).is('deleted_at', null).maybeSingle()
+    ).data as Row | null;
     if (!row) return null;
     const [assembled] = await this.assembleTryouts([row]);
     return assembled ?? null;
@@ -849,30 +1233,37 @@ export class SupabaseDataSource implements DataSource {
   async listAssignedTryouts(): Promise<Tryout[]> {
     const { supabase, userId, accountId } = await this.ctx();
     const links = unwrap(
-      await supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId),
+      await supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId).neq('status', 'declined'),
     ) as Row[];
     const ids = [...new Set(links.map((l) => l.tryout_id))];
     if (!ids.length) return [];
     const rows = unwrap(
-      await supabase.from('tryouts').select('*').in('id', ids).eq('archived', false),
+      await supabase.from('tryouts').select('*').in('id', ids).eq('archived', false).is('deleted_at', null),
     ) as Row[];
     // Exclude tryouts the user already owns (those show in listTryouts).
     const assigned = rows.filter((t) => t.account_id !== accountId);
     return this.assembleTryouts(assigned);
   }
 
+  async acceptAssignedTryout(tryoutId: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('set_assessor_status', { p_tryout_id: tryoutId, p_status: 'accepted' });
+    if (error) throw new Error(error.message);
+  }
+
   async rejectAssignedTryout(tryoutId: string): Promise<void> {
-    const { supabase, userId } = await this.ctx();
-    const { error } = await supabase
-      .from('tryout_assessors')
-      .delete()
-      .eq('tryout_id', tryoutId)
-      .eq('user_id', userId);
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('set_assessor_status', { p_tryout_id: tryoutId, p_status: 'declined' });
     if (error) throw new Error(error.message);
   }
 
   async createTryout(form: CreateAssessmentForm): Promise<Tryout> {
-    const { supabase, userId, accountId } = await this.ctx();
+    return this.withFreshAccount(() => this._createTryout(form));
+  }
+
+  private async _createTryout(form: CreateAssessmentForm): Promise<Tryout> {
+    const { supabase, userId } = await this.ctx();
+    const accountId = await this.writableAccountId();
     const profile = await this.loadUserProfile(userId);
     const weights = getDefaultWeights(form.sport);
     const settings = {
@@ -1024,10 +1415,21 @@ export class SupabaseDataSource implements DataSource {
 
   async deleteTryout(id: string): Promise<void> {
     const { supabase } = await this.ctx();
-    unwrap(await supabase.from('tryouts').delete().eq('id', id).select().maybeSingle());
+    // Soft delete — the row (and the evaluations/scores it cascades to) stays
+    // in the database so it still counts toward a player's permanent history,
+    // it just disappears from every coach-facing view (see the deleted_at
+    // filters on listTryouts/listAssignedTryouts/getTryout).
+    unwrap(
+      await supabase
+        .from('tryouts')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .maybeSingle(),
+    );
   }
 
-  async sendEmail(type: 'org_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: any): Promise<void> {
+  async sendEmail(type: 'org_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: any): Promise<void> {
     const { supabase } = await this.ctx();
     const { error } = await supabase.functions.invoke('send-email', {
       body: { type, to, payload },
@@ -1136,14 +1538,25 @@ export class SupabaseDataSource implements DataSource {
       }
     }
 
-    const row = unwrap(
-      await supabase.from('athletes').insert({ account_id: accountId, ...fields }).select('id').single(),
-    ) as Row;
-    return row.id;
+    // Insert via create_athlete_for_caller() rather than a direct table insert:
+    // it treats account_id as a hint and resolves the real owning account from
+    // auth.uid() server-side, so a stale cached accountId can no longer produce
+    // an RLS rejection that survives until the app process restarts. The same
+    // owner/admin/coach roles are still required.
+    const { data, error } = await supabase.rpc('create_athlete_for_caller', {
+      payload: { account_id: accountId, ...fields },
+    });
+    if (error) throw new Error(error.message);
+    return data as string;
   }
 
   async addPlayer(tryoutId: string, form: AddPlayerForm): Promise<Player> {
-    const { supabase, accountId } = await this.ctx();
+    return this.withFreshAccount(() => this._addPlayer(tryoutId, form));
+  }
+
+  private async _addPlayer(tryoutId: string, form: AddPlayerForm): Promise<Player> {
+    const { supabase } = await this.ctx();
+    const accountId = await this.writableAccountId();
     if (typeof tryoutId === 'object' && tryoutId !== null) {
       tryoutId = String((tryoutId as any).id || tryoutId);
     }
@@ -1256,17 +1669,25 @@ export class SupabaseDataSource implements DataSource {
 
   async deletePlayer(_tryoutId: string, playerId: string): Promise<void> {
     const { supabase } = await this.ctx();
+    // Soft delete — the participant row (and its evaluations/scores) stays in
+    // the database so it still counts toward the player's permanent profile
+    // history, it just disappears from this tryout's active roster (see the
+    // removed_at filter in assembleTryouts).
     unwrap(
-      await supabase.from('tryout_participants').delete().eq('id', playerId).select().maybeSingle(),
+      await supabase
+        .from('tryout_participants')
+        .update({ removed_at: new Date().toISOString() })
+        .eq('id', playerId)
+        .select()
+        .maybeSingle(),
     );
   }
 
+
   async uploadPlayerPhoto(athleteId: string, fileUri: string, fileType: string): Promise<string> {
     const { supabase } = await this.ctx();
-    // On the web the picker hands us a blob:/data: URL for the chosen File;
-    // fetch reads either shape straight into bytes.
-    const buffer = await (await fetch(fileUri)).arrayBuffer();
 
+    const buffer = await uriToArrayBuffer(fileUri);
     const fileExtension = fileType.split('/')[1] || 'jpg';
     const filePath = `${athleteId}.${fileExtension}`;
 
@@ -1298,6 +1719,7 @@ export class SupabaseDataSource implements DataSource {
 
     return publicUrlWithCacheBuster;
   }
+
 
   async importLibraryPlayers(
     tryoutId: string,
@@ -1461,8 +1883,21 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // ─── Testing utilities (association/enterprise) ───────────────────────────────
-  async generateTestData(tryoutId: string, options: DummyDataOptions): Promise<DummyDataResult> {
-    const { supabase, accountId, userId } = await this.ctx();
+  async generateTestData(
+    tryoutId: string,
+    options: DummyDataOptions,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<DummyDataResult> {
+    return this.withFreshAccount(() => this._generateTestData(tryoutId, options, onProgress));
+  }
+
+  private async _generateTestData(
+    tryoutId: string,
+    options: DummyDataOptions,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<DummyDataResult> {
+    const { supabase, userId } = await this.ctx();
+    const accountId = await this.writableAccountId();
     const tryout = await this.getTryout(tryoutId);
     if (!tryout) throw new Error('Assessment not found');
 
@@ -1478,14 +1913,35 @@ export class SupabaseDataSource implements DataSource {
       throw new Error('NO_RUBRICS');
     }
 
-    const n = clampInt(options?.count, 1, 250, 50);
+    const n = clampInt(options?.count, 1, 1000, 50);
     const currentYear = new Date().getFullYear();
+
+    // Progress is measured in the records the user asked for, so every target —
+    // registrations, roster, or both — drives the bar, not just the AI-scored
+    // path. The AI generation round trip is the slow half of a scored roster, so
+    // it owns half of that phase's share; an unscored batch is generated
+    // locally and instantly, leaving the whole share to insertion.
+    const regUnits = wantsRegistrations ? n : 0;
+    const rosterUnits = wantsRoster ? n : 0;
+    const totalUnits = regUnits + rosterUnits;
+    const genWeight = withScores ? rosterUnits * 0.5 : 0;
+    const insertWeight = rosterUnits - genWeight;
+    let doneUnits = 0;
+    // Monotonic — a later phase must never walk the bar backwards.
+    const report = (units: number) => {
+      doneUnits = Math.min(totalUnits, Math.max(doneUnits, units));
+      onProgress?.(Math.round(doneUnits), totalUnits);
+    };
+    report(0);
 
     // Only pay for the AI round trip when the batch actually needs scores;
     // an unscored batch just needs names, so generate those locally.
     const generated: ScorableDummyPlayer[] = withScores
-      ? await this.generateAITestPlayers(supabase, tryout, rubrics, n, currentYear)
+      ? await this.generateAITestPlayers(supabase, tryout, rubrics, n, currentYear, (done) =>
+          report((done / n) * genWeight),
+        )
       : generateDummyPlayers(n, tryout.sport, currentYear);
+    report(genWeight);
 
     let registrations = 0;
     if (wantsRegistrations) {
@@ -1494,19 +1950,30 @@ export class SupabaseDataSource implements DataSource {
       const regPlayers = target === 'both'
         ? generateDummyPlayers(n, tryout.sport, currentYear)
         : generated;
-      registrations = await this.insertDummyRegistrations(supabase, tryout, regPlayers);
+      registrations = await this.insertDummyRegistrations(supabase, tryout, regPlayers, (inserted) =>
+        report(genWeight + inserted),
+      );
     }
 
     let players = 0;
     let evaluations = 0;
     if (wantsRoster) {
-      const res = await this.insertDummyRoster(supabase, accountId, userId, tryout, generated, {
-        withScores,
-        sessionsPerPlayer: clampInt(options?.sessionsPerPlayer, 1, 5, 1),
-      });
+      const res = await this.insertDummyRoster(
+        supabase,
+        accountId,
+        userId,
+        tryout,
+        generated,
+        {
+          withScores,
+          sessionsPerPlayer: clampInt(options?.sessionsPerPlayer, 1, 5, 1),
+        },
+        (fraction) => report(genWeight + regUnits + fraction * insertWeight),
+      );
       players = res.players;
       evaluations = res.evaluations;
     }
+    report(totalUnits);
 
     // Only set flags we actually earned — `markOnboarding` spreads the patch, so
     // an `undefined` value would wipe a step the user had already completed.
@@ -1527,6 +1994,8 @@ export class SupabaseDataSource implements DataSource {
     supabase: any,
     tryout: Tryout,
     generated: GeneratedPlayer[],
+    /** Called with the running inserted-row count after each chunk lands. */
+    onProgress?: (inserted: number) => void,
   ): Promise<number> {
     const positions =
       POSITIONS_BY_SPORT[tryout.sport as keyof typeof POSITIONS_BY_SPORT] ?? POSITIONS_BY_SPORT.Other;
@@ -1554,6 +2023,7 @@ export class SupabaseDataSource implements DataSource {
         await supabase.from('registrations').insert(rows.slice(i, i + 200)).select('id'),
       ) as Row[];
       inserted += chunk.length;
+      onProgress?.(inserted);
     }
     return inserted;
   }
@@ -1570,23 +2040,35 @@ export class SupabaseDataSource implements DataSource {
     tryout: Tryout,
     generated: ScorableDummyPlayer[],
     opts: { withScores: boolean; sessionsPerPlayer: number },
+    /** Called with this phase's completion as a 0–1 fraction, chunk by chunk, so
+     * a caller can fold it into a wider progress bar. */
+    onProgress?: (fraction: number) => void,
   ): Promise<{ players: number; evaluations: number; athleteIds: string[] }> {
-    if (generated.length === 0) return { players: 0, evaluations: 0, athleteIds: [] };
+    if (generated.length === 0) {
+      onProgress?.(1);
+      return { players: 0, evaluations: 0, athleteIds: [] };
+    }
 
     // 1. Bulk-insert canonical athletes (no guardian contact → no side effects).
-    const athletes = unwrap(
-      await supabase
-        .from('athletes')
-        .insert(
-          generated.map((g) => ({
-            account_id: accountId,
-            first_name: g.form.first,
-            last_name: g.form.last,
-            year_of_birth: g.form.yearOfBirth ? Number(g.form.yearOfBirth) : null,
-          })),
-        )
-        .select('id'),
-    ) as Row[];
+    // Routed through create_athletes_for_caller() rather than a direct table
+    // insert — it takes account_id as a hint and resolves the real owning
+    // account from auth.uid() server-side, so a stale or read-only cached
+    // accountId can't fail the athletes_insert policy with "new row violates
+    // row-level security policy". The RPC returns ids in input order.
+    const { data: athleteIdsData, error: athleteInsertError } = await supabase.rpc(
+      'create_athletes_for_caller',
+      {
+        account_hint: accountId,
+        players: generated.map((g) => ({
+          first_name: g.form.first,
+          last_name: g.form.last,
+          year_of_birth: g.form.yearOfBirth ? Number(g.form.yearOfBirth) : null,
+        })),
+      },
+    );
+    if (athleteInsertError) throw new Error(athleteInsertError.message);
+    const athletes = (athleteIdsData ?? []) as string[];
+    onProgress?.(0.15);
 
     // 2. Bulk-insert participants, tagged via current_team so they can be cleared.
     const participants = unwrap(
@@ -1595,7 +2077,7 @@ export class SupabaseDataSource implements DataSource {
         .insert(
           generated.map((g, i) => ({
             tryout_id: tryout.id,
-            athlete_id: athletes[i].id,
+            athlete_id: athletes[i],
             jersey: g.form.jersey || null,
             position: g.form.pos || null,
             current_team: TEST_DATA_TAG,
@@ -1606,8 +2088,13 @@ export class SupabaseDataSource implements DataSource {
         .select('id'),
     ) as Row[];
 
-    const athleteIds = athletes.map((a) => a.id as string);
-    if (!opts.withScores) return { players: participants.length, evaluations: 0, athleteIds };
+    onProgress?.(0.3);
+
+    const athleteIds = athletes;
+    if (!opts.withScores) {
+      onProgress?.(1);
+      return { players: participants.length, evaluations: 0, athleteIds };
+    }
 
     const rubrics = tryout.settings.customRubrics ?? [];
 
@@ -1646,6 +2133,7 @@ export class SupabaseDataSource implements DataSource {
           await supabase.from('evaluations').insert(evalRows.slice(i, i + 500)).select('id'),
         ) as Row[]),
       );
+      onProgress?.(evalRows.length ? 0.3 + 0.4 * (evals.length / evalRows.length) : 0.7);
     }
 
     // 4. Build and chunk-insert scores for every applicable rubric per eval.
@@ -1663,9 +2151,13 @@ export class SupabaseDataSource implements DataSource {
         if (value !== undefined) scoreRows.push({ evaluation_id: e.id, rubric_key: s.key, value });
       }
     });
+    let scoresInserted = 0;
     for (let i = 0; i < scoreRows.length; i += 500) {
       unwrap(await supabase.from('evaluation_scores').insert(scoreRows.slice(i, i + 500)).select('id'));
+      scoresInserted += Math.min(500, scoreRows.length - i);
+      onProgress?.(0.7 + 0.3 * (scoresInserted / scoreRows.length));
     }
+    onProgress?.(1);
 
     return { players: participants.length, evaluations: evals.length, athleteIds };
   }
@@ -1677,12 +2169,23 @@ export class SupabaseDataSource implements DataSource {
    * assessment is flagged `settings.isTestData` so `clearDummyTeams` can undo
    * the entire bundle later.
    */
-  async generateDummyTeams(options: DummyTeamOptions): Promise<DummyTeamResult> {
-    const { supabase, accountId, userId } = await this.ctx();
+  async generateDummyTeams(
+    options: DummyTeamOptions,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<DummyTeamResult> {
+    return this.withFreshAccount(() => this._generateDummyTeams(options, onProgress));
+  }
+
+  private async _generateDummyTeams(
+    options: DummyTeamOptions,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<DummyTeamResult> {
+    const { supabase, userId } = await this.ctx();
+    const accountId = await this.writableAccountId();
     const profile = await this.loadUserProfile(userId);
 
     const teamCount = clampInt(options?.teams, 1, 10, 1);
-    const playersPerTeam = clampInt(options?.playersPerTeam, 1, 100, 20);
+    const playersPerTeam = clampInt(options?.playersPerTeam, 1, 1000, 20);
     const sessionsPerPlayer = clampInt(options?.sessionsPerPlayer, 1, 5, 1);
     const withScores = options?.withScores !== false;
     const currentYear = new Date().getFullYear();
@@ -1697,7 +2200,12 @@ export class SupabaseDataSource implements DataSource {
       evaluations: 0,
     };
 
+    const totalPlayers = teamCount * playersPerTeam;
+    onProgress?.(0, totalPlayers);
+    let teamIdx = 0;
     for (const name of names) {
+      const teamOffset = teamIdx * playersPerTeam;
+      teamIdx++;
       const team = unwrap(
         await supabase
           .from('teams')
@@ -1742,14 +2250,26 @@ export class SupabaseDataSource implements DataSource {
       });
 
       const [tryout] = await this.assembleTryouts([tryoutRow]);
+      // Each team's slice of the bar is split between generating its players and
+      // writing them, so the bar advances during both halves rather than
+      // standing still through the inserts.
+      const genShare = withScores ? playersPerTeam * 0.5 : 0;
+      const insertShare = playersPerTeam - genShare;
       const generated = withScores
-        ? await this.generateAITestPlayers(supabase, tryout, rubrics, playersPerTeam, currentYear)
+        ? await this.generateAITestPlayers(supabase, tryout, rubrics, playersPerTeam, currentYear, (done) =>
+            onProgress?.(Math.round(teamOffset + (done / playersPerTeam) * genShare), totalPlayers),
+          )
         : generateDummyPlayers(playersPerTeam, tryout.sport, currentYear);
 
-      const res = await this.insertDummyRoster(supabase, accountId, userId, tryout, generated, {
-        withScores,
-        sessionsPerPlayer,
-      });
+      const res = await this.insertDummyRoster(
+        supabase,
+        accountId,
+        userId,
+        tryout,
+        generated,
+        { withScores, sessionsPerPlayer },
+        (fraction) => onProgress?.(Math.round(teamOffset + genShare + fraction * insertShare), totalPlayers),
+      );
       result.players += res.players;
       result.evaluations += res.evaluations;
 
@@ -1764,6 +2284,8 @@ export class SupabaseDataSource implements DataSource {
           sourceTryoutId: tryout.id,
         })),
       );
+
+      onProgress?.(teamOffset + playersPerTeam, totalPlayers);
     }
 
     const steps: Record<string, boolean> = { createTeam: true, createAssessment: true };
@@ -1822,6 +2344,8 @@ export class SupabaseDataSource implements DataSource {
     rubrics: any[],
     count: number,
     currentYear: number,
+    /** Called with the running generated-player count after each concurrent chunk batch lands. */
+    onProgress?: (done: number) => void,
   ): Promise<Array<{ form: AITestPlayer['form']; ability: number; scores?: Record<string, number> }>> {
     const sport = tryout.sport;
     const positions = POSITIONS_BY_SPORT[sport as keyof typeof POSITIONS_BY_SPORT] ?? POSITIONS_BY_SPORT.Other;
@@ -1862,6 +2386,7 @@ export class SupabaseDataSource implements DataSource {
         }),
       );
       for (const r of results) collected.push(...r);
+      onProgress?.(collected.length);
     }
 
     // Top up any shortfall (partial or total AI failure) with local generation.
@@ -1973,7 +2498,12 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async addRegistrationToRoster(tryoutId: string, registrationId: string): Promise<Player> {
-    const { supabase, accountId } = await this.ctx();
+    return this.withFreshAccount(() => this._addRegistrationToRoster(tryoutId, registrationId));
+  }
+
+  private async _addRegistrationToRoster(tryoutId: string, registrationId: string): Promise<Player> {
+    const { supabase } = await this.ctx();
+    const accountId = await this.writableAccountId();
     const reg = unwrap(
       await supabase.from('registrations').select('*').eq('id', registrationId).single(),
     ) as Row;
@@ -2009,6 +2539,250 @@ export class SupabaseDataSource implements DataSource {
       .eq('id', registrationId);
     await this.markOnboarding({ addPlayers: true });
     return this.fetchPlayer(participant.id);
+  }
+
+  async addRegistrationToTeam(teamId: string, registrationId: string): Promise<TeamRosterPlayer[]> {
+    return this.withFreshAccount(() => this._addRegistrationToTeam(teamId, registrationId));
+  }
+
+  private async _addRegistrationToTeam(teamId: string, registrationId: string): Promise<TeamRosterPlayer[]> {
+    const { supabase } = await this.ctx();
+    const accountId = await this.writableAccountId();
+    const reg = unwrap(
+      await supabase.from('registrations').select('*').eq('id', registrationId).single(),
+    ) as Row;
+    const athleteId = await this.createAthlete(accountId, {
+      first_name: reg.first_name,
+      last_name: reg.last_name,
+      year_of_birth: reg.year_of_birth ?? null,
+      guardian_name: reg.guardian_name || null,
+      guardian_email: reg.guardian_email || null,
+      guardian_phone: reg.guardian_phone || null,
+      medical_info: reg.medical_info || null,
+      about: reg.about_player || null,
+    });
+    const rows = await this.addTeamRosterPlayers(teamId, [
+      { athleteId, pos: reg.position_trying_out_for || undefined },
+    ]);
+    await supabase
+      .from('registrations')
+      .update({ status: 'added', athlete_id: athleteId })
+      .eq('id', registrationId);
+    await this.markOnboarding({ addPlayers: true });
+    return rows;
+  }
+
+  /**
+   * Bulk twin of addRegistrationToRoster — a simple sequential loop over the
+   * singular placement rather than mobile's chunked-concurrency RPC pipeline
+   * (create_athletes_for_caller/resolve_guardians_for_caller): that machinery
+   * exists to survive statement timeouts at a scale web hasn't hit, and
+   * introducing new unverified RPCs for a perf concern isn't worth the risk.
+   */
+  /**
+   * Resolve (and create, where needed) every distinct guardian email across
+   * the *whole* selection in one pass, before any chunk starts creating
+   * athletes. Returns a lowercase-email -> guardian_user_id map.
+   *
+   * Deduplicating up front — rather than per chunk — is what makes it safe to
+   * run the resolve calls concurrently: since each email is only ever handed
+   * to one batch, two batches can never race to insert the same new
+   * auth.users row at once.
+   *
+   * Invite emails for newly created guardians are dispatched afterwards
+   * without being awaited — best-effort, kept off the placement critical path
+   * since the caller only needs the returned map before it can create athletes.
+   */
+  private async resolveGuardiansForRegistrations(supabase: any, regs: Row[]): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    const displayNameByEmail = new Map<string, string>();
+    for (const reg of regs) {
+      const email = reg.guardian_email;
+      if (!email) continue;
+      const lc = String(email).toLowerCase();
+      if (!displayNameByEmail.has(lc)) displayNameByEmail.set(lc, reg.guardian_name || 'Guardian');
+    }
+    if (displayNameByEmail.size === 0) return map;
+
+    const entries = [...displayNameByEmail.entries()];
+    const batches: { email: string; display_name: string }[][] = [];
+    for (let i = 0; i < entries.length; i += GUARDIAN_RESOLVE_BATCH) {
+      batches.push(entries.slice(i, i + GUARDIAN_RESOLVE_BATCH).map(([email, display_name]) => ({ email, display_name })));
+    }
+
+    const invites: { email: string; password: string }[] = [];
+    await mapPool(batches, REGISTRATION_CHUNK_CONCURRENCY, async (batch) => {
+      try {
+        const { data, error } = await supabase.rpc('resolve_guardians_for_caller', { guardians: batch });
+        if (error) throw new Error(error.message);
+        const resolved = (data ?? []) as { email: string; user_id: string | null; created: boolean; password: string | null }[];
+        for (const r of resolved) {
+          if (r.email && r.user_id) map.set(r.email.toLowerCase(), r.user_id);
+          if (r.created && r.password) invites.push({ email: r.email, password: r.password });
+        }
+      } catch (err) {
+        console.warn('Failed to bulk-resolve guardian accounts:', err);
+      }
+    });
+
+    if (invites.length > 0) {
+      mapPool(invites, GUARDIAN_EMAIL_CONCURRENCY, (r) =>
+        this.sendEmail('org_invite', r.email, { role: 'guardian', password: r.password }).catch((emailErr) =>
+          console.warn('Failed to send auto-created guardian invite email:', emailErr),
+        ),
+      ).catch((err) => console.warn('Guardian invite dispatch failed:', err));
+    }
+
+    return map;
+  }
+
+  /** Build a `create_athletes_for_caller` payload row from a registration. */
+  private athleteFieldsFromRegistration(reg: Row, guardianMap: Map<string, string>): Row {
+    const guardianUserId = reg.guardian_email ? guardianMap.get(String(reg.guardian_email).toLowerCase()) : undefined;
+    return {
+      first_name: reg.first_name,
+      last_name: reg.last_name,
+      year_of_birth: reg.year_of_birth ?? null,
+      guardian_name: reg.guardian_name || null,
+      guardian_email: reg.guardian_email || null,
+      guardian_phone: reg.guardian_phone || null,
+      guardian_user_id: guardianUserId || null,
+      medical_info: reg.medical_info || null,
+      about: reg.about_player || null,
+    };
+  }
+
+  /** Mark a placed chunk's registrations as added, one request per chunk. */
+  private async markRegistrationsAdded(supabase: any, placed: { reg: Row; athleteId: string }[]): Promise<void> {
+    // `athlete_id` differs per row, so this can't be one `update ... in (...)`.
+    // Upserting the whole row instead — and it has to be the *whole* row, spread
+    // from the `select('*')` these came back on: an upsert is an INSERT with ON
+    // CONFLICT DO UPDATE, and Postgres checks NOT NULL on the proposed tuple
+    // before it ever looks for the conflict, so a partial payload would fail on
+    // registrations' not-null columns rather than falling through to the update.
+    unwrap(
+      await supabase
+        .from('registrations')
+        .upsert(
+          placed.map(({ reg, athleteId }) => ({ ...reg, status: 'added', athlete_id: athleteId })),
+          { onConflict: 'id' },
+        )
+        .select('id'),
+    );
+  }
+
+  /**
+   * Shared body of both bulk placement paths: split into id chunks, load
+   * every chunk's registration rows up front (read-only, so this is fully
+   * parallel regardless of the write-side concurrency limit), resolve every
+   * distinct guardian in the whole selection exactly once, then create
+   * athletes chunk by chunk — with bounded concurrency, since none of this
+   * phase touches auth.users and so can't hit the guardian create-race above.
+   * `place` does the caller-specific roster/participant insert for a chunk's
+   * newly created athletes.
+   */
+  private async placeRegistrations(
+    supabase: any,
+    accountId: string,
+    registrationIds: string[],
+    place: (placed: { reg: Row; athleteId: string }[]) => Promise<void>,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const idChunks: string[][] = [];
+    for (let i = 0; i < registrationIds.length; i += REGISTRATION_CHUNK) {
+      idChunks.push(registrationIds.slice(i, i + REGISTRATION_CHUNK));
+    }
+    if (idChunks.length === 0) return 0;
+
+    const regChunks = await mapPool(idChunks, REGISTRATION_CHUNK_CONCURRENCY * 2, async (ids) => {
+      // Postgres doesn't promise `.in()` comes back in the order the ids were
+      // passed, so everything downstream is keyed off this array's own order
+      // rather than the caller's id list.
+      return unwrap(await supabase.from('registrations').select('*').in('id', ids)) as Row[];
+    });
+
+    const guardianMap = await this.resolveGuardiansForRegistrations(supabase, regChunks.flat());
+
+    let done = 0;
+    const total = registrationIds.length;
+    await mapPool(regChunks, REGISTRATION_CHUNK_CONCURRENCY, async (regs) => {
+      if (regs.length === 0) return;
+      const fields = regs.map((reg) => this.athleteFieldsFromRegistration(reg, guardianMap));
+      const { data, error } = await supabase.rpc('create_athletes_for_caller', {
+        account_hint: accountId,
+        players: fields,
+      });
+      if (error) throw new Error(error.message);
+      const athleteIds = (data ?? []) as string[];
+      const placed = regs.map((reg, i) => ({ reg, athleteId: athleteIds[i] }));
+
+      await place(placed);
+      await this.markRegistrationsAdded(supabase, placed);
+
+      done += placed.length;
+      onProgress?.(done, total);
+    });
+
+    if (done > 0) await this.markOnboarding({ addPlayers: true });
+    return done;
+  }
+
+  async addRegistrationsToRoster(
+    tryoutId: string,
+    registrationIds: string[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const { supabase, accountId } = await this.ctx();
+    return this.placeRegistrations(
+      supabase,
+      accountId,
+      registrationIds,
+      async (placed) => {
+        unwrap(
+          await supabase
+            .from('tryout_participants')
+            .insert(
+              placed.map(({ reg, athleteId }) => ({
+                tryout_id: tryoutId,
+                athlete_id: athleteId,
+                position_trying_out_for: reg.position_trying_out_for || null,
+                current_team: reg.current_team || null,
+                current_level: reg.current_level || null,
+                registration_source: 'qr',
+                friend1_name: reg.friend1_name || null,
+                friend2_name: reg.friend2_name || null,
+              })),
+            )
+            .select('id'),
+        );
+      },
+      onProgress,
+    );
+  }
+
+  /** Bulk twin of addRegistrationToTeam — same chunked pipeline as addRegistrationsToRoster. */
+  async addRegistrationsToTeam(
+    teamId: string,
+    registrationIds: string[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const { supabase, accountId } = await this.ctx();
+    return this.placeRegistrations(
+      supabase,
+      accountId,
+      registrationIds,
+      async (placed) => {
+        // addTeamRosterPlayers already upserts the whole batch in one request.
+        await this.addTeamRosterPlayers(
+          teamId,
+          placed.map(({ reg, athleteId }) => ({
+            athleteId,
+            pos: reg.position_trying_out_for || undefined,
+          })),
+        );
+      },
+      onProgress,
+    );
   }
 
   async dismissRegistration(_tryoutId: string, registrationId: string): Promise<void> {
@@ -2064,6 +2838,45 @@ export class SupabaseDataSource implements DataSource {
 
     await this.updateTryout(tryoutId, { teamBuilder: result });
     return result;
+  }
+
+  async listTeamBuilderResults(tryoutId: string): Promise<TeamBuilderResult[]> {
+    const { supabase } = await this.ctx();
+    const rows = unwrap(
+      await supabase
+        .from('team_builder_results')
+        .select('*')
+        .eq('tryout_id', tryoutId)
+        .order('created_at', { ascending: false }),
+    ) as Row[];
+    return rows.map((r) => this.rowToTeamBuilderResult(r));
+  }
+
+  async saveTeamBuilderResult(tryoutId: string, label: string, state: TeamBuilderState): Promise<TeamBuilderResult> {
+    const { supabase, userId } = await this.ctx();
+    const row = unwrap(
+      await supabase
+        .from('team_builder_results')
+        .insert({ tryout_id: tryoutId, label, state, created_by: userId })
+        .select()
+        .single(),
+    ) as Row;
+    return this.rowToTeamBuilderResult(row);
+  }
+
+  async deleteTeamBuilderResult(id: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    unwrap(await supabase.from('team_builder_results').delete().eq('id', id));
+  }
+
+  private rowToTeamBuilderResult(r: Row): TeamBuilderResult {
+    return {
+      id: r.id,
+      tryoutId: r.tryout_id,
+      label: r.label,
+      state: r.state,
+      createdAt: new Date(r.created_at).getTime(),
+    };
   }
 
   async getAiPlayerSummary(tryoutId: string, playerId: string): Promise<AiPlayerSummary> {
@@ -2324,7 +3137,8 @@ export class SupabaseDataSource implements DataSource {
         const { data: participants } = await supabase
           .from('tryout_participants')
           .select('athlete_id, jersey')
-          .in('tryout_id', tryoutIds);
+          .in('tryout_id', tryoutIds)
+          .is('removed_at', null);
 
         if (participants && participants.length > 0) {
           // De-duplicate by athlete_id
@@ -2576,7 +3390,8 @@ export class SupabaseDataSource implements DataSource {
     const { data: participants } = await supabase
       .from('tryout_participants')
       .select('athlete_id, jersey')
-      .in('tryout_id', tryoutIds);
+      .in('tryout_id', tryoutIds)
+      .is('removed_at', null);
 
     if (!participants || participants.length === 0) {
       return [];
@@ -2711,6 +3526,51 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
+  private mapTeamMessage(row: Row): TeamMessage {
+    return {
+      id: row.id,
+      seasonId: row.season_id,
+      authorUserId: row.author_user_id,
+      authorName: row.author_name,
+      authorRole: row.author_role,
+      body: row.body,
+      createdAt: toMs(row.created_at),
+    };
+  }
+
+  // userCtx() rather than ctx(): a guardian has no staff account of their own,
+  // and RLS here keys off can_access_season(), not the caller's account.
+  async listTeamMessages(seasonId: string): Promise<TeamMessage[]> {
+    const { supabase } = await this.userCtx();
+    // Newest-first with a cap so a long-running team's history doesn't grow
+    // unbounded on the wire; reversed to chronological for display.
+    const rows = unwrap(
+      await supabase
+        .from('season_messages')
+        .select('*')
+        .eq('season_id', seasonId)
+        .order('created_at', { ascending: false })
+        .limit(200),
+    ) as Row[] | null;
+    return (rows ?? []).reverse().map((row) => this.mapTeamMessage(row));
+  }
+
+  async sendTeamMessage(seasonId: string, body: string): Promise<TeamMessage> {
+    const { supabase } = await this.userCtx();
+    // author_name/author_role are derived inside the function — see the
+    // season_messages migration for why clients can't insert directly.
+    const data = unwrap(
+      await supabase.rpc('send_season_message', { p_season_id: seasonId, p_body: body }),
+    );
+    const row = Array.isArray(data) ? data[0] : data;
+    return this.mapTeamMessage(row as Row);
+  }
+
+  async deleteTeamMessage(messageId: string): Promise<void> {
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('season_messages').delete().eq('id', messageId));
+  }
+
   async listAthletes(): Promise<Athlete[]> {
     const { supabase, accountId } = await this.ctx();
     const { data: athletes } = await supabase
@@ -2797,6 +3657,223 @@ export class SupabaseDataSource implements DataSource {
     };
   }
 
+  /**
+   * Everything getPlayerProfile needs to describe an athlete's assessment
+   * history — pulled out on its own so other callers (e.g. a future share
+   * snapshot) can reuse the exact same aggregation instead of duplicating it.
+   */
+  private async fetchAthleteAssessmentContext(
+    supabase: SupabaseClient,
+    athleteId: string,
+  ): Promise<{
+    participants: Row[];
+    tryoutById: Map<string, Row>;
+    teams: { teamId: string; teamName: string }[];
+    assessments: PlayerProfileAssessment[];
+  }> {
+    const { data: participantRows } = await supabase
+      .from('tryout_participants')
+      .select('id, tryout_id, jersey, position, current_team, current_level, created_at')
+      .eq('athlete_id', athleteId)
+      .is('removed_at', null);
+    const participants = participantRows ?? [];
+
+    const tryoutIds = [...new Set(participants.map((p) => p.tryout_id))];
+    const { data: tryoutRows } = tryoutIds.length
+      ? await supabase
+          .from('tryouts')
+          .select('id, name, sport, settings, tryout_date, created_at, event_type, season_id, team_id, teams(name)')
+          .in('id', tryoutIds)
+          .is('deleted_at', null)
+      : { data: [] as Row[] };
+    const tryoutById = new Map((tryoutRows ?? []).map((t) => [t.id, t]));
+
+    // A tryout's `season_id` column is only ever set when it's created from
+    // inside a Season Hub screen. What every team-linked assessment DOES have
+    // is the Season Hub entry auto-created alongside its team (see
+    // createTeam/team/new), which is what actually carries season identity here.
+    const tryoutTeamIds = [...new Set((tryoutRows ?? []).map((t) => t.team_id).filter(Boolean))];
+    const tryoutSeasonIds = [...new Set((tryoutRows ?? []).map((t) => t.season_id).filter(Boolean))];
+
+    const allSeasons: Row[] = [];
+    if (tryoutTeamIds.length > 0) {
+      const { data } = await supabase
+        .from('seasons')
+        .select('id, name, team_id, created_at')
+        .in('team_id', tryoutTeamIds)
+        .order('created_at', { ascending: false });
+      if (data) allSeasons.push(...data);
+    }
+    if (tryoutSeasonIds.length > 0) {
+      const alreadyFetchedIds = new Set(allSeasons.map((s) => s.id));
+      const remainingSeasonIds = tryoutSeasonIds.filter((id) => !alreadyFetchedIds.has(id));
+      if (remainingSeasonIds.length > 0) {
+        const { data } = await supabase.from('seasons').select('id, name, team_id, created_at').in('id', remainingSeasonIds);
+        if (data) allSeasons.push(...data);
+      }
+    }
+    allSeasons.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    const seasonsByTeamId = new Map<string, Row[]>();
+    const seasonById = new Map<string, { id: string; name: string }>();
+    for (const s of allSeasons) {
+      if (s.team_id) {
+        const arr = seasonsByTeamId.get(s.team_id) || [];
+        arr.push(s);
+        seasonsByTeamId.set(s.team_id, arr);
+      }
+      if (!seasonById.has(s.id)) seasonById.set(s.id, { id: s.id, name: s.name });
+    }
+
+    // Actual team membership (Teams feature) — the source of truth for "current
+    // team", since tryout_participants.current_team is a free-text field that's
+    // usually left blank.
+    const { data: teamRosterRows } = await supabase
+      .from('team_roster')
+      .select('team_id, created_at, teams(name)')
+      .eq('athlete_id', athleteId)
+      .order('created_at', { ascending: false });
+    const teamRoster = teamRosterRows ?? [];
+    const teams = [
+      ...new Map(
+        teamRoster.map((r) => {
+          const t = Array.isArray(r.teams) ? r.teams[0] : r.teams;
+          return [r.team_id, { teamId: r.team_id, teamName: t?.name ?? 'Unknown Team' }];
+        }),
+      ).values(),
+    ];
+
+    const participantIds = participants.map((p) => p.id);
+    const { data: evalRows } = participantIds.length
+      ? await supabase
+          .from('evaluations')
+          .select('*, evaluation_scores(rubric_key, value)')
+          .in('participant_id', participantIds)
+      : { data: [] as Row[] };
+    const evalsByParticipant = new Map<string, Evaluation[]>();
+    for (const row of evalRows ?? []) {
+      const ev = this.rowToEval(row);
+      const arr = evalsByParticipant.get(ev.playerId) ?? [];
+      arr.push(ev);
+      evalsByParticipant.set(ev.playerId, arr);
+    }
+
+    const assessments: PlayerProfileAssessment[] = participants
+      .map((p): PlayerProfileAssessment | null => {
+        const tryout = tryoutById.get(p.tryout_id);
+        if (!tryout) return null;
+        const evals = evalsByParticipant.get(p.id) ?? [];
+        const categories = getPlayerCategories(tryout.sport, p.position, tryout.settings?.customRubrics ?? []);
+        const weights = isGoaliePosition(p.position)
+          ? tryout.settings?.goalieWeights ?? {}
+          : tryout.settings?.skaterWeights ?? {};
+        const overall = evals.length ? weightedOverallAcrossEvals(evals, categories, weights) : 0;
+        const categoryScores = categoryAveragesAcrossEvals(evals, categories);
+        const latest = [...evals].sort((a, b) => b.createdAt - a.createdAt)[0];
+        const explicitSeason = tryout.season_id ? seasonById.get(tryout.season_id) : undefined;
+        let teamSeason: { id: string; name: string } | undefined;
+        if (!explicitSeason && tryout.team_id) {
+          const teamSeasons = seasonsByTeamId.get(tryout.team_id);
+          if (teamSeasons && teamSeasons.length > 0) {
+            const tryoutTime = new Date(tryout.tryout_date ?? tryout.created_at ?? Date.now()).getTime();
+            let closestSeason = teamSeasons[0];
+            let minDiff = Math.abs(new Date(closestSeason.created_at).getTime() - tryoutTime);
+            for (const s of teamSeasons) {
+              const diff = Math.abs(new Date(s.created_at).getTime() - tryoutTime);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestSeason = s;
+              }
+            }
+            teamSeason = { id: closestSeason.id, name: closestSeason.name };
+          }
+        }
+        const resolvedSeason = explicitSeason ?? teamSeason;
+        return {
+          tryoutId: tryout.id,
+          tryoutName: tryout.name,
+          seasonId: resolvedSeason?.id ?? tryout.season_id ?? undefined,
+          seasonName: resolvedSeason?.name ?? undefined,
+          eventType: EVENT_TYPE_FROM_DB[tryout.event_type] ?? 'Tryout',
+          sport: tryout.sport,
+          date: tryout.tryout_date ?? undefined,
+          position: p.position ?? undefined,
+          teamName: tryout.teams?.name ?? undefined,
+          overall,
+          categoryScores,
+          evalCount: evals.length,
+          latestRecommendation: (latest?.recommendation ?? '') as Recommendation,
+          participantId: p.id,
+          evaluations: evals.map((ev) => ({
+            ...ev,
+            overall: weightedOverallAcrossEvals([ev], categories, weights),
+          })),
+        };
+      })
+      .filter((a): a is PlayerProfileAssessment => a !== null)
+      .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+
+    return { participants, tryoutById, teams, assessments };
+  }
+
+  async getPlayerProfile(athleteId: string): Promise<PlayerProfile> {
+    const { supabase } = await this.ctx();
+
+    const { data: athleteRow } = await supabase
+      .from('athletes')
+      .select(
+        'id, first_name, last_name, avatar_url, guardian_name, guardian_email, guardian_phone, default_position, year_of_birth, about, medical_info',
+      )
+      .eq('id', athleteId)
+      .maybeSingle();
+    if (!athleteRow) throw new Error('Athlete not found');
+
+    const { participants, tryoutById, teams, assessments } = await this.fetchAthleteAssessmentContext(supabase, athleteId);
+
+    const { data: rosterRows } = await supabase
+      .from('season_roster')
+      .select('season_id, seasons(name, team_name)')
+      .eq('athlete_id', athleteId);
+    const pastSeasons = (rosterRows || []).map((r) => {
+      const s = Array.isArray(r.seasons) ? r.seasons[0] : r.seasons;
+      return {
+        seasonId: r.season_id,
+        seasonName: s?.name || 'Unknown Season',
+        teamName: s?.team_name || 'Unknown Team',
+      };
+    });
+
+    const mostRecent = [...participants].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    ).pop();
+    const mostRecentTryout = mostRecent ? tryoutById.get(mostRecent.tryout_id) : undefined;
+
+    // "Current team" priority: actual Teams roster membership (most authoritative)
+    // > the free-text field on their latest assessment > the team that
+    // assessment was run for.
+    const currentTeam = teams[0]?.teamName ?? mostRecent?.current_team ?? mostRecentTryout?.teams?.name ?? undefined;
+
+    return {
+      athleteId,
+      first: athleteRow.first_name ?? '',
+      last: athleteRow.last_name ?? '',
+      avatarUrl: athleteRow.avatar_url ?? undefined,
+      currentPosition: mostRecent?.position ?? athleteRow.default_position ?? undefined,
+      currentTeam,
+      currentLevel: mostRecent?.current_level ?? undefined,
+      jersey: mostRecent?.jersey ?? undefined,
+      yearOfBirth: athleteRow.year_of_birth != null ? String(athleteRow.year_of_birth) : undefined,
+      aboutChild: athleteRow.about ?? undefined,
+      medicalInfo: athleteRow.medical_info ?? undefined,
+      guardianName: athleteRow.guardian_name ?? undefined,
+      guardianEmail: athleteRow.guardian_email ?? undefined,
+      guardianPhone: athleteRow.guardian_phone ?? undefined,
+      pastSeasons,
+      teams,
+      assessments,
+    };
+  }
+
   async setEventAvailability(
     seasonId: string,
     eventId: string,
@@ -2856,90 +3933,42 @@ export class SupabaseDataSource implements DataSource {
 
   async getEnterprisePayments(): Promise<EnterprisePayment[]> {
     const { supabase, accountId } = await this.ctx();
-
-    // 1. Fetch payments from database payments table with joined names
-    try {
-      const { data: dbPayments } = await supabase
+    // Only fees collected through the connected Stripe account carry a
+    // registration_id (tryout fees) or season_roster_id (team/season fees) —
+    // TryoutHQ's own subscription invoices (billed on the platform's Stripe
+    // account) never do, so this filter is what excludes them from the
+    // coach's payout ledger.
+    const rows = (
+      await supabase
         .from('payments')
-        .select('*, athletes(first_name, last_name), tryouts(name)')
+        .select(
+          '*, registrations(first_name, last_name), tryouts(name, teams(name)), ' +
+            'season_roster(athletes(first_name, last_name), seasons(name, team_name))',
+        )
         .eq('account_id', accountId)
-        .order('created_at', { ascending: false });
-
-      if (dbPayments && dbPayments.length > 0) {
-        return dbPayments.map((p: any) => ({
-          id: p.id,
-          playerName: p.athletes
-            ? `${p.athletes.first_name || ''} ${p.athletes.last_name || ''}`.trim()
-            : 'Athlete',
-          assessmentName: p.tryouts?.name || 'Assessment',
-          amount: (p.amount_cents ?? 0) / 100,
-          status: p.status || 'paid',
-          receivedAt: p.received_at ? toMs(p.received_at) : toMs(p.created_at),
-        }));
-      }
-    } catch {
-      // Fall through to registration fallback if query fails or table structure differs
-    }
-
-    // 2. Fallback: Derive payment ledger from tryouts and registrations
-    const tryouts = await this.listTryouts(false);
-    const derivedPayments: EnterprisePayment[] = [];
-
-    for (const t of tryouts) {
-      const regs = t.registrations ?? [];
-      const fee = 49.99;
-
-      for (const r of regs) {
-        const status: 'paid' | 'pending' | 'refunded' =
-          r.paymentStatus === 'paid' || r.status === 'added'
-            ? 'paid'
-            : r.paymentStatus === 'partial' || r.status === 'pending'
-              ? 'pending'
-              : 'refunded';
-
-        derivedPayments.push({
-          id: `pay-${t.id}-${r.id}`,
-          playerName: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Registered Athlete',
-          assessmentName: t.name,
-          amount: fee,
-          status,
-          receivedAt: r.createdAt ?? Date.now(),
-        });
-      }
-
-      // Also include roster members as paid entries if no explicit registration exists
-      for (const p of t.roster ?? []) {
-        const alreadyHasReg = regs.some(
-          (rg) => rg.firstName?.toLowerCase() === p.first?.toLowerCase() && rg.lastName?.toLowerCase() === p.last?.toLowerCase()
-        );
-        if (!alreadyHasReg) {
-          derivedPayments.push({
-            id: `pay-ros-${t.id}-${p.id}`,
-            playerName: `${p.first || ''} ${p.last || ''}`.trim() || 'Roster Athlete',
-            assessmentName: t.name,
-            amount: fee,
-            status: 'paid',
-            receivedAt: Date.now(),
-          });
-        }
-      }
-    }
-
-    // 3. Fallback: If no real payments or tryout registrations exist yet, provide demonstration payment records
-    if (derivedPayments.length === 0) {
-      const now = Date.now();
-      const day = 86400000;
-      return [
-        { id: 'demo-pay-1', playerName: 'Alex Morgan', assessmentName: 'Spring Hockey Tryouts', amount: 49.99, status: 'paid', receivedAt: now - day * 1 },
-        { id: 'demo-pay-2', playerName: 'Marcus Vance', assessmentName: 'Spring Hockey Tryouts', amount: 49.99, status: 'paid', receivedAt: now - day * 2 },
-        { id: 'demo-pay-3', playerName: 'Sophia Chen', assessmentName: 'U15 Elite Evaluation', amount: 59.99, status: 'paid', receivedAt: now - day * 3 },
-        { id: 'demo-pay-4', playerName: 'Lucas Rodriguez', assessmentName: 'U15 Elite Evaluation', amount: 59.99, status: 'pending', receivedAt: now - day * 4 },
-        { id: 'demo-pay-5', playerName: 'Emma Watson', assessmentName: 'Spring Hockey Tryouts', amount: 49.99, status: 'paid', receivedAt: now - day * 5 },
-        { id: 'demo-pay-6', playerName: 'Liam Johnson', assessmentName: 'Fall ID Camp', amount: 39.99, status: 'refunded', receivedAt: now - day * 6 },
-      ];
-    }
-
-    return derivedPayments;
+        .or('registration_id.not.is.null,season_roster_id.not.is.null')
+        .order('created_at', { ascending: false })
+    ).data as Row[] | null;
+    return (rows ?? []).map((p) => {
+      const athlete = (p.season_roster as Row | null)?.athletes as Row | undefined;
+      const registration = p.registrations as Row | undefined;
+      const tryout = p.tryouts as Row | undefined;
+      const seasonRoster = p.season_roster as Row | undefined;
+      const season = seasonRoster?.seasons as Row | undefined;
+      return {
+        id: p.id,
+        playerName: registration
+          ? `${registration.first_name} ${registration.last_name}`.trim()
+          : athlete
+            ? `${athlete.first_name} ${athlete.last_name}`.trim()
+            : 'Unknown Player',
+        teamName: (tryout?.teams as Row | undefined)?.name ?? season?.team_name ?? '',
+        assessmentName: tryout?.name ?? (seasonRoster ? 'Team Fee' : ''),
+        amount: (p.amount_cents ?? 0) / 100,
+        status: p.status,
+        receivedAt: p.received_at ? toMs(p.received_at) : toMs(p.created_at),
+      };
+    });
   }
 
   async getAdminStats(): Promise<AdminStats> {
@@ -2953,7 +3982,7 @@ export class SupabaseDataSource implements DataSource {
       activeUsers: 1,
       totalAssessments: tryouts.count ?? 0,
       totalRegistrations: regs.count ?? 0,
-      planDistribution: { free: 0, coach: 0, club: 0, pro: 0, association: 0 },
+      planDistribution: { free: 0, coach: 0, coach_plus: 0, club: 0 },
       revenueMtd: 0,
     };
   }
@@ -2982,17 +4011,17 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
-  async createCheckoutSession(planTier: string): Promise<{ url: string }> {
+  async createCheckoutSession(planTier: string, interval: 'year' | 'month'): Promise<{ url: string }> {
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-      body: { planTier }
+      body: { planTier, interval }
     });
     if (error) {
       let detail = '';
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(detail || error.message || 'Failed to create checkout session');
     }
     if (data?.error) throw new Error(data.error);
@@ -3007,8 +4036,99 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(detail || error.message || 'Failed to open portal session');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
+  async createTeamLicenseCheckoutSession(quantity: number): Promise<{ url: string }> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+      body: { addOn: 'team_licenses', quantity: Math.max(1, Math.round(quantity)), interval: 'year' },
+    });
+    if (error) {
+      let detail = '';
+      try {
+        const body = await error.context?.json();
+        if (body?.error) detail = body.error;
+      } catch (_) { }
+      throw new Error(detail || error.message || 'Failed to create checkout session');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
+  async createConnectAccountLink(): Promise<{ url: string }> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.functions.invoke('create-connect-account');
+    if (error) {
+      let detail = '';
+      try {
+        const body = await error.context?.json();
+        if (body?.error) detail = body.error;
+      } catch (_) { }
+      throw new Error(detail || error.message || 'Failed to start payout onboarding');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
+  async getConnectAccountStatus(): Promise<ConnectAccountStatus> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.functions.invoke('connect-account-status');
+    if (error) {
+      let detail = '';
+      try {
+        const body = await error.context?.json();
+        if (body?.error) detail = body.error;
+      } catch (_) { }
+      throw new Error(detail || error.message || 'Failed to load connected account status');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data as ConnectAccountStatus;
+  }
+
+  async createRegistrationPayment(
+    registrationId: string,
+    successUrl?: string,
+    cancelUrl?: string,
+  ): Promise<{ url: string }> {
+    // Guardians call this from the public registration page before they have an
+    // account, so it must not depend on an authenticated ctx().
+    const supabase = getSupabase();
+    const { data, error } = await supabase.functions.invoke('create-registration-payment', {
+      body: { registrationId, successUrl, cancelUrl },
+    });
+    if (error) {
+      let detail = '';
+      try {
+        const body = await error.context?.json();
+        if (body?.error) detail = body.error;
+      } catch (_) { }
+      throw new Error(detail || error.message || 'Failed to start registration payment');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
+  async createTeamFeePayment(
+    seasonRosterId: string,
+    successUrl?: string,
+    cancelUrl?: string,
+  ): Promise<{ url: string }> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase.functions.invoke('create-team-fee-payment', {
+      body: { seasonRosterId, successUrl, cancelUrl },
+    });
+    if (error) {
+      let detail = '';
+      try {
+        const body = await error.context?.json();
+        if (body?.error) detail = body.error;
+      } catch (_) { }
+      throw new Error(detail || error.message || 'Failed to start team fee payment');
     }
     if (data?.error) throw new Error(data.error);
     return data;
@@ -3337,96 +4457,138 @@ export class SupabaseDataSource implements DataSource {
     } as import('../types').Player;
   }
 
-  // async getGuardianRosters(): Promise<import('../types').GuardianRosterAthlete[]> {
-  //   const { supabase, userId } = await this.ctx();
-  //   if (!userId) return [];
+  private mapGuardianRosterRow(row: Row): import('../types').GuardianRosterAthlete {
+    const tryoutsList = ((row.tryout_participants ?? []) as Row[])
+      .map((tp) => {
+        if (!tp.tryouts) return null;
 
-  //   const { data, error } = await supabase
-  //     .from('athletes')
-  //     .select(`
-  //       id,
-  //       first_name,
-  //       last_name,
-  //       avatar_url,
-  //       tryout_participants(
-  //         tryouts(id, name, sport),
-  //         evaluations(session, recommendation, created_at, evaluation_scores(rubric_key, value))
-  //       ),
-  //       season_roster(
-  //         seasons(id, name, team_name, sport)
-  //       )
-  //     `)
-  //     .eq('guardian_user_id', userId);
+        const evals = (tp.evaluations ?? []) as Row[];
+        const sessionMap = new Map<string, { result: string; date: number; scores: Record<string, number> }>();
 
-  //   if (error) {
-  //     console.error('Failed to fetch guardian rosters:', error);
-  //     return [];
-  //   }
+        for (const e of evals) {
+          if (e.recommendation) {
+            const sessionName = e.session || 'Session 1';
+            const t = e.created_at ? new Date(e.created_at).getTime() : 0;
+            const existing = sessionMap.get(sessionName);
 
-  //   return (data as any[]).map((row) => ({
-  //     id: row.id,
-  //     firstName: row.first_name,
-  //     lastName: row.last_name,
-  //     avatarUrl: row.avatar_url,
-  //     tryouts: (row.tryout_participants || [])
-  //       .map((tp: any) => {
-  //         if (!tp.tryouts) return null;
+            if (!existing || t > existing.date) {
+              const scoresRecord: Record<string, number> = {};
+              if (e.evaluation_scores && Array.isArray(e.evaluation_scores)) {
+                for (const score of e.evaluation_scores as Row[]) {
+                  if (score.rubric_key && typeof score.value === 'number') {
+                    scoresRecord[score.rubric_key] = score.value;
+                  }
+                }
+              }
 
-  //         const evals = tp.evaluations || [];
-  //         const sessionMap = new Map<string, { result: string; date: number; scores: Record<string, number> }>();
+              sessionMap.set(sessionName, {
+                result: REC_FROM_DB[e.recommendation] || e.recommendation,
+                date: t,
+                scores: scoresRecord,
+              });
+            }
+          }
+        }
 
-  //         for (const e of evals) {
-  //           if (e.recommendation) {
-  //             const sessionName = e.session || 'Session 1';
-  //             const t = e.created_at ? new Date(e.created_at).getTime() : 0;
-  //             const existing = sessionMap.get(sessionName);
-  //             if (!existing || t > existing.date) {
-  //               // Map scores from evaluation_scores array to Record
-  //               const scoresRecord: Record<string, number> = {};
-  //               if (e.evaluation_scores && Array.isArray(e.evaluation_scores)) {
-  //                 for (const score of e.evaluation_scores) {
-  //                   if (score.rubric_key && typeof score.value === 'number') {
-  //                     scoresRecord[score.rubric_key] = score.value;
-  //                   }
-  //                 }
-  //               }
+        const sessions = Array.from(sessionMap.entries())
+          .map(([name, data]) => ({
+            name,
+            result: data.result,
+            date: data.date,
+            scores: Object.keys(data.scores).length > 0 ? data.scores : undefined,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
 
-  //               sessionMap.set(sessionName, { 
-  //                 result: REC_FROM_DB[e.recommendation] || e.recommendation, 
-  //                 date: t,
-  //                 scores: scoresRecord
-  //               });
-  //             }
-  //           }
-  //         }
+        return {
+          ...tp.tryouts,
+          participantId: tp.id,
+          sessions,
+        };
+      })
+      .filter(Boolean);
 
-  //         const sessions = Array.from(sessionMap.entries()).map(([name, data]) => ({
-  //           name,
-  //           result: data.result,
-  //           date: data.date,
-  //           scores: Object.keys(data.scores).length > 0 ? data.scores : undefined
-  //         })).sort((a, b) => a.name.localeCompare(b.name));
+    const seasonsList = ((row.season_roster ?? []) as Row[])
+      .map((sr) => {
+        if (!sr.seasons) return null;
 
-  //         return {
-  //           ...tp.tryouts,
-  //           sessions
-  //         };
-  //       })
-  //       .filter(Boolean),
-  //     seasons: (row.season_roster || [])
-  //       .map((sr: any) => sr.seasons)
-  //       .filter(Boolean),
-  //   }));
-  // }
+        const availability = (sr.event_availability ?? []) as Row[];
+        const assignedEventIds = new Set<string>(availability.map((ea) => ea.season_event_id));
+
+        const formattedEvents = ((sr.seasons.season_events ?? []) as Row[])
+          .filter((ev) => assignedEventIds.has(ev.id))
+          .map((ev) => {
+            const ea = availability.find((a) => a.season_event_id === ev.id);
+            const availabilityRecord: Record<string, string> = {};
+            if (ea) availabilityRecord[row.id] = ea.response;
+            return {
+              id: ev.id,
+              type: EVENT_KIND_FROM_DB[ev.kind] ?? 'Game',
+              title: ev.title,
+              date: ev.event_date,
+              startTime: ev.start_time ?? undefined,
+              endTime: ev.end_time ?? undefined,
+              location: ev.location ?? undefined,
+              notes: ev.notes ?? undefined,
+              availability: availabilityRecord,
+            };
+          });
+
+        const team = Array.isArray(sr.seasons.teams) ? sr.seasons.teams[0] : sr.seasons.teams;
+
+        return {
+          id: sr.seasons.id,
+          name: sr.seasons.name,
+          teamName: sr.seasons.team_name,
+          sport: sr.seasons.sport,
+          jersey: sr.jersey ?? undefined,
+          events: formattedEvents,
+          seasonRosterId: sr.id,
+          collectsFees: !!team?.collects_fees,
+          registrationFeeCents: team?.registration_fee_cents ?? undefined,
+          feeStatus: (sr.fee_status ?? 'unpaid') as 'unpaid' | 'paid' | 'waived',
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      avatarUrl: row.avatar_url,
+      tryouts: tryoutsList,
+      seasons: seasonsList,
+    } as import('../types').GuardianRosterAthlete;
+  }
+
+  // One statement, authorized per tryout/season instead of per leaf row — the nested
+  // PostgREST embed this replaces made RLS run on every evaluation score and every
+  // RSVP row, which blew the statement timeout (57014) for coaches and guardians
+  // alike. See the shared backend's supabase/migrations/20260817130000_guardian_rosters_rpc.sql.
   async getGuardianRosters(): Promise<import('../types').GuardianRosterAthlete[]> {
-    const { supabase, userId } = await this.ctx();
+    const { supabase, userId } = await this.userCtx();
     if (!userId) return [];
 
-    // 1. Fetch the actual logged-in user's email to bypass misaligned UUIDs
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_guardian_rosters');
+
+    if (!rpcError) {
+      return ((rpcData as Row[]) ?? []).map((row) => this.mapGuardianRosterRow(row));
+    }
+
+    // Environments that haven't run the migration yet fall back to the old embed.
+    // Anything other than "function not found" is a real failure worth surfacing.
+    const missingFunction = rpcError.code === 'PGRST202' || rpcError.code === '42883';
+    if (!missingFunction) {
+      console.error('Failed to fetch guardian rosters:', rpcError);
+      return [];
+    }
+    console.warn('get_guardian_rosters() not deployed — falling back to the nested query.');
+
     const { data: userData } = await supabase.auth.getUser();
     const userEmail = userData?.user?.email?.toLowerCase();
 
-    // 2. Query matching athletes based on User ID OR matching Guardian Email
+    // guardian_email is citext, so eq() is already case-insensitive — using eq
+    // (not ilike) lets this hit the plain btree index on guardian_email instead
+    // of forcing a sequential scan, which is what was timing out (57014).
     let query = supabase
       .from('athletes')
       .select(`
@@ -3449,35 +4611,23 @@ export class SupabaseDataSource implements DataSource {
         season_roster(
           id,
           jersey,
-          event_availability(
-            season_event_id,
-            response
-          ),
+          fee_status,
+          event_availability(season_event_id, response),
           seasons(
             id,
             name,
             team_name,
             sport,
-            season_events(
-              id,
-              kind,
-              title,
-              event_date,
-              start_time,
-              end_time,
-              location,
-              notes
-            )
+            team_id,
+            teams(collects_fees, registration_fee_cents),
+            season_events(id, kind, title, event_date, start_time, end_time, location, notes)
           )
         )
       `);
 
-    // Fall back to matching by lowercased email if the UUIDs are unlinked
-    if (userEmail) {
-      query = query.or(`guardian_user_id.eq.${userId},guardian_email.ilike.${userEmail}`);
-    } else {
-      query = query.eq('guardian_user_id', userId);
-    }
+    query = userEmail
+      ? query.or(`guardian_user_id.eq.${userId},guardian_email.eq.${userEmail}`)
+      : query.eq('guardian_user_id', userId);
 
     const { data, error } = await query;
 
@@ -3486,109 +4636,282 @@ export class SupabaseDataSource implements DataSource {
       return [];
     }
 
-    return (data as any[]).map((row) => {
-      // 3. Map tryouts/assessments using the unique participant ID (tp.id)
-      const tryoutsList = (row.tryout_participants || [])
-        .map((tp: any) => {
-          if (!tp.tryouts) return null;
-
-          const evals = tp.evaluations || [];
-          const sessionMap = new Map<string, { result: string; date: number; scores: Record<string, number> }>();
-
-          for (const e of evals) {
-            if (e.recommendation) {
-              const sessionName = e.session || 'Session 1';
-              const t = e.created_at ? new Date(e.created_at).getTime() : 0;
-              const existing = sessionMap.get(sessionName);
-
-              if (!existing || t > existing.date) {
-                const scoresRecord: Record<string, number> = {};
-                if (e.evaluation_scores && Array.isArray(e.evaluation_scores)) {
-                  for (const score of e.evaluation_scores) {
-                    if (score.rubric_key && typeof score.value === 'number') {
-                      scoresRecord[score.rubric_key] = score.value;
-                    }
-                  }
-                }
-
-                sessionMap.set(sessionName, {
-                  result: REC_FROM_DB[e.recommendation] || e.recommendation,
-                  date: t,
-                  scores: scoresRecord,
-                });
-              }
-            }
-          }
-
-          const sessions = Array.from(sessionMap.entries())
-            .map(([name, data]) => ({
-              name,
-              result: data.result,
-              date: data.date,
-              scores: Object.keys(data.scores).length > 0 ? data.scores : undefined,
-            }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-
-          return {
-            ...tp.tryouts,
-            // Globally unique ID prevents multiple dashboard row items from collapsing
-            participantId: tp.id,
-            sessions,
-          };
-        })
-        .filter(Boolean);
-
-      // 4. Map active seasons and nested schedule events (practices/games)
-      const seasonsList = (row.season_roster || [])
-        .map((sr: any) => {
-          if (!sr.seasons) return null;
-
-          const assignedEventIds = new Set<string>(
-            (sr.event_availability || []).map((ea: any) => ea.season_event_id)
-          );
-
-          const formattedEvents = (sr.seasons.season_events || [])
-            .filter((ev: any) => assignedEventIds.has(ev.id))
-            .map((ev: any) => {
-              const ea = (sr.event_availability || []).find((a: any) => a.season_event_id === ev.id);
-              const availabilityRecord: Record<string, string> = {};
-              if (ea) {
-                availabilityRecord[row.id] = ea.response;
-              }
-              return {
-                id: ev.id,
-                type: EVENT_KIND_FROM_DB[ev.kind] ?? 'Game',
-                title: ev.title,
-                date: ev.event_date,
-                startTime: ev.start_time ?? undefined,
-                endTime: ev.end_time ?? undefined,
-                location: ev.location ?? undefined,
-                notes: ev.notes ?? undefined,
-                availability: availabilityRecord,
-              };
-            });
-
-          return {
-            id: sr.seasons.id,
-            name: sr.seasons.name,
-            teamName: sr.seasons.team_name,
-            sport: sr.seasons.sport,
-            jersey: sr.jersey ?? undefined,
-            events: formattedEvents, // Mapped practices/games now exposed to frontend!
-          };
-        })
-        .filter(Boolean);
-
-      return {
-        id: row.id,
-        firstName: row.first_name,
-        lastName: row.last_name,
-        avatarUrl: row.avatar_url,
-        tryouts: tryoutsList,
-        seasons: seasonsList,
-      };
-    });
+    return ((data as Row[]) ?? []).map((row) => this.mapGuardianRosterRow(row));
   }
+
+  // ─── Guardian -> Coach athlete profile sharing ──────────────────────────
+
+  private mapAthleteShareRow(row: Row): import('../types').AthleteShare {
+    return {
+      id: row.id,
+      athleteId: row.athlete_id,
+      status: row.status,
+      athlete: {
+        firstName: row.athlete_first_name,
+        lastName: row.athlete_last_name,
+        avatarUrl: row.athlete_avatar_url ?? undefined,
+        yearOfBirth: row.athlete_year_of_birth ?? undefined,
+        position: row.athlete_position ?? undefined,
+        guardianName: row.athlete_guardian_name ?? undefined,
+        guardianEmail: row.athlete_guardian_email ?? undefined,
+        guardianPhone: row.athlete_guardian_phone ?? undefined,
+        medicalInfo: row.athlete_medical_info ?? undefined,
+        about: row.athlete_about ?? undefined,
+      },
+      assessments: Array.isArray(row.athlete_assessments) ? (row.athlete_assessments as PlayerProfileAssessment[]) : [],
+      coach: {
+        userId: row.coach_user_id,
+        displayName: row.coach_display_name,
+        avatarUrl: row.coach_avatar_url ?? undefined,
+        accountId: row.coach_account_id,
+        accountName: row.coach_account_name,
+        sport: row.coach_sport ?? undefined,
+      },
+      guardianUserId: row.guardian_user_id,
+      assignedTryoutId: row.assigned_tryout_id ?? undefined,
+      assignedAthleteId: row.assigned_athlete_id ?? undefined,
+      assignedParticipantId: row.assigned_participant_id ?? undefined,
+      createdAt: toMs(row.created_at),
+      updatedAt: toMs(row.updated_at),
+    };
+  }
+
+  /**
+   * Replaces a share's frozen assessment snapshot with live data via
+   * get_athlete_share_live_scores() — every tryout this one athlete has ever
+   * participated in, including ones added after the share, but never any
+   * other athlete on the guardian's roster (that boundary is enforced in the
+   * SQL function itself). Falls back to the frozen snapshot passed in if the
+   * RPC errors or the caller isn't authorized for this share.
+   */
+  private async liveAthleteShareAssessments(
+    supabase: SupabaseClient,
+    shareId: string,
+    fallback: PlayerProfileAssessment[],
+  ): Promise<PlayerProfileAssessment[]> {
+    const { data, error } = await supabase.rpc('get_athlete_share_live_scores', { p_share_id: shareId });
+    if (error || !Array.isArray(data)) return fallback;
+
+    return (data as Row[])
+      .map((live): PlayerProfileAssessment => {
+        const position = live.position ?? undefined;
+        const sport = live.sport as Sport;
+        const settings = (live.settings ?? {}) as Row;
+        const categories = getPlayerCategories(sport, position, settings.customRubrics ?? []);
+        const weights = isGoaliePosition(position) ? settings.goalieWeights ?? {} : settings.skaterWeights ?? {};
+        const evals = ((live.evaluations ?? []) as Row[]).map((row) => this.rowToEval(row));
+        const overall = evals.length ? weightedOverallAcrossEvals(evals, categories, weights) : 0;
+        const categoryScores = categoryAveragesAcrossEvals(evals, categories);
+        const latest = [...evals].sort((x, y) => y.createdAt - x.createdAt)[0];
+
+        return {
+          tryoutId: live.tryout_id,
+          tryoutName: live.tryout_name,
+          seasonId: live.season_id ?? undefined,
+          eventType: live.event_type as EventType,
+          sport,
+          date: live.tryout_date ?? undefined,
+          position,
+          teamName: live.team_name ?? undefined,
+          overall,
+          categoryScores,
+          evalCount: evals.length,
+          latestRecommendation: (latest?.recommendation ?? '') as Recommendation,
+          participantId: live.participant_id,
+          evaluations: evals.map((ev) => ({ ...ev, overall: weightedOverallAcrossEvals([ev], categories, weights) })),
+        };
+      })
+      .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+  }
+
+  async getCoachDirectory(): Promise<import('../types').CoachDirectoryEntry[]> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase.rpc('list_coach_directory');
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as Row[]).map((row) => ({
+      userId: row.user_id,
+      displayName: row.display_name,
+      avatarUrl: row.avatar_url ?? undefined,
+      accountId: row.account_id,
+      accountName: row.account_name,
+      sport: row.sport ?? undefined,
+    }));
+  }
+
+  async shareAthleteWithCoach(athleteId: string, coachUserId: string, coachAccountId: string): Promise<import('../types').AthleteShare> {
+    const { supabase, userId } = await this.userCtx();
+
+    const { data: athleteRow, error: athleteError } = await supabase
+      .from('athletes')
+      .select(
+        'id, first_name, last_name, avatar_url, year_of_birth, default_position, guardian_name, guardian_email, guardian_phone, medical_info, about',
+      )
+      .eq('id', athleteId)
+      .maybeSingle();
+    if (athleteError) throw new Error(athleteError.message);
+    if (!athleteRow) throw new Error('Athlete not found');
+
+    // Full assessment history, frozen at share time — see the athlete_assessments
+    // column comment in the migration for why this is a snapshot, not a live join.
+    const { assessments } = await this.fetchAthleteAssessmentContext(supabase, athleteId);
+
+    const { data: directory, error: directoryError } = await supabase.rpc('list_coach_directory');
+    if (directoryError) throw new Error(directoryError.message);
+    const coachRow = ((directory ?? []) as Row[]).find(
+      (c) => c.user_id === coachUserId && c.account_id === coachAccountId,
+    );
+    if (!coachRow) throw new Error('Coach not found');
+
+    const { data, error } = await supabase
+      .from('athlete_shares')
+      .insert({
+        athlete_id: athleteId,
+        guardian_user_id: userId,
+        coach_user_id: coachUserId,
+        coach_account_id: coachAccountId,
+        athlete_first_name: athleteRow.first_name,
+        athlete_last_name: athleteRow.last_name,
+        athlete_avatar_url: athleteRow.avatar_url,
+        athlete_year_of_birth: athleteRow.year_of_birth,
+        athlete_position: athleteRow.default_position,
+        athlete_guardian_name: athleteRow.guardian_name,
+        athlete_guardian_email: athleteRow.guardian_email,
+        athlete_guardian_phone: athleteRow.guardian_phone,
+        athlete_medical_info: athleteRow.medical_info,
+        athlete_about: athleteRow.about,
+        athlete_assessments: assessments,
+        coach_display_name: coachRow.display_name,
+        coach_avatar_url: coachRow.avatar_url,
+        coach_account_name: coachRow.account_name,
+        coach_sport: coachRow.sport,
+      })
+      .select('*')
+      .single();
+
+    if (error) {
+      if ((error as { code?: string }).code === '23505') throw new Error('Already shared with this coach.');
+      throw new Error(error.message);
+    }
+    return this.mapAthleteShareRow(data as Row);
+  }
+
+  async getMyAthleteShares(athleteId: string): Promise<import('../types').AthleteShare[]> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase
+      .from('athlete_shares')
+      .select('*')
+      .eq('athlete_id', athleteId)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as Row[]).map((row) => this.mapAthleteShareRow(row));
+  }
+
+  async getSharedAthletesForCoach(): Promise<import('../types').AthleteShare[]> {
+    const { supabase, accountId } = await this.ctx();
+    const { data, error } = await supabase
+      .from('athlete_shares')
+      .select('*')
+      .eq('coach_account_id', accountId)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as Row[]).map((row) => this.mapAthleteShareRow(row));
+  }
+
+  async getAthleteShare(shareId: string): Promise<import('../types').AthleteShare> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase
+      .from('athlete_shares')
+      .select('*')
+      .eq('id', shareId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error('Share not found');
+    const share = this.mapAthleteShareRow(data as Row);
+    share.assessments = await this.liveAthleteShareAssessments(supabase, shareId, share.assessments);
+    return share;
+  }
+
+  async acceptAthleteShare(shareId: string, tryoutId: string): Promise<import('../types').AthleteShare> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase.rpc('accept_athlete_share', {
+      p_share_id: shareId,
+      p_tryout_id: tryoutId,
+    });
+    if (error) throw new Error(error.message);
+    const row = Array.isArray(data) ? data[0] : data;
+    return this.mapAthleteShareRow(row as Row);
+  }
+
+  async rejectAthleteShare(shareId: string): Promise<import('../types').AthleteShare> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase.rpc('reject_athlete_share', { p_share_id: shareId });
+    if (error) throw new Error(error.message);
+    const row = Array.isArray(data) ? data[0] : data;
+    return this.mapAthleteShareRow(row as Row);
+  }
+
+  async listShareComments(shareId: string): Promise<import('../types').ShareComment[]> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase
+      .from('athlete_share_comments')
+      .select('*')
+      .eq('share_id', shareId)
+      .order('created_at', { ascending: true });
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as Row[]).map((row) => ({
+      id: row.id,
+      shareId: row.share_id,
+      authorUserId: row.author_user_id,
+      authorName: row.author_name,
+      authorRole: row.author_role,
+      body: row.body,
+      createdAt: toMs(row.created_at),
+    }));
+  }
+
+  async addShareComment(shareId: string, body: string): Promise<import('../types').ShareComment> {
+    const { supabase, userId } = await this.userCtx();
+
+    const { data: shareRow, error: shareError } = await supabase
+      .from('athlete_shares')
+      .select('guardian_user_id')
+      .eq('id', shareId)
+      .maybeSingle();
+    if (shareError) throw new Error(shareError.message);
+    if (!shareRow) throw new Error('Share not found');
+
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('display_name')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const authorRole: 'guardian' | 'coach' = shareRow.guardian_user_id === userId ? 'guardian' : 'coach';
+
+    const { data, error } = await supabase
+      .from('athlete_share_comments')
+      .insert({
+        share_id: shareId,
+        author_user_id: userId,
+        author_name: profileRow?.display_name || 'Unknown',
+        author_role: authorRole,
+        body,
+      })
+      .select('*')
+      .single();
+    if (error) throw new Error(error.message);
+
+    return {
+      id: data.id,
+      shareId: data.share_id,
+      authorUserId: data.author_user_id,
+      authorName: data.author_name,
+      authorRole: data.author_role,
+      body: data.body,
+      createdAt: toMs(data.created_at),
+    };
+  }
+
 }
 
 export const supabaseDataSource = new SupabaseDataSource();

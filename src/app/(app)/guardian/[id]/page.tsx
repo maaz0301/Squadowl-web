@@ -1,15 +1,66 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 
 import { useThemeColors, type AppTheme } from '@/theme/ThemeProvider';
-import { Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader, Tabs, useAlert } from '@/components/ui';
-import { useGuardianRostersQuery, useSetAvailabilityMutation } from '@/features/queries';
-import type { SeasonEvent } from '@/data/types';
+import { Avatar, Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, Spinner, Tabs, useAlert } from '@/components/ui';
+import {
+  useCreateTeamFeePaymentMutation,
+  useGuardianRealtimeSync,
+  useGuardianRostersQuery,
+  useSetAvailabilityMutation,
+} from '@/features/queries';
+import type { GuardianRosterAthlete, SeasonEvent } from '@/data/types';
 
 type FlatEvent = SeasonEvent & { seasonName: string; teamName: string; seasonId: string };
+type GuardianSeason = GuardianRosterAthlete['seasons'][number];
+
+function money(cents: number): string {
+  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function SeasonFeeRow({ season, playerId }: { season: GuardianSeason; playerId: string }) {
+  const colors = useThemeColors();
+  const { alert } = useAlert();
+  const payFeeMutation = useCreateTeamFeePaymentMutation();
+  const [paying, setPaying] = useState(false);
+
+  const payFee = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      setPaying(true);
+      const origin = window.location.origin;
+      const returnPath = `/guardian/${playerId}`;
+      const res = await payFeeMutation.mutateAsync({
+        seasonRosterId: season.seasonRosterId,
+        successUrl: `${origin}${returnPath}?feePaid=true`,
+        cancelUrl: `${origin}${returnPath}?feePaid=false`,
+      });
+      if (res?.url) {
+        window.location.href = res.url;
+      }
+    } catch (err) {
+      await alert('Payment Error', err instanceof Error ? err.message : 'Something went wrong.');
+      setPaying(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex items-center justify-between border-t pt-3" style={{ borderColor: colors.border }}>
+      <p className="text-sm font-bold" style={{ color: colors.ink }}>
+        Team fee: {money(season.registrationFeeCents ?? 0)}
+      </p>
+      {season.feeStatus === 'unpaid' ? (
+        <Button label="Pay Now" size="sm" loading={paying} onClick={payFee} />
+      ) : (
+        <Badge label={season.feeStatus === 'waived' ? 'Waived' : 'Paid'} variant="success" />
+      )}
+    </div>
+  );
+}
 
 function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: string; colors: AppTheme['colors'] }) {
   const { alert } = useAlert();
@@ -62,26 +113,29 @@ function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: stri
           <button
             type="button"
             onClick={() => handleRsvp('yes')}
-            className="flex-1 rounded-md py-2 text-center font-bold"
+            disabled={rsvpMutation.isPending}
+            className="flex-1 rounded-md py-2 text-center font-bold disabled:opacity-50"
             style={{ backgroundColor: rsvp === 'yes' ? colors.success : colors.tile, color: rsvp === 'yes' ? '#fff' : colors.ink }}
           >
-            Yes
+            {rsvpMutation.isPending && rsvpMutation.variables?.response === 'yes' ? <Spinner size={16} /> : 'Yes'}
           </button>
           <button
             type="button"
             onClick={() => handleRsvp('maybe')}
-            className="flex-1 rounded-md py-2 text-center font-bold"
+            disabled={rsvpMutation.isPending}
+            className="flex-1 rounded-md py-2 text-center font-bold disabled:opacity-50"
             style={{ backgroundColor: rsvp === 'maybe' ? colors.warning : colors.tile, color: rsvp === 'maybe' ? '#fff' : colors.ink }}
           >
-            Maybe
+            {rsvpMutation.isPending && rsvpMutation.variables?.response === 'maybe' ? <Spinner size={16} /> : 'Maybe'}
           </button>
           <button
             type="button"
             onClick={() => handleRsvp('no')}
-            className="flex-1 rounded-md py-2 text-center font-bold"
+            disabled={rsvpMutation.isPending}
+            className="flex-1 rounded-md py-2 text-center font-bold disabled:opacity-50"
             style={{ backgroundColor: rsvp === 'no' ? colors.danger : colors.tile, color: rsvp === 'no' ? '#fff' : colors.ink }}
           >
-            No
+            {rsvpMutation.isPending && rsvpMutation.variables?.response === 'no' ? <Spinner size={16} /> : 'No'}
           </button>
         </div>
       </div>
@@ -92,10 +146,40 @@ function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: stri
 export default function GuardianPortalPage() {
   const routeParams = useParams();
   const playerId = Array.isArray(routeParams?.id) ? routeParams.id[0] : (routeParams?.id as string);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const colors = useThemeColors();
+  const { alert } = useAlert();
   const [tab, setTab] = useState('overview');
 
   const guardianQuery = useGuardianRostersQuery();
+  // Keeps this page in sync with a coach's event edits without needing to
+  // navigate away and back for the cache to refresh.
+  useGuardianRealtimeSync();
+
+  // Stripe redirects back here after a team-fee checkout — the webhook that
+  // flips fee_status to 'paid' can lag a moment behind, so refetch a few
+  // times instead of trusting the very first response back.
+  useEffect(() => {
+    const feePaid = searchParams.get('feePaid');
+    if (!feePaid) return;
+    router.replace(`/guardian/${playerId}`);
+    if (feePaid === 'true') {
+      let cancelled = false;
+      (async () => {
+        for (let i = 0; i < 5; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if (cancelled) return;
+          await guardianQuery.refetch();
+        }
+      })();
+      alert('Payment Received', "Thanks! We're confirming it now — it'll show as Paid shortly.");
+      return () => {
+        cancelled = true;
+      };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   if (guardianQuery.isLoading) {
     return <LoadingState message="Loading portal..." />;
@@ -116,13 +200,15 @@ export default function GuardianPortalPage() {
     );
   }
 
+  const today = new Date().toISOString().split('T')[0];
   let allEvents: FlatEvent[] = [];
   athlete.seasons.forEach((season) => {
     (season.events || []).forEach((event) => {
       allEvents.push({ ...event, seasonName: season.name, teamName: season.teamName, seasonId: season.id });
     });
   });
-  allEvents = allEvents.sort((a, b) => {
+  // A past practice or game has nothing left to RSVP to.
+  allEvents = allEvents.filter((event) => event.date >= today).sort((a, b) => {
     const aDate = new Date(`${a.date}T${a.startTime || '00:00'}`).getTime();
     const bDate = new Date(`${b.date}T${b.startTime || '00:00'}`).getTime();
     return aDate - bDate;
@@ -135,7 +221,12 @@ export default function GuardianPortalPage() {
 
   return (
     <>
-      <PageHeader title="Guardian Portal" showBack backHref="/dashboard" />
+      <PageHeader
+        title="Guardian Portal"
+        showBack
+        backHref="/dashboard"
+        right={<Button label="Share" size="sm" variant="secondary" onClick={() => router.push(`/guardian/${playerId}/share-directory`)} />}
+      />
 
       <div className="mb-4 flex items-center gap-4">
         <Avatar first={athlete.firstName} last={athlete.lastName} size={64} uri={athlete.avatarUrl} />
@@ -153,10 +244,17 @@ export default function GuardianPortalPage() {
         tabs={[
           { key: 'overview', label: 'Overview' },
           { key: 'schedule', label: 'Schedule', badge: allEvents.length || undefined },
+          { key: 'chat', label: 'Chat' },
           { key: 'info', label: 'Info' },
         ]}
         activeKey={tab}
-        onChange={setTab}
+        onChange={(k) => {
+          if (k === 'chat' && athlete.seasons.length === 1) {
+            router.push(`/guardian/${playerId}/chat/${athlete.seasons[0].id}`);
+            return;
+          }
+          setTab(k);
+        }}
         className="mb-4"
       />
 
@@ -182,6 +280,9 @@ export default function GuardianPortalPage() {
                     </div>
                     <Badge label={item._type === 'season' ? 'Season' : 'Tryout'} variant={item._type === 'season' ? 'info' : 'brand'} />
                   </div>
+                  {item._type === 'season' && item.collectsFees ? (
+                    <SeasonFeeRow season={item} playerId={playerId} />
+                  ) : null}
                 </Card>
               );
               return item._type === 'tryout' ? (
@@ -201,6 +302,30 @@ export default function GuardianPortalPage() {
           <div>
             {allEvents.map((event) => (
               <EventCard key={event.id} item={event} playerId={playerId} colors={colors} />
+            ))}
+          </div>
+        )
+      ) : tab === 'chat' ? (
+        athlete.seasons.length === 0 ? (
+          <EmptyState
+            title="No team chat yet"
+            message="This athlete has not been added to a team yet. Once a coach adds them to a roster, the team chat opens up here."
+          />
+        ) : (
+          <div className="space-y-2">
+            {athlete.seasons.map((s) => (
+              <Card
+                key={s.id}
+                interactive
+                onClick={() => router.push(`/guardian/${playerId}/chat/${s.id}`)}
+                className="flex items-center justify-between"
+              >
+                <div>
+                  <p className="font-bold" style={{ color: colors.ink }}>{s.teamName}</p>
+                  <p className="text-sm" style={{ color: colors.inkMuted }}>{s.name}</p>
+                </div>
+                <Badge label="Chat" variant="brand" />
+              </Card>
             ))}
           </div>
         )

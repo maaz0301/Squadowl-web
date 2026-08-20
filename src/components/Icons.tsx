@@ -30,6 +30,7 @@ export const ICON_PATHS = {
   copy: 'M20 9h-9a2 2 0 00-2 2v9a2 2 0 002 2h9a2 2 0 002-2v-9a2 2 0 00-2-2zM5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1',
   share: 'M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13',
   ai: 'M12 2l2.4 6.2L21 10.6l-5.4 4.2L17 21l-5-3.4L7 21l1.4-6.2L3 10.6l6.6-2.4z',
+  payments: 'M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zM2 10h20',
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

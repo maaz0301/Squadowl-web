@@ -1,10 +1,10 @@
 import type { Tryout, ExportFormat } from '@/data/types';
 import { computePlayerResults } from '@/data/scoring';
-import { formatExportCsv } from '@/data/teamBuilder';
+import { buildTeamBuilderExportRows, formatExportCsv, type TeamBuilderState } from '@/data/teamBuilder';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 
-function download(fileName: string, content: string, encoding: 'utf8' | 'base64', mimeType: string) {
+export function download(fileName: string, content: string, encoding: 'utf8' | 'base64', mimeType: string) {
   let blob: Blob;
   if (encoding === 'base64') {
     const byteCharacters = atob(content);
@@ -98,4 +98,64 @@ export async function exportTryoutToCsv(tryout: Tryout): Promise<void> {
     'utf8',
     'text/csv',
   );
+}
+
+/**
+ * Export a Team Builder result (all teams, or just one via `opts.teamId`) as
+ * XLSX or PDF — grouped by team so it's easy to print and double-check.
+ */
+export async function exportTeamBuilderData(
+  tryout: Tryout,
+  state: TeamBuilderState,
+  format: 'xlsx' | 'pdf',
+  opts?: { teamId?: string },
+): Promise<void> {
+  const { headers, rows } = buildTeamBuilderExportRows(tryout, state, opts);
+  const singleTeam = opts?.teamId ? state.teams.find((t) => t.id === opts.teamId) : undefined;
+
+  const safeName = tryout.name.replace(/\s+/g, '_');
+  const suffix = singleTeam ? `_${singleTeam.name.replace(/\s+/g, '_')}` : '_teams';
+  const fileName = `${safeName}${suffix}.${format}`;
+
+  if (format === 'xlsx') {
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Team Builder');
+    download(
+      fileName,
+      XLSX.write(wb, { type: 'base64', bookType: 'xlsx' }),
+      'base64',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    return;
+  }
+
+  const pdfDoc = await PDFDocument.create();
+  let page = pdfDoc.addPage([600, 800]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const title = singleTeam ? `${tryout.name}: ${singleTeam.name}` : `${tryout.name}: Team Builder`;
+  page.drawText(title, { x: 50, y: 750, size: 20, font: fontBold });
+
+  let y = 700;
+  const xOffsets = [50, 170, 320, 380, 430, 500];
+
+  headers.forEach((h, i) => {
+    page.drawText(h, { x: xOffsets[i], y, size: 10, font: fontBold });
+  });
+  y -= 20;
+
+  for (const row of rows) {
+    if (y < 50) {
+      page = pdfDoc.addPage([600, 800]);
+      y = 750;
+    }
+    row.forEach((cell, i) => {
+      page.drawText(cell, { x: xOffsets[i], y, size: 10, font });
+    });
+    y -= 15;
+  }
+
+  download(fileName, await pdfDoc.saveAsBase64(), 'base64', 'application/pdf');
 }

@@ -36,6 +36,9 @@ import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
 import { PlanGate } from '@/components/PlanGate';
 import { mockAiPlayerSummary } from '@/data/teamBuilder';
 
+const AI_IDLE_TEXT = 'Generating...';
+const AI_LOADING_TEXTS = ['Gathering data...', 'Ranking evaluations...', 'Analyzing strengths...', 'Finalizing insight...'];
+
 export default function PlayerHubPage() {
   const id = useAssessmentId();
   const href = useAssessmentHref();
@@ -59,21 +62,22 @@ export default function PlayerHubPage() {
   const [showEdit, setShowEdit] = useState(false);
   const [showGuardianLink, setShowGuardianLink] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [aiLoadingText, setAiLoadingText] = useState('Generating...');
+  const [aiTextIndex, setAiTextIndex] = useState(0);
 
+  // The interval is a real external-system subscription (a timer), so it
+  // stays an effect — but nothing in the effect body sets state synchronously
+  // on mount/dependency-change; the index only advances inside the interval
+  // callback, and the idle case is handled by deriving aiLoadingText below
+  // instead of resetting state here.
   useEffect(() => {
-    if (!aiSummary.isPending) {
-      setAiLoadingText('Generating...');
-      return;
-    }
-    const texts = ['Gathering data...', 'Ranking evaluations...', 'Analyzing strengths...', 'Finalizing insight...'];
-    let idx = 0;
-    const int = setInterval(() => {
-      idx = (idx + 1) % texts.length;
-      setAiLoadingText(texts[idx]);
-    }, 2500);
+    if (!aiSummary.isPending) return;
+    const int = setInterval(() => setAiTextIndex((i) => i + 1), 2500);
     return () => clearInterval(int);
   }, [aiSummary.isPending]);
+
+  const aiLoadingText = aiSummary.isPending
+    ? AI_LOADING_TEXTS[aiTextIndex % AI_LOADING_TEXTS.length]
+    : AI_IDLE_TEXT;
 
   const player = tryoutQuery.data?.roster.find((p) => p.athleteId === playerId || p.id === playerId);
   const { canManageTeam } = usePermissions();
@@ -112,12 +116,12 @@ export default function PlayerHubPage() {
 
   const recreateGuardian = async () => {
     try {
-      // Unlink the deleted account first, then create a fresh one.
-      await linkGuardianMut.mutateAsync({
-        guardianId: null as unknown as string,
-        tryoutId: id!,
-        playerId: player.athleteId!,
-      });
+      // Re-create the account first and only re-point the athlete's link once
+      // that succeeds — linkGuardianMut overwrites whatever guardian_user_id
+      // was there before in a single UPDATE, so there's no need to null it out
+      // first. Unlinking up front used to mean a transient failure in the
+      // create step left the athlete with no guardian link at all instead of
+      // just keeping the old (still-broken) one until a retry succeeds.
       const defaultPassword = Math.random().toString(36).slice(-6) + 'Aa1!';
       const newMember = await createAndInviteMut.mutateAsync({
         email: player.guardianEmail!,
@@ -251,8 +255,8 @@ export default function PlayerHubPage() {
         }
       />
 
-      <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-        <div className="flex flex-col gap-5">
+      <div className="grid min-w-0 gap-5 lg:grid-cols-[280px_1fr]">
+        <div className="flex min-w-0 flex-col gap-5">
           <Card className="flex flex-col items-center gap-2 py-6">
             <Avatar first={player.first} last={player.last} pos={player.pos} size={88} uri={player.avatarUrl} />
             <span className="text-lg font-bold" style={{ color: colors.ink }}>
@@ -271,9 +275,11 @@ export default function PlayerHubPage() {
               {player.linkedGuardianId ? <Badge label="Linked" variant="success" /> : null}
             </div>
 
-            {player.guardianName ? <span style={{ color: colors.ink }}>{player.guardianName}</span> : null}
+            {player.guardianName ? (
+              <span className="break-words" style={{ color: colors.ink }}>{player.guardianName}</span>
+            ) : null}
             {player.guardianEmail ? (
-              <span style={{ color: colors.inkMuted }}>{player.guardianEmail}</span>
+              <span className="break-words" style={{ color: colors.inkMuted }}>{player.guardianEmail}</span>
             ) : null}
             {!player.guardianName && !player.guardianEmail ? (
               <span style={{ color: colors.inkFaint }}>No guardian info provided.</span>
@@ -319,7 +325,7 @@ export default function PlayerHubPage() {
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-5">
+        <div className="flex min-w-0 flex-col gap-5">
           <Card accent className="flex flex-col gap-2">
             <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
               Development Summary
@@ -380,6 +386,19 @@ export default function PlayerHubPage() {
                 </div>
               )}
             </PlanGate>
+          </Card>
+
+          <Card className="flex flex-col items-start gap-2">
+            <p className="font-display font-bold" style={{ color: colors.ink }}>Player Profile</p>
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              View full assessment history, score trends, and season-over-season comparison.
+            </p>
+            <Button
+              label="View Full Profile"
+              variant="secondary"
+              disabled={!player.athleteId}
+              onClick={() => router.push(`/player/${player.athleteId}`)}
+            />
           </Card>
 
           <div>

@@ -13,8 +13,10 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
+  Modal,
   PageHeader,
   SectionLabel,
+  Spinner,
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
@@ -25,6 +27,10 @@ import {
   useTryoutsQuery,
   useAssignedTryoutsQuery,
   useGuardianRostersQuery,
+  useAcceptAssignmentMutation,
+  useRejectAssignmentMutation,
+  useArchiveTryoutMutation,
+  useDeleteTryoutMutation,
 } from '@/features/queries';
 import { APP_CONFIG } from '@/config/app';
 import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
@@ -41,11 +47,23 @@ export default function DashboardPage() {
   const [combineMode, setCombineMode] = useState(false);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [assignedExpanded, setAssignedExpanded] = useState(true);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [decliningId, setDecliningId] = useState<string | null>(null);
+  const [actionTryout, setActionTryout] = useState<{ id: string; name: string } | null>(null);
+  // Tracks which card is mid archive/delete so its spinner shows immediately —
+  // mirrors mobile's dashboard, where relying on the mutation's own isPending
+  // was flaky because the modal closes (and re-renders the list) before the
+  // pending state has propagated.
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const teamsQuery = useTeamsQuery();
   const tryoutsQuery = useTryoutsQuery(false);
   const assignedQuery = useAssignedTryoutsQuery();
   const guardianQuery = useGuardianRostersQuery();
+  const acceptAssignment = useAcceptAssignmentMutation();
+  const rejectAssignment = useRejectAssignmentMutation();
+  const archiveTryout = useArchiveTryoutMutation();
+  const deleteTryout = useDeleteTryoutMutation();
 
   const { isGuardian } = usePermissions();
 
@@ -59,6 +77,24 @@ export default function DashboardPage() {
     router.push(`/assessment/${id}/roster?assessor=1`);
   };
 
+  const acceptAssigned = (id: string) => {
+    setAcceptingId(id);
+    acceptAssignment.mutate(id, {
+      onSettled: () => setAcceptingId(null),
+      onSuccess: () => openAssigned(id),
+      onError: (error: Error) => alert(error?.message || 'Could not accept this assessment.'),
+    });
+  };
+
+  const declineAssigned = (id: string, name: string) => {
+    if (!confirm(`Decline "${name}"? You will lose access to score this assessment unless invited again.`)) return;
+    setDecliningId(id);
+    rejectAssignment.mutate(id, {
+      onSettled: () => setDecliningId(null),
+      onError: (error: Error) => alert(error?.message || 'Could not decline this assessment.'),
+    });
+  };
+
   const openTryout = (id: string) => {
     if (combineMode) {
       toggleCombineTryout(id);
@@ -66,6 +102,10 @@ export default function DashboardPage() {
     }
     setCurrentTryout(id);
     router.push(`/assessment/${id}/roster`);
+  };
+
+  const handleDeleteAssessment = (id: string, name: string) => {
+    setActionTryout({ id, name });
   };
 
   if (isGuardian) {
@@ -252,27 +292,53 @@ export default function DashboardPage() {
             <Icon name={assignedExpanded ? 'chevronDown' : 'chevronRight'} size={16} color={colors.inkMuted} />
           </button>
           {assignedExpanded
-            ? assignedQuery.data.map((t) => (
-                <Card
-                  key={t.id}
-                  interactive
-                  className="mb-2 flex items-center justify-between gap-3"
-                  onClick={() => openAssigned(t.id)}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className="block truncate text-base font-bold"
-                      style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+            ? assignedQuery.data.map((t) => {
+                const mine = t.assessors.find(
+                  (a) => (user?.id && a.userId === user.id) || a.email?.toLowerCase() === user?.email?.toLowerCase(),
+                );
+                const isPending = (mine?.status ?? 'pending') === 'pending';
+                return (
+                  <Card key={t.id} className="mb-2 flex flex-col gap-3">
+                    <button
+                      type="button"
+                      className="flex items-center justify-between gap-3 text-left"
+                      onClick={() => openAssigned(t.id)}
                     >
-                      {t.name}
-                    </span>
-                    <span className="block text-sm" style={{ color: colors.inkMuted }}>
-                      {t.sport} · {t.roster?.length ?? 0} players
-                    </span>
-                  </span>
-                  <Badge label="Score" variant="brand" />
-                </Card>
-              ))
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className="block truncate text-base font-bold"
+                          style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+                        >
+                          {t.name}
+                        </span>
+                        <span className="block text-sm" style={{ color: colors.inkMuted }}>
+                          {t.sport} · {t.roster?.length ?? 0} players
+                        </span>
+                      </span>
+                      <Badge label="Score" variant="brand" />
+                    </button>
+                    {isPending ? (
+                      <div className="flex gap-2">
+                        <Button
+                          label="Accept"
+                          size="sm"
+                          className="flex-1"
+                          loading={acceptingId === t.id}
+                          onClick={() => acceptAssigned(t.id)}
+                        />
+                        <Button
+                          label="Decline"
+                          size="sm"
+                          variant="ghost"
+                          className="flex-1"
+                          loading={decliningId === t.id}
+                          onClick={() => declineAssigned(t.id, t.name)}
+                        />
+                      </div>
+                    ) : null}
+                  </Card>
+                );
+              })
             : null}
         </div>
       ) : null}
@@ -304,13 +370,18 @@ export default function DashboardPage() {
         <div className="grid gap-3 sm:grid-cols-2">
           {tryouts.map((item) => {
             const selected = combineIds.includes(item.id);
+            const isBusy = busyId === item.id;
             return (
               <Card
                 key={item.id}
-                interactive
+                interactive={!isBusy}
                 accent={selected || combineMode}
                 className="flex h-full items-start justify-between gap-3"
-                onClick={() => openTryout(item.id)}
+                style={isBusy ? { opacity: 0.5 } : undefined}
+                onClick={() => {
+                  if (isBusy) return;
+                  openTryout(item.id);
+                }}
               >
                 <span className="min-w-0 flex-1">
                   <span
@@ -328,8 +399,25 @@ export default function DashboardPage() {
                     </span>
                   ) : null}
                 </span>
-                <span className="flex flex-col items-end gap-1">
-                  <Badge label={`${item.roster?.length ?? 0} players`} />
+                <span className="flex flex-col items-end gap-2">
+                  <span className="flex items-center gap-2">
+                    <Badge label={`${item.roster?.length ?? 0} players`} />
+                    {isBusy ? (
+                      <Spinner size={16} color={colors.danger} />
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label="Assessment actions"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteAssessment(item.id, item.name);
+                        }}
+                        className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                      >
+                        <Icon name="trash" size={16} color={colors.danger} />
+                      </button>
+                    )}
+                  </span>
                   {selected ? <Badge label="Selected" variant="brand" /> : null}
                 </span>
               </Card>
@@ -337,6 +425,41 @@ export default function DashboardPage() {
           })}
         </div>
       )}
+
+      <Modal
+        visible={!!actionTryout}
+        title="Assessment Actions"
+        onClose={() => setActionTryout(null)}
+        hideDefaultFooter
+      >
+        <div className="flex flex-col gap-3">
+          <p className="mb-1 text-sm" style={{ color: colors.inkMuted }}>
+            What would you like to do with &quot;{actionTryout?.name}&quot;?
+          </p>
+          <Button
+            label="Archive Assessment"
+            variant="secondary"
+            onClick={() => {
+              if (actionTryout) {
+                setBusyId(actionTryout.id);
+                archiveTryout.mutate(actionTryout.id, { onSettled: () => setBusyId(null) });
+              }
+              setActionTryout(null);
+            }}
+          />
+          <Button
+            label="Delete Permanently"
+            variant="danger"
+            onClick={() => {
+              if (actionTryout) {
+                setBusyId(actionTryout.id);
+                deleteTryout.mutate(actionTryout.id, { onSettled: () => setBusyId(null) });
+              }
+              setActionTryout(null);
+            }}
+          />
+        </div>
+      </Modal>
 
       <LimitReachedModal visible={!!limitMsg} message={limitMsg || ''} onClose={() => setLimitMsg(null)} />
     </>

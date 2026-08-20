@@ -107,7 +107,7 @@ export default function FeedbackPage() {
 
           <div className="flex flex-col gap-1">
             <label className="text-sm font-bold" style={{ color: colors.ink }}>
-              What's working well?
+              What&apos;s working well?
             </label>
             <Textarea
               rows={3}

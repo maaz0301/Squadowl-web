@@ -8,7 +8,7 @@ import { useThemeColors, useTheme } from '@/theme/ThemeProvider';
 import { Avatar, Badge, Button, Card, Input, PageHeader, SectionLabel, Switch, useAlert } from '@/components/ui';
 import { useThemeStore } from '@/state/themeStore';
 import { useUser, useAuthStore, usePermissions } from '@/state/authStore';
-import { getPlanDefinition } from '@/data/plans';
+import { canUseFeature, formatLimit, getPlanDefinition, getTeamAllowance } from '@/data/plans';
 import {
   useUpdateProfileMutation,
   useUpdatePasswordMutation,
@@ -20,6 +20,7 @@ import { PasswordSchema } from '@/data/types';
 const QUICK_LINKS = [
   { href: '/search', label: 'Search' },
   { href: '/organization/members', label: 'Manage Organization Members' },
+  { href: '/shared-athletes', label: 'Shared Athletes' },
   { href: '/archived-assessments', label: 'Archived Assessments' },
   { href: '/feedback', label: 'Send Feedback' },
   { href: '/friend-packages', label: 'Gift a Coach' },
@@ -45,6 +46,7 @@ export default function ProfilePage() {
   const [changingPassword, setChangingPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [loadingPortal, setLoadingPortal] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const plan = getPlanDefinition(user?.planTier ?? 'coach');
 
@@ -198,9 +200,14 @@ export default function ProfilePage() {
           <Card className="flex flex-col gap-2">
             <SectionLabel>Plan Limits</SectionLabel>
             <p style={{ color: colors.inkMuted }}>
-              Assessments: {plan.limits.assessments} · Players: {plan.limits.players} · Teams:{' '}
-              {plan.limits.teams}
+              Assessments: {formatLimit(plan.limits.assessments)} · Players: {formatLimit(plan.limits.players)} ·
+              Teams: {formatLimit(getTeamAllowance(user?.planTier ?? 'free', user?.extraTeamLicenses ?? 0))}
             </p>
+            {(user?.extraTeamLicenses ?? 0) > 0 ? (
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                Includes {user?.extraTeamLicenses} purchased team license{user?.extraTeamLicenses === 1 ? '' : 's'}.
+              </p>
+            ) : null}
             <div className="mt-2 flex flex-wrap gap-2">
               <Button label="Upgrade Plan" variant="secondary" onClick={() => router.push('/upgrade')} />
               {user?.subscriptionStatus === 'active' || user?.subscriptionStatus === 'trialing' ? (
@@ -212,6 +219,9 @@ export default function ProfilePage() {
                 />
               ) : null}
             </div>
+            {canUseFeature(user?.planTier ?? 'free', 'payments') ? (
+              <Button label="Payment Dashboard" variant="secondary" onClick={() => router.push('/payments')} />
+            ) : null}
           </Card>
 
           <Card className="flex flex-col gap-1">
@@ -242,9 +252,15 @@ export default function ProfilePage() {
         <Button
           label="Log Out"
           variant="danger"
+          loading={loggingOut}
           onClick={async () => {
-            await logout();
-            router.push('/login');
+            setLoggingOut(true);
+            try {
+              await logout();
+              router.push('/login');
+            } finally {
+              setLoggingOut(false);
+            }
           }}
         />
       </div>

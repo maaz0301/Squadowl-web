@@ -22,6 +22,7 @@ export interface RubricCategory {
   subskills: SubSkill[];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for signature parity with callers/mobile; sport-specific rubrics were removed in 7.1
 export function getDefaultRubrics(_sport: Sport): {
   skater: RubricCategory[];
   goalie: RubricCategory[];
@@ -30,6 +31,7 @@ export function getDefaultRubrics(_sport: Sport): {
   return { skater: [], goalie: [] };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for signature parity with callers/mobile
 export function getDefaultWeights(_sport: Sport): {
   skater: Record<string, number>;
   goalie: Record<string, number>;

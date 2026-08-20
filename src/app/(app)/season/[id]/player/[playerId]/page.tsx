@@ -8,6 +8,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, EmptyState, Input, LoadingState, PageHeader } from '@/components/ui';
 import { usePortalInviteMutation, useSeasonQuery } from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 
 export default function SeasonPlayerPage() {
   const id = useSeasonId();
@@ -17,6 +18,10 @@ export default function SeasonPlayerPage() {
   const seasonQuery = useSeasonQuery(id);
   const portalInvite = usePortalInviteMutation(id ?? '');
   const [email, setEmail] = useState('');
+  // Hook, so it runs before the loading guard below — skipping it on the
+  // loading render would change hook order. A delegated team's season gates
+  // against the owning club's tier, not the viewer's own.
+  const tier = useEffectivePlanTier(seasonQuery.data?.teamId);
 
   if (seasonQuery.isLoading) return <LoadingState />;
   const player = seasonQuery.data?.roster.find((p) => p.id === playerId);
@@ -42,7 +47,7 @@ export default function SeasonPlayerPage() {
         ) : null}
       </Card>
 
-      <PlanGate feature="guardianPortal" title="Guardian Portal (Coach+)">
+      <PlanGate feature="guardianPortal" title="Guardian Portal (Coach+)" tierOverride={tier}>
         <Card accent className="flex flex-col gap-3">
           <p className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Send Portal Invite

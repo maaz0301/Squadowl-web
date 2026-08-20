@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { AddToRosterModal, type RosterDestination } from '@/components/assessment/AddToRosterModal';
 import { RegistrationForm } from '@/components/assessment/RegistrationForm';
+import { RegistrationProfileModal } from '@/components/assessment/RegistrationProfileModal';
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { PlanGate } from '@/components/PlanGate';
@@ -24,14 +26,15 @@ import {
 import { canUseFeature, isAtPlayerLimit } from '@/data/plans';
 import type { DummyDataOptions } from '@/data/testDataGenerator';
 import {
-  useAddRegistrationToRosterMutation,
   useClearTestDataMutation,
   useDismissRegistrationMutation,
   useEnsureCloudSessionMutation,
   useGenerateTestDataMutation,
+  usePlaceRegistrationsMutation,
   useRegistrationsQuery,
   useSubmitRegistrationMutation,
   useTryoutQuery,
+  useTryoutsQuery,
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { useUser } from '@/state/authStore';
@@ -49,10 +52,11 @@ export default function RegistrationsPage() {
   const tryoutQuery = useTryoutQuery(id);
   const regsQuery = useRegistrationsQuery(id!);
   const ensureCloud = useEnsureCloudSessionMutation();
-  const addToRoster = useAddRegistrationToRosterMutation(id!);
+  const allTryouts = useTryoutsQuery();
   const dismissReg = useDismissRegistrationMutation(id!);
   const submitReg = useSubmitRegistrationMutation(id!);
-  const genTest = useGenerateTestDataMutation(id!);
+  const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
+  const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
   const clearTest = useClearTestDataMutation(id!);
   const user = useUser();
   const [showQr, setShowQr] = useState(false);
@@ -61,6 +65,12 @@ export default function RegistrationsPage() {
   const [tab, setTab] = useState<RegTab>('pending');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
+  // Registration ids waiting on a destination choice. Non-null == picker open.
+  const [placing, setPlacing] = useState<string[] | null>(null);
+  const [placingProgress, setPlacingProgress] = useState<{ done: number; total: number } | null>(null);
+  const placeRegs = usePlaceRegistrationsMutation(id!, (done, total) => setPlacingProgress({ done, total }));
+  // Registration whose submitted profile is open. Non-null == profile open.
+  const [viewingId, setViewingId] = useState<string | null>(null);
 
   const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
 
@@ -76,6 +86,13 @@ export default function RegistrationsPage() {
     if (tab === 'dismissed') return all.filter((r) => r.status === 'dismissed');
     return all.filter((r) => r.status === 'pending');
   }, [regsQuery.data, tab]);
+
+  // Resolved from the live list rather than held as a snapshot, so the status
+  // and payment badges in the profile stay current while it's open.
+  const viewing = useMemo(
+    () => (regsQuery.data ?? []).find((r) => r.id === viewingId) ?? null,
+    [regsQuery.data, viewingId],
+  );
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -107,15 +124,36 @@ export default function RegistrationsPage() {
     });
   };
 
-  const bulkAdd = async () => {
-    if (isAtPlayerLimit(user?.planTier ?? 'free', tryout.roster.length + selected.size - 1)) {
-      setLimitMsg('You have reached the maximum number of players for your current plan.');
-      return;
+  const runPlacement = async (destination: RosterDestination) => {
+    const ids = placing ?? [];
+    if (ids.length === 0) return;
+
+    // The player limit is per-assessment, so it has to be measured against the
+    // roster actually receiving these players — not this screen's assessment,
+    // which may not be the destination. A team roster isn't capped this way.
+    if (destination.kind === 'assessment') {
+      const target = (allTryouts.data ?? []).find((t) => t.id === destination.id);
+      const existing = target?.roster.length ?? 0;
+      if (isAtPlayerLimit(user?.planTier ?? 'free', existing + ids.length - 1)) {
+        setLimitMsg('You have reached the maximum number of players for your current plan.');
+        return;
+      }
     }
-    for (const regId of selected) {
-      await addToRoster.mutateAsync(regId);
+
+    try {
+      setPlacingProgress({ done: 0, total: ids.length });
+      await placeRegs.mutateAsync({ destination, registrationIds: ids });
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const regId of ids) next.delete(regId);
+        return next;
+      });
+      setPlacing(null);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Failed to add players.');
+    } finally {
+      setPlacingProgress(null);
     }
-    setSelected(new Set());
   };
 
   const exportCsv = () => {
@@ -140,6 +178,7 @@ export default function RegistrationsPage() {
   const hasRubrics = (tryout.settings.customRubrics?.length ?? 0) > 0;
 
   const runGenerate = async (options: DummyDataOptions) => {
+    setDummyProgress(null);
     try {
       const res = await genTest.mutateAsync(options);
       setShowTestGen(false);
@@ -202,12 +241,21 @@ export default function RegistrationsPage() {
           onChange={(k) => setTab(k as RegTab)}
         />
         <span className="ml-auto flex flex-wrap gap-2">
+          {tab === 'pending' && filtered.length > 0 ? (
+            <Button
+              label={selected.size === filtered.length ? 'Deselect All' : 'Select All'}
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map((r) => r.id)))
+              }
+            />
+          ) : null}
           {tab === 'pending' && selected.size > 0 ? (
             <Button
               label={`Add ${selected.size} to Roster`}
               size="sm"
-              onClick={bulkAdd}
-              loading={addToRoster.isPending}
+              onClick={() => setPlacing([...selected])}
             />
           ) : null}
           <Button label="Export CSV" variant="ghost" size="sm" onClick={exportCsv} />
@@ -243,31 +291,42 @@ export default function RegistrationsPage() {
         <div className="grid gap-3 lg:grid-cols-2">
           {filtered.map((item) => (
             <Card key={item.id} className="flex flex-col gap-2">
-              <div className="flex items-start justify-between gap-3">
-                <span className="text-lg font-bold" style={{ color: colors.ink }}>
-                  {item.firstName} {item.lastName}
-                </span>
-                <span className="flex flex-col items-end gap-1">
-                  <Badge
-                    label={item.status}
-                    variant={item.status === 'pending' ? 'warning' : item.status === 'added' ? 'success' : 'info'}
-                  />
-                  {item.paymentStatus ? (
+              {/* Only the identity block opens the profile — the action buttons
+                  below stay independently clickable. */}
+              <button
+                type="button"
+                className="flex flex-col gap-2 text-left"
+                onClick={() => setViewingId(item.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-lg font-bold" style={{ color: colors.ink }}>
+                    {item.firstName} {item.lastName}
+                  </span>
+                  <span className="flex flex-col items-end gap-1">
                     <Badge
-                      label={item.paymentStatus}
-                      variant={item.paymentStatus === 'paid' ? 'success' : 'warning'}
+                      label={item.status}
+                      variant={item.status === 'pending' ? 'warning' : item.status === 'added' ? 'success' : 'info'}
                     />
-                  ) : null}
+                    {item.paymentStatus ? (
+                      <Badge
+                        label={item.paymentStatus}
+                        variant={item.paymentStatus === 'paid' ? 'success' : 'warning'}
+                      />
+                    ) : null}
+                  </span>
+                </div>
+                <span className="text-sm" style={{ color: colors.inkMuted }}>
+                  {item.guardianName} · {item.guardianEmail}
                 </span>
-              </div>
-              <span className="text-sm" style={{ color: colors.inkMuted }}>
-                {item.guardianName} · {item.guardianEmail}
-              </span>
-              {item.yearOfBirth || item.positionTryingOutFor ? (
-                <span className="text-sm" style={{ color: colors.inkFaint }}>
-                  {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}
+                {item.yearOfBirth || item.positionTryingOutFor ? (
+                  <span className="text-sm" style={{ color: colors.inkFaint }}>
+                    {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}
+                  </span>
+                ) : null}
+                <span className="text-xs" style={{ color: colors.inkFaint }}>
+                  Click to view profile
                 </span>
-              ) : null}
+              </button>
               {item.status === 'pending' ? (
                 <div className="mt-1 flex flex-wrap gap-2">
                   <Button
@@ -279,16 +338,16 @@ export default function RegistrationsPage() {
                   <Button
                     label="Add to Roster"
                     size="sm"
-                    loading={addToRoster.isPending}
-                    onClick={() => {
-                      if (isAtPlayerLimit(user?.planTier ?? 'free', tryout.roster.length)) {
-                        setLimitMsg('You have reached the maximum number of players for your current plan.');
-                        return;
-                      }
-                      addToRoster.mutate(item.id);
-                    }}
+                    disabled={dismissReg.isPending && dismissReg.variables === item.id}
+                    onClick={() => setPlacing([item.id])}
                   />
-                  <Button label="Dismiss" size="sm" variant="ghost" onClick={() => dismissReg.mutate(item.id)} />
+                  <Button
+                    label="Dismiss"
+                    size="sm"
+                    variant="ghost"
+                    loading={dismissReg.isPending && dismissReg.variables === item.id}
+                    onClick={() => dismissReg.mutate(item.id)}
+                  />
                 </div>
               ) : null}
             </Card>
@@ -327,6 +386,7 @@ export default function RegistrationsPage() {
         variant="assessment"
         visible={showTestGen}
         loading={genTest.isPending}
+        progress={dummyProgress ?? undefined}
         hasRubrics={hasRubrics}
         onAddRubrics={() => {
           setShowTestGen(false);
@@ -334,6 +394,37 @@ export default function RegistrationsPage() {
         }}
         onClose={() => setShowTestGen(false)}
         onSubmit={runGenerate}
+      />
+
+      <RegistrationProfileModal
+        registration={viewing}
+        onClose={() => setViewingId(null)}
+        onAddToRoster={
+          viewing
+            ? () => {
+                setViewingId(null);
+                setPlacing([viewing.id]);
+              }
+            : undefined
+        }
+        onDismiss={
+          viewing
+            ? () => {
+                dismissReg.mutate(viewing.id);
+                setViewingId(null);
+              }
+            : undefined
+        }
+      />
+
+      <AddToRosterModal
+        visible={placing !== null}
+        count={placing?.length ?? 0}
+        currentTryoutId={id}
+        loading={placeRegs.isPending}
+        progress={placingProgress ?? undefined}
+        onClose={() => setPlacing(null)}
+        onConfirm={runPlacement}
       />
 
       <LimitReachedModal visible={!!limitMsg} message={limitMsg || ''} onClose={() => setLimitMsg(null)} />

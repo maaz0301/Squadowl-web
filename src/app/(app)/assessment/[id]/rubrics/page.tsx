@@ -2,11 +2,23 @@
 
 import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Badge, Button, Card, Chip, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  Chip,
+  ErrorState,
+  Input,
+  LoadingState,
+  SectionLabel,
+  Spinner,
+  useAlert,
+} from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
+import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { useTryoutQuery, useUpdateTryoutMutation } from '@/features/queries';
 import { useAssessmentId } from '@/features/useAssessmentId';
-import { useUser } from '@/state/authStore';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { getPlanDefinition } from '@/data/plans';
 import type { ScoringType, RankingDirection } from '@/data/types';
 
@@ -14,10 +26,14 @@ export default function RubricsPage() {
   const id = useAssessmentId();
   const colors = useThemeColors();
   const { alert } = useAlert();
-  const user = useUser();
   const tryoutQuery = useTryoutQuery(id);
   const updateTryout = useUpdateTryoutMutation();
+  // Hook, so it runs before the loading/error guards below — skipping it on
+  // the loading render would change hook order. A delegated team's tryout
+  // gates against the owning club's tier, not the viewer's own.
+  const tier = useEffectivePlanTier(tryoutQuery.data?.teamId);
 
+  const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [scoringType, setScoringType] = useState<ScoringType>('skill');
   const [scale, setScale] = useState<'1-5' | '1-10'>('1-5');
@@ -42,7 +58,7 @@ export default function RubricsPage() {
 
   const tryout = tryoutQuery.data;
   const custom = tryout.settings.customRubrics ?? [];
-  const plan = getPlanDefinition(user?.planTier ?? 'free');
+  const plan = getPlanDefinition(tier);
   const customLimit = plan.limits.customRubrics;
   const atCustomLimit = customLimit !== 'unlimited' && custom.length >= (customLimit as number);
 
@@ -95,6 +111,7 @@ export default function RubricsPage() {
     delete nextSkaterWeights[keyToRemove];
     delete nextGoalieWeights[keyToRemove];
 
+    setRemovingKey(keyToRemove);
     try {
       await updateTryout.mutateAsync({
         id: tryout.id,
@@ -110,6 +127,8 @@ export default function RubricsPage() {
       await alert('Success', 'Custom rubric removed successfully.');
     } catch (err) {
       await alert('Error', err instanceof Error ? err.message : 'Failed to remove custom rubric.');
+    } finally {
+      setRemovingKey(null);
     }
   };
 
@@ -124,6 +143,8 @@ export default function RubricsPage() {
             All rubrics are fully custom. Define drill categories, metric units, and min/max score benchmarks.
           </span>
         </Card>
+
+        <UsageNudgeBanner tier={tier} metric="customRubrics" count={custom.length} label="custom rubrics" />
 
         <Card className="flex flex-col gap-3">
           <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
@@ -160,11 +181,12 @@ export default function RubricsPage() {
                 <button
                   type="button"
                   onClick={() => removeCustom(r.key)}
+                  disabled={removingKey !== null}
                   aria-label={`Remove ${r.label}`}
-                  className="px-2 text-xl font-bold"
+                  className="px-2 text-xl font-bold disabled:opacity-50"
                   style={{ color: colors.danger }}
                 >
-                  ✕
+                  {removingKey === r.key ? <Spinner size={16} /> : '✕'}
                 </button>
               </div>
             );
@@ -178,7 +200,7 @@ export default function RubricsPage() {
         </Card>
       </div>
 
-      <PlanGate feature="customRubrics" title="Custom Rubrics (Coach+)">
+      <PlanGate feature="customRubrics" title="Custom Rubrics (Coach+)" tierOverride={tier}>
         <Card accent className="flex flex-col gap-4">
           <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Add Custom Drill / Category

@@ -14,6 +14,7 @@ const TABS = [
   { slug: 'roster', label: 'Roster' },
   { slug: 'attendance', label: 'Attendance' },
   { slug: 'availability', label: 'Availability' },
+  { slug: 'chat', label: 'Chat' },
   { slug: 'settings', label: 'Settings' },
 ];
 

@@ -218,6 +218,44 @@ export function getPlayerNameMap(tryout: Tryout): Record<string, string> {
   );
 }
 
+/**
+ * Team Builder export rows, grouped by team. Pass `opts.teamId` to export just
+ * one team; omitted, every team is included (used by the Team Builder page's
+ * "Export All Teams").
+ */
+export function buildTeamBuilderExportRows(
+  tryout: Tryout,
+  state: TeamBuilderState,
+  opts?: { teamId?: string },
+): { headers: string[]; rows: string[][] } {
+  const results = computePlayerResults(tryout);
+  const overallByPlayerId = new Map(results.map((r) => [r.player.id, r.overall]));
+  const playerById = new Map(tryout.roster.map((p) => [p.id, p]));
+  const headers = ['Team', 'Player', 'Jersey', 'Pos', 'Role', 'Overall'];
+  const teams = opts?.teamId ? state.teams.filter((t) => t.id === opts.teamId) : state.teams;
+
+  const rows: string[][] = [];
+  for (const team of teams) {
+    const addPlayers = (ids: string[], role: string) => {
+      for (const pid of ids) {
+        const p = playerById.get(pid);
+        const overall = overallByPlayerId.get(pid);
+        rows.push([
+          team.name,
+          p ? playerDisplayName(p) : pid,
+          p?.jersey ?? '',
+          p?.pos ?? '',
+          role,
+          overall != null ? overall.toFixed(2) : '',
+        ]);
+      }
+    };
+    addPlayers(team.skaters, 'Skater');
+    addPlayers(team.goalies, 'Goalie');
+  }
+  return { headers, rows };
+}
+
 export function formatExportCsv(tryout: Tryout): string {
   const results = computePlayerResults(tryout);
   const headers = ['Rank', 'First', 'Last', 'Jersey', 'Pos', 'Overall', 'Recommendation'];

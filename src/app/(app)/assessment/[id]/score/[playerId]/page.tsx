@@ -25,7 +25,7 @@ import {
   weightedOverall,
 } from '@/data/rubrics';
 import { RECOMMENDATIONS, ScoreFormSchema, type ScoreForm } from '@/data/types';
-import { useAthleteHistoryQuery, useSaveEvaluationMutation, useTryoutQuery } from '@/features/queries';
+import { useSaveEvaluationMutation, useTryoutQuery } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -74,7 +74,6 @@ export default function ScorePage() {
   );
 
   const player = tryoutQuery.data?.roster.find((p) => p.id === playerId);
-  const historyQuery = useAthleteHistoryQuery(player?.athleteId);
   const existingEval = evalId ? tryoutQuery.data?.evals.find((e) => e.id === evalId) : undefined;
 
   const scoredSessions = useMemo(
@@ -141,7 +140,6 @@ export default function ScorePage() {
     setValue,
     getValues,
     reset,
-    formState: { errors },
   } = useForm<ScoreForm>({
     resolver: zodResolver(ScoreFormSchema),
     defaultValues: {
@@ -214,7 +212,7 @@ export default function ScorePage() {
 
       if (hasUnsaved) {
         const hasScores = currentFormVal.scores && Object.values(currentFormVal.scores).some((v) => v != null && v > 0);
-        if (hasScores && currentFormVal.recommendation) {
+        if (hasScores) {
           saveEval.mutate({
             playerId: lastPlayerId || playerId,
             form: { ...currentFormVal, session: lastSession || currentFormVal.session },
@@ -255,7 +253,7 @@ export default function ScorePage() {
       const hasUnsaved = previousFormRef.current && previousFormRef.current !== JSON.stringify(form);
       if (!hasUnsaved) return;
       const hasScores = form.scores && Object.values(form.scores).some((v) => v != null && v > 0);
-      if (hasScores && form.recommendation) {
+      if (hasScores) {
         saveEval.mutate({ playerId: pId, form: { ...form, session: sName }, evalId: eId ?? undefined });
       }
     };
@@ -271,7 +269,7 @@ export default function ScorePage() {
     }
 
     const hasScores = formData.scores && Object.values(formData.scores).some((v) => v != null && v > 0);
-    if (!hasScores || !formData.recommendation) return;
+    if (!hasScores) return;
 
     if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
 
@@ -451,14 +449,7 @@ export default function ScorePage() {
         );
       })}
 
-      <div className="mb-2 flex items-center justify-between">
-        <SectionLabel>Recommendation *</SectionLabel>
-        {errors.recommendation ? (
-          <span className="text-sm font-medium" style={{ color: colors.danger }}>
-            {errors.recommendation.message}
-          </span>
-        ) : null}
-      </div>
+      <SectionLabel className="mb-2">Recommendation</SectionLabel>
       <Controller
         control={control}
         name="recommendation"

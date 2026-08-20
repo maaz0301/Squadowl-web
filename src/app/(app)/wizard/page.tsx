@@ -66,7 +66,9 @@ export default function WizardPage() {
   const [completedSteps, setCompletedSteps] = useState<number[]>(initialData.completed);
 
   const completeWizard = useOnboardingStore((s) => s.completeWizard);
-  const updateProfile = useUpdateProfileMutation().mutateAsync;
+  const updateProfileMutation = useUpdateProfileMutation();
+  const updateProfile = updateProfileMutation.mutateAsync;
+  const [skipping, setSkipping] = useState(false);
   const createTeam = useCreateTeamMutation();
   const createTryout = useCreateTryoutMutation();
   const tryoutsQuery = useTryoutsQuery(false);
@@ -219,17 +221,25 @@ export default function WizardPage() {
           size="lg"
           fullWidth
           onClick={handleAction}
-          loading={createTeam.isPending || createTryout.isPending}
+          loading={createTeam.isPending || createTryout.isPending || updateProfileMutation.isPending}
+          disabled={skipping}
         />
         <Button
           label="Skip"
           variant="ghost"
           fullWidth
+          loading={skipping}
+          disabled={createTeam.isPending || createTryout.isPending || updateProfileMutation.isPending}
           onClick={async () => {
             if (step >= STEPS.length - 1) {
-              completeWizard();
-              await updateProfile({ onboardingCompleted: true });
-              router.replace('/dashboard');
+              setSkipping(true);
+              try {
+                completeWizard();
+                await updateProfile({ onboardingCompleted: true });
+                router.replace('/dashboard');
+              } finally {
+                setSkipping(false);
+              }
             } else {
               setStep((s) => s + 1);
             }

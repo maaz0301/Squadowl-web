@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useIsMutating } from '@tanstack/react-query';
 
 import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
 import { DummyDataModal } from '@/components/DummyDataModal';
@@ -13,13 +14,16 @@ import {
   Chip,
   EmptyState,
   ErrorState,
+  Input,
   LoadingState,
   Modal,
   SectionLabel,
+  Spinner,
   useAlert,
 } from '@/components/ui';
 import { canUseFeature, isAtPlayerLimit } from '@/data/plans';
 import { playerDisplayName } from '@/data/rubrics';
+import type { AddPlayerForm as AddPlayerFormValues } from '@/data/types';
 import {
   useAddPlayerMutation,
   useClearTestDataMutation,
@@ -28,6 +32,8 @@ import {
   useUploadPlayerPhotoMutation,
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
+import { tryoutBulkWriteKey } from '@/lib/queryClient';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { useUser } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -37,11 +43,12 @@ export default function RosterPage() {
   const href = useAssessmentHref();
   const colors = useThemeColors();
   const router = useRouter();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   const addPlayer = useAddPlayerMutation(id!);
   const uploadPhoto = useUploadPlayerPhotoMutation(id!);
-  const genTest = useGenerateTestDataMutation(id!);
+  const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
+  const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
   const clearTest = useClearTestDataMutation(id!);
   const rosterFilter = useSessionStore((s) => s.rosterFilter);
   const setRosterFilter = useSessionStore((s) => s.setRosterFilter);
@@ -51,8 +58,15 @@ export default function RosterPage() {
   const user = useUser();
   const [showAdd, setShowAdd] = useState(false);
   const [showTools, setShowTools] = useState(false);
+  const [runningTool, setRunningTool] = useState<string | null>(null);
   const [showTestGen, setShowTestGen] = useState(false);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
+  const [playerSearch, setPlayerSearch] = useState('');
+  // A bulk add started from another screen (the Registrations tab's dummy-data
+  // dialog, typically) keeps writing players for minutes without this page's
+  // query ever refetching — so without checking for it, an in-progress large
+  // batch looks exactly like an assessment nobody has added anyone to.
+  const bulkWriting = useIsMutating({ mutationKey: tryoutBulkWriteKey(id ?? '') }) > 0;
 
   const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
 
@@ -69,19 +83,29 @@ export default function RosterPage() {
     if (!tryoutQuery.data) return [];
     const { roster, evals } = tryoutQuery.data;
     const scoredIds = new Set(evals.map((e) => e.playerId));
+    let result: typeof roster;
     switch (rosterFilter) {
       case 'scored':
-        return roster.filter((p) => scoredIds.has(p.id));
+        result = roster.filter((p) => scoredIds.has(p.id));
+        break;
       case 'unscored':
-        return roster.filter((p) => !scoredIds.has(p.id));
+        result = roster.filter((p) => !scoredIds.has(p.id));
+        break;
       case 'goalies':
-        return roster.filter((p) => p.pos?.toUpperCase() === 'GTL');
+        result = roster.filter((p) => p.pos?.toUpperCase() === 'GTL');
+        break;
       case 'skaters':
-        return roster.filter((p) => p.pos?.toUpperCase() !== 'GTL');
+        result = roster.filter((p) => p.pos?.toUpperCase() !== 'GTL');
+        break;
       default:
-        return roster;
+        result = roster;
     }
-  }, [tryoutQuery.data, rosterFilter]);
+    const search = playerSearch.trim().toLowerCase();
+    if (search) {
+      result = result.filter((p) => `${p.first} ${p.last}`.toLowerCase().includes(search));
+    }
+    return result;
+  }, [tryoutQuery.data, rosterFilter, playerSearch]);
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading roster..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -92,14 +116,49 @@ export default function RosterPage() {
 
   const openAdd = () => {
     if (isAtPlayerLimit(user?.planTier ?? 'free', tryout.roster.length)) {
-      setLimitMsg('You have reached the maximum number of players for your current plan.');
+      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
       return;
     }
     setShowAdd(true);
   };
 
+  // On failure, offers a Retry instead of just dead-ending — re-running this
+  // same submit (including the photo-upload follow-up) rather than only the
+  // add-player mutation, so a retry that succeeds still finishes the flow.
+  const submitAddPlayer = async (data: AddPlayerFormValues) => {
+    try {
+      const player = await addPlayer.mutateAsync(data);
+      // A freshly picked file is a blob: URL until it's uploaded to storage.
+      if (player.athleteId && data.avatarUrl?.startsWith('blob:')) {
+        try {
+          await uploadPhoto.mutateAsync({
+            athleteId: player.athleteId,
+            fileUri: data.avatarUrl,
+            fileType: 'image/jpeg',
+          });
+        } catch (e) {
+          await alert(
+            'Upload Error',
+            `Failed to upload profile picture: ${e instanceof Error ? e.message : 'Unknown error'}`,
+          );
+        }
+      }
+      setShowAdd(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to add player.';
+      const retry = await confirm({ title: 'Save Error', message, confirmLabel: 'Retry' });
+      if (retry) await submitAddPlayer(data);
+    }
+  };
+
   const hasPlayers = tryout.roster.length > 0;
   const scoredCount = new Set(tryout.evals.map((e) => e.playerId)).size;
+  // A background refetch keeps rendering the *previous* cached tryout, which
+  // right after a bulk add (dummy data, or registrations placed onto the
+  // roster) is still the empty one — `isLoading` is false the whole time
+  // because data technically exists. So an empty roster while a fetch or a
+  // bulk write is in flight means "not known yet", not "no players".
+  const rosterPending = !hasPlayers && (tryoutQuery.isFetching || bulkWriting);
 
   const tools = [
     {
@@ -182,6 +241,12 @@ export default function RosterPage() {
             </div>
           ) : null}
 
+          <Input
+            value={playerSearch}
+            onChange={(e) => setPlayerSearch(e.target.value)}
+            placeholder="Search players by name"
+          />
+
           <div>
             <SectionLabel className="mb-1.5">Show</SectionLabel>
             <div className="flex flex-wrap gap-2">
@@ -197,7 +262,9 @@ export default function RosterPage() {
         </div>
       ) : null}
 
-      {!hasPlayers ? (
+      {rosterPending ? (
+        <LoadingState message={bulkWriting ? 'Adding players...' : 'Loading roster...'} />
+      ) : !hasPlayers ? (
         <EmptyState
           title="Add your players to get started"
           message="Add players to this assessment, then you can start scoring."
@@ -206,10 +273,17 @@ export default function RosterPage() {
         />
       ) : filteredRoster.length === 0 ? (
         <EmptyState
-          title="No players match this filter"
-          message={`No ${rosterFilter} players. Try a different filter.`}
-          actionLabel="Show all"
-          onAction={() => setRosterFilter('all')}
+          title={playerSearch.trim() ? 'No players match' : 'No players match this filter'}
+          message={
+            playerSearch.trim()
+              ? `No players match "${playerSearch.trim()}".`
+              : `No ${rosterFilter} players. Try a different filter.`
+          }
+          actionLabel={playerSearch.trim() ? 'Clear search' : 'Show all'}
+          onAction={() => {
+            if (playerSearch.trim()) setPlayerSearch('');
+            else setRosterFilter('all');
+          }}
         />
       ) : (
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -250,32 +324,7 @@ export default function RosterPage() {
       )}
 
       <Modal visible={showAdd} title="Add Player" size="lg" onClose={() => setShowAdd(false)} hideDefaultFooter>
-        <AddPlayerForm
-          loading={addPlayer.isPending || uploadPhoto.isPending}
-          onSubmit={async (data) => {
-            try {
-              const player = await addPlayer.mutateAsync(data);
-              // A freshly picked file is a blob: URL until it's uploaded to storage.
-              if (player.athleteId && data.avatarUrl?.startsWith('blob:')) {
-                try {
-                  await uploadPhoto.mutateAsync({
-                    athleteId: player.athleteId,
-                    fileUri: data.avatarUrl,
-                    fileType: 'image/jpeg',
-                  });
-                } catch (e) {
-                  await alert(
-                    'Upload Error',
-                    `Failed to upload profile picture: ${e instanceof Error ? e.message : 'Unknown error'}`,
-                  );
-                }
-              }
-              setShowAdd(false);
-            } catch (err) {
-              await alert('Save Error', err instanceof Error ? err.message : 'Failed to add player.');
-            }
-          }}
-        />
+        <AddPlayerForm loading={addPlayer.isPending || uploadPhoto.isPending} onSubmit={submitAddPlayer} />
       </Modal>
 
       <Modal visible={showTools} title="Tools" onClose={() => setShowTools(false)}>
@@ -283,19 +332,28 @@ export default function RosterPage() {
           <button
             type="button"
             key={t.label}
-            onClick={() => {
-              setShowTools(false);
-              t.go();
+            disabled={runningTool !== null}
+            onClick={async () => {
+              setRunningTool(t.label);
+              try {
+                await t.go();
+              } finally {
+                setRunningTool(null);
+                setShowTools(false);
+              }
             }}
-            className="block w-full border-b py-3 text-left"
+            className="flex w-full items-center justify-between gap-3 border-b py-3 text-left disabled:opacity-50"
             style={{ borderColor: colors.border }}
           >
-            <span className="block text-base font-bold" style={{ color: colors.ink }}>
-              {t.label}
+            <span>
+              <span className="block text-base font-bold" style={{ color: colors.ink }}>
+                {t.label}
+              </span>
+              <span className="mt-0.5 block text-sm" style={{ color: colors.inkMuted }}>
+                {t.desc}
+              </span>
             </span>
-            <span className="mt-0.5 block text-sm" style={{ color: colors.inkMuted }}>
-              {t.desc}
-            </span>
+            {runningTool === t.label ? <Spinner size={18} /> : null}
           </button>
         ))}
       </Modal>
@@ -304,6 +362,7 @@ export default function RosterPage() {
         variant="assessment"
         visible={showTestGen}
         loading={genTest.isPending}
+        progress={dummyProgress ?? undefined}
         hasRubrics={(tryout.settings?.customRubrics?.length ?? 0) > 0}
         onAddRubrics={() => {
           setShowTestGen(false);
@@ -311,6 +370,7 @@ export default function RosterPage() {
         }}
         onClose={() => setShowTestGen(false)}
         onSubmit={async (options) => {
+          setDummyProgress(null);
           try {
             const res = await genTest.mutateAsync(options);
             setShowTestGen(false);
@@ -328,6 +388,8 @@ export default function RosterPage() {
                   ? e.message
                   : 'Failed to generate dummy data.';
             await alert('Error', msg);
+          } finally {
+            setDummyProgress(null);
           }
         }}
       />

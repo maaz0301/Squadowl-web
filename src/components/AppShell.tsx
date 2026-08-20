@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, ThemeToggle } from '@/components/ui';
@@ -30,7 +30,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // A tap on a nav item shouldn't leave the mobile drawer hanging open.
-  useEffect(() => setDrawerOpen(false), [pathname]);
+  // Adjusted during render on route change (React's documented "storing
+  // information from previous renders" pattern) rather than in an effect,
+  // which would paint one frame with the drawer still open.
+  const [drawerPathname, setDrawerPathname] = useState(pathname);
+  if (pathname !== drawerPathname) {
+    setDrawerPathname(pathname);
+    setDrawerOpen(false);
+  }
 
   const planTier = user?.planTier ?? 'free';
 
@@ -49,8 +56,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     ? []
     : [
         { href: '/archived-assessments', label: 'Archived', icon: 'archive' },
+        { href: '/shared-athletes', label: 'Shared Athletes', icon: 'share' },
         ...(canUseFeature(planTier, 'enterprise')
           ? ([{ href: '/enterprise', label: 'Enterprise', icon: 'enterprise' }] as NavItem[])
+          : []),
+        ...(canUseFeature(planTier, 'payments')
+          ? ([{ href: '/payments', label: 'Payments', icon: 'payments' }] as NavItem[])
           : []),
         ...(canManageOrganization
           ? ([{ href: '/organization/members', label: 'Members', icon: 'members' }] as NavItem[])
@@ -153,10 +164,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 
   return (
-    <div className="flex min-h-screen" style={{ backgroundColor: colors.bg }}>
+    <div className="flex min-h-dvh" style={{ backgroundColor: colors.bg }}>
       {/* Desktop sidebar */}
       <aside
-        className="sticky top-0 hidden h-screen w-[248px] shrink-0 flex-col border-r p-4 lg:flex"
+        className="sticky top-0 hidden h-dvh w-[248px] shrink-0 flex-col border-r p-4 lg:flex"
         style={{ backgroundColor: colors.bgSecondary, borderColor: colors.border }}
       >
         {sidebarInner}
@@ -205,7 +216,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <ThemeToggle />
         </header>
 
-        <main className={cn('mx-auto w-full max-w-[1180px] flex-1 px-4 py-6 sm:px-6 lg:px-8')}>{children}</main>
+        <main className={cn('w-full flex-1 px-4 py-6 sm:px-6 lg:px-8')}>{children}</main>
       </div>
 
       {/* Desktop theme toggle floats out of the way of page content. */}

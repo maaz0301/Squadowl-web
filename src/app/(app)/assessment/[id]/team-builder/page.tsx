@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -11,40 +13,69 @@ import {
   PageHeader,
   Spinner,
   Textarea,
+  useAlert,
 } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
-import { useTryoutQuery, useGenerateTeamBuilderMutation } from '@/features/queries';
+import {
+  useTryoutQuery,
+  useGenerateTeamBuilderMutation,
+  useTeamBuilderResultsQuery,
+  useSaveTeamBuilderResultMutation,
+  useDeleteTeamBuilderResultMutation,
+} from '@/features/queries';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { getPlayerNameMap, type TeamBuilderState } from '@/data/teamBuilder';
 import { computePlayerResults } from '@/data/scoring';
+import { playerDisplayName } from '@/data/rubrics';
+import { canUseFeature, getPlanDefinition } from '@/data/plans';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
+
+const TB_LOADING_TEXTS = ['Analyzing players...', 'Balancing rosters...', 'Optimizing lines...', 'Finalizing teams...'];
 
 export default function TeamBuilderPage() {
   const id = useAssessmentId();
   const href = useAssessmentHref();
+  const router = useRouter();
   const colors = useThemeColors();
+  const { confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   const generate = useGenerateTeamBuilderMutation(id!);
-  const [prompt, setPrompt] = useState('');
-  const [tbLoadingText, setTbLoadingText] = useState('Analyzing players...');
+  const savedResultsQuery = useTeamBuilderResultsQuery(id!);
+  const saveResult = useSaveTeamBuilderResultMutation(id!);
+  const deleteResult = useDeleteTeamBuilderResultMutation(id!);
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
+  const [textPrompt, setTextPrompt] = useState('');
+  const [tbTextIndex, setTbTextIndex] = useState(0);
+  // Set by "New" to hide the current live draft without touching the DB record —
+  // the next successful Generate produces a fresh generatedAt that un-hides it.
+  const [hiddenGeneratedAt, setHiddenGeneratedAt] = useState<number | null>(null);
+  const [lastSavedGeneratedAt, setLastSavedGeneratedAt] = useState<number | null>(null);
+  const [isExporting, setIsExporting] = useState<'xlsx' | 'pdf' | null>(null);
 
   const results = useMemo(
     () => (tryoutQuery.data ? computePlayerResults(tryoutQuery.data) : []),
     [tryoutQuery.data],
   );
 
+  // The interval is a real external-system subscription (a timer), so it
+  // stays an effect — but nothing in the effect body sets state synchronously
+  // on mount/dependency-change; the index only advances inside the interval
+  // callback, and the idle case is handled by deriving tbLoadingText below
+  // instead of resetting state here.
   useEffect(() => {
-    if (!generate.isPending) {
-      setTbLoadingText('Analyzing players...');
-      return;
-    }
-    const texts = ['Analyzing players...', 'Balancing rosters...', 'Optimizing lines...', 'Finalizing teams...'];
-    let idx = 0;
-    const int = setInterval(() => {
-      idx = (idx + 1) % texts.length;
-      setTbLoadingText(texts[idx]);
-    }, 2500);
+    if (!generate.isPending) return;
+    const int = setInterval(() => setTbTextIndex((i) => i + 1), 2500);
     return () => clearInterval(int);
   }, [generate.isPending]);
+
+  const tbLoadingText = generate.isPending
+    ? TB_LOADING_TEXTS[tbTextIndex % TB_LOADING_TEXTS.length]
+    : TB_LOADING_TEXTS[0];
+
+  // Hook, so it runs before the loading/error guards below — skipping it on
+  // the loading render would change hook order. A delegated team's tryout
+  // gates against the owning club's tier, not the viewer's own.
+  const tier = useEffectivePlanTier(tryoutQuery.data?.teamId);
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -57,17 +88,115 @@ export default function TeamBuilderPage() {
   }
 
   const tryout = tryoutQuery.data;
-  const teamBuilder = tryout.teamBuilder as TeamBuilderState | undefined;
+  const liveTeamBuilder = tryout.teamBuilder as TeamBuilderState | undefined;
+  const savedResults = savedResultsQuery.data ?? [];
+  const selectedResult = selectedResultId ? savedResults.find((r) => r.id === selectedResultId) : undefined;
+  const liveHidden = !!liveTeamBuilder && liveTeamBuilder.generatedAt === hiddenGeneratedAt;
+  const teamBuilder: TeamBuilderState | undefined = selectedResult
+    ? (selectedResult.state as TeamBuilderState)
+    : liveHidden ? undefined : liveTeamBuilder;
+  const isUnsaved = !selectedResult && !!teamBuilder && teamBuilder.generatedAt !== lastSavedGeneratedAt;
   const nameMap = getPlayerNameMap(tryout);
+  const playerById = new Map(tryout.roster.map((p) => [p.id, p]));
+  const overallByPlayerId = new Map(results.map((r) => [r.player.id, r.overall]));
+
+  const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
+  const allowedFormats = getPlanDefinition(tier).limits.exports;
 
   const handleGenerate = () => {
+    setSelectedResultId(null);
     generate.mutate({
-      prompt,
+      prompt: textPrompt,
       // Defaults; the backend also parses the prompt for a team count.
       teamCount: 2,
       keepFriendPackages: true,
       splitGoalies: true,
     });
+  };
+
+  const handleNew = async () => {
+    const proceed = () => {
+      setTextPrompt('');
+      setSelectedResultId(null);
+      if (liveTeamBuilder) setHiddenGeneratedAt(liveTeamBuilder.generatedAt);
+    };
+    if (isUnsaved) {
+      const ok = await confirm({
+        title: 'Discard this team split?',
+        message: "This team split hasn't been saved. Starting a new one will discard it unless you save it first.",
+        confirmLabel: 'Discard',
+        destructive: true,
+      });
+      if (ok) proceed();
+    } else {
+      proceed();
+    }
+  };
+
+  const handleSave = () => {
+    if (!teamBuilder) return;
+    const label = window.prompt('Name this split (e.g. "Option A — friend packages kept")');
+    if (!label?.trim()) return;
+    const generatedAt = teamBuilder.generatedAt;
+    saveResult.mutate(
+      { label: label.trim(), state: teamBuilder },
+      { onSuccess: () => setLastSavedGeneratedAt(generatedAt) },
+    );
+  };
+
+  const handleExport = async (format: 'xlsx' | 'pdf') => {
+    if (!teamBuilder) return;
+    setIsExporting(format);
+    try {
+      const { exportTeamBuilderData } = await import('@/lib/exportData');
+      await exportTeamBuilderData(tryout, teamBuilder, format);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsExporting(null);
+    }
+  };
+
+  const openPlayer = (playerId: string) => {
+    router.push(href(`player/${playerId}`));
+  };
+
+  const renderPlayerRow = (playerId: string) => {
+    const p = playerById.get(playerId);
+    if (!p) return null;
+    const overall = overallByPlayerId.get(playerId);
+    return (
+      <button
+        type="button"
+        key={playerId}
+        onClick={() => openPlayer(playerId)}
+        className="flex w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-transform hover:-translate-y-0.5"
+        style={{ backgroundColor: colors.tile, borderColor: colors.border }}
+      >
+        <Avatar first={p.first} last={p.last} pos={p.pos} uri={p.avatarUrl} size={36} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-bold" style={{ color: colors.ink }}>
+            {playerDisplayName(p)}
+          </span>
+          <span className="block text-xs" style={{ color: colors.inkMuted }}>
+            #{p.jersey ?? '—'} · {p.pos ?? '—'}
+          </span>
+        </span>
+        {overall != null ? <Badge label={overall.toFixed(1)} variant="success" /> : null}
+      </button>
+    );
+  };
+
+  const handleDeleteResult = async (resultId: string, label: string) => {
+    const ok = await confirm({
+      title: 'Delete saved teams?',
+      message: `"${label}" will be permanently deleted.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    if (selectedResultId === resultId) setSelectedResultId(null);
+    deleteResult.mutate(resultId);
   };
 
   return (
@@ -81,6 +210,7 @@ export default function TeamBuilderPage() {
 
       <PlanGate feature="teamBuilder" title="Team Builder (Club+)">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,380px)_1fr] lg:items-start">
+          <div className="flex flex-col gap-5">
           <Card accent className="flex flex-col gap-3">
             <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
               Configuration
@@ -91,8 +221,8 @@ export default function TeamBuilderPage() {
 
             <Textarea
               rows={5}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              value={textPrompt}
+              onChange={(e) => setTextPrompt(e.target.value)}
               placeholder="e.g. Build 4 teams, keep friend packages together, balance birth years..."
               disabled={generate.isPending}
             />
@@ -120,7 +250,96 @@ export default function TeamBuilderPage() {
             ) : null}
           </Card>
 
+          <Card className="flex flex-col gap-3">
+            <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+              Saved Splits
+            </span>
+            {savedResults.length === 0 ? (
+              <span className="text-sm" style={{ color: colors.inkMuted }}>
+                Generate a split, then save it here to keep it from being lost the next time you regenerate.
+              </span>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {savedResults.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => setSelectedResultId(r.id)}
+                    className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-left"
+                    style={{
+                      backgroundColor: r.id === selectedResultId ? colors.primary + '15' : colors.tile,
+                      border: r.id === selectedResultId ? `1px solid ${colors.primary}` : '1px solid transparent',
+                    }}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold" style={{ color: colors.ink }}>
+                        {r.label}
+                      </span>
+                      <span className="block text-xs" style={{ color: colors.inkMuted }}>
+                        {new Date(r.createdAt).toLocaleString()}
+                      </span>
+                    </span>
+                    <Button
+                      label="Delete"
+                      size="sm"
+                      variant="ghost"
+                      loading={deleteResult.isPending && deleteResult.variables === r.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteResult(r.id, r.label);
+                      }}
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+            {selectedResultId ? (
+              <Button
+                label="Back to Latest Generation"
+                size="sm"
+                variant="secondary"
+                onClick={() => setSelectedResultId(null)}
+              />
+            ) : null}
+          </Card>
+          </div>
+
           <div className="flex flex-col gap-4">
+            {teamBuilder ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm" style={{ color: colors.inkMuted }}>
+                  {selectedResult ? `Viewing saved split: ${selectedResult.label}` : 'Latest generation'}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    label="Save this split"
+                    size="sm"
+                    variant="secondary"
+                    loading={saveResult.isPending}
+                    onClick={handleSave}
+                  />
+                  <Button label="New" size="sm" variant="secondary" onClick={handleNew} />
+                  {exportsAllowed && allowedFormats.includes('xlsx') && (
+                    <Button
+                      label="XLSX"
+                      size="sm"
+                      variant="secondary"
+                      loading={isExporting === 'xlsx'}
+                      onClick={() => handleExport('xlsx')}
+                    />
+                  )}
+                  {exportsAllowed && allowedFormats.includes('pdf') && (
+                    <Button
+                      label="PDF"
+                      size="sm"
+                      variant="secondary"
+                      loading={isExporting === 'pdf'}
+                      onClick={() => handleExport('pdf')}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : null}
             {teamBuilder?.explanation ? (
               <Card style={{ borderColor: 'rgba(255,107,43,0.25)', backgroundColor: 'rgba(255,107,43,0.08)' }}>
                 <p className="mb-1 font-bold" style={{ color: colors.primary, fontFamily: 'var(--font-space-grotesk)' }}>
@@ -178,14 +397,20 @@ export default function TeamBuilderPage() {
                     </span>
                   </div>
                   {team.skaters.length > 0 ? (
-                    <p className="text-sm" style={{ color: colors.inkMuted }}>
-                      Skaters: {team.skaters.map((pid) => nameMap[pid] ?? pid).join(', ')}
-                    </p>
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>
+                        Skaters
+                      </span>
+                      {team.skaters.map(renderPlayerRow)}
+                    </div>
                   ) : null}
                   {team.goalies.length > 0 ? (
-                    <p className="text-sm" style={{ color: colors.inkFaint }}>
-                      Goalies: {team.goalies.map((pid) => nameMap[pid] ?? pid).join(', ')}
-                    </p>
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>
+                        Goalies
+                      </span>
+                      {team.goalies.map(renderPlayerRow)}
+                    </div>
                   ) : null}
                 </Card>
               );

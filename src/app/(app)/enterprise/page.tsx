@@ -22,10 +22,6 @@ const ENT_TABS = [
 
 type EntTab = (typeof ENT_TABS)[number]['key'];
 
-function money(n: number): string {
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-}
-
 function Stat({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: string }) {
   const colors = useThemeColors();
   return (
@@ -86,6 +82,10 @@ export default function EnterprisePage() {
   const tryoutsQuery = useTryoutsQuery(false);
   const teamsQuery = useTeamsQuery();
   const seasonsQuery = useSeasonsQuery();
+  // Folds in the one-guardian-per-athlete rows from the members directory, so
+  // the roster size doesn't get mistaken for headcount.
+  const staffCount = membersQuery.data?.filter((m) => m.role !== 'guardian').length;
+  const ownedTeamsCount = teamsQuery.data?.filter((t) => !t.managed).length ?? 0;
 
   const tryouts = tryoutsQuery.data ?? [];
 
@@ -174,14 +174,16 @@ export default function EnterprisePage() {
                 </h2>
                 <p className="text-sm" style={{ color: colors.inkMuted }}>/{org.orgSlug}</p>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <Badge label={`${membersQuery.data?.length ?? org.memberCount} members`} />
+                  <Badge label={`${staffCount ?? org.memberCount} staff`} />
                   <Badge label={`${tryouts.length} assessments`} variant="brand" />
                   <Badge label={`${metrics.players} players`} variant="info" />
                 </div>
               </Card>
-            ) : (
-              <ErrorState message="No organization found." onRetry={() => orgQuery.refetch()} />
-            )}
+            ) : orgQuery.isError ? (
+              // Only a real fetch failure is an error — an account with nothing in
+              // it yet still renders its (zeroed) metrics below.
+              <ErrorState message="Could not load your organization." onRetry={() => orgQuery.refetch()} />
+            ) : null}
 
             {tryoutsQuery.isLoading ? (
               <p className="text-sm" style={{ color: colors.inkMuted }}>Loading metrics...</p>
@@ -202,7 +204,7 @@ export default function EnterprisePage() {
                           : colors.danger
                     }
                   />
-                  <Stat label="Teams" value={`${teamsQuery.data?.length ?? 0}`} />
+                  <Stat label="Teams" value={`${ownedTeamsCount}`} />
                   <Stat label="Seasons" value={`${seasonsQuery.data?.length ?? 0}`} />
                   <Stat label="Registrations" value={`${metrics.regsTotal}`} hint={`${metrics.regsPending} pending`} />
                 </div>

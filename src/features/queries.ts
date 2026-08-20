@@ -7,17 +7,22 @@ import {
 import type {
   AddPlayerForm,
   CreateAssessmentForm,
+  GuardianRosterAthlete,
+  Player,
+  Registration,
   RegistrationSubmit,
   ScoreForm,
+  Season,
+  SeasonEvent,
   Team,
   Tryout,
   UserProfile,
 } from '@/data/types';
-import { queryKeys } from '@/lib/queryClient';
+import { queryKeys, tryoutBulkWriteKey } from '@/lib/queryClient';
 import { getSupabase } from '@/lib/supabase';
 import { useAuthStore } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 // ---- Auth ----
@@ -85,6 +90,51 @@ export function useRemoveTeamRosterPlayerMutation(teamId: string) {
   });
 }
 
+export function useTeamManagersQuery(teamId?: string) {
+  return useQuery({
+    queryKey: queryKeys.teamManagers(teamId),
+    queryFn: () => getDataSource().listTeamManagers(teamId!),
+    enabled: !!teamId,
+  });
+}
+
+export function useInviteTeamManagerMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      email,
+      role,
+      name,
+    }: {
+      email: string;
+      role: import('@/data/types').TeamManagerRole;
+      name?: string;
+    }) => getDataSource().inviteTeamManager(teamId, email, role, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) }),
+  });
+}
+
+export function useRemoveTeamManagerMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (managerId: string) => getDataSource().removeTeamManager(managerId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) }),
+  });
+}
+
+export function useAcceptAssignmentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (tryoutId: string) => {
+      const ds = getDataSource();
+      return ds.acceptAssignedTryout(tryoutId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.assignedTryouts });
+    },
+  });
+}
+
 export function useRejectAssignmentMutation() {
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.session?.user);
@@ -95,6 +145,7 @@ export function useRejectAssignmentMutation() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assignedTryouts', user?.id, user?.email] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.assignedTryouts });
     },
   });
 }
@@ -217,8 +268,11 @@ export function useAddPlayerMutation(tryoutId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (form: AddPlayerForm) => withTimeout(getDataSource().addPlayer(tryoutId, form), 15000, 'Adding player timed out. Please check your connection.'),
-    onSuccess: () => {
+    onSuccess: (newPlayer) => {
+      patchTryoutRosterCaches(qc, tryoutId, [newPlayer]);
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
     },
   });
@@ -237,7 +291,11 @@ export function useDeletePlayerMutation(tryoutId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (playerId: string) => getDataSource().deletePlayer(tryoutId, playerId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
+    },
   });
 }
 
@@ -318,10 +376,113 @@ export function useAddRegistrationToRosterMutation(tryoutId: string) {
   return useMutation({
     mutationFn: (registrationId: string) =>
       getDataSource().addRegistrationToRoster(tryoutId, registrationId),
-    onSuccess: () => {
+    onSuccess: (newPlayer) => {
+      patchTryoutRosterCaches(qc, tryoutId, [newPlayer]);
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
       qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
+  });
+}
+
+export function useAddRegistrationToTeamMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teamId, registrationId }: { teamId: string; registrationId: string }) =>
+      getDataSource().addRegistrationToTeam(teamId, registrationId),
+    onSuccess: (_data, { teamId }) => {
+      qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+      qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
+  });
+}
+
+/**
+ * Bump a tryout's roster in every cached shape — the single-tryout query and
+ * both archived/unarchived list queries — so list badges (the dashboard's
+ * "N players" chip, most visibly) reflect a bulk add immediately instead of
+ * waiting on a background refetch of a potentially large assessment.
+ */
+function patchTryoutRosterCaches(qc: QueryClient, tryoutId: string, extraPlayers: Player[]) {
+  if (extraPlayers.length === 0) return;
+  const appendTo = (t: Tryout): Tryout => ({ ...t, roster: [...t.roster, ...extraPlayers] });
+  qc.setQueryData<Tryout | null>(queryKeys.tryout(tryoutId), (old) => (old ? appendTo(old) : old));
+  for (const archived of [false, true] as const) {
+    qc.setQueryData<Tryout[]>(queryKeys.tryouts(archived), (old) =>
+      old ? old.map((t) => (t.id === tryoutId ? appendTo(t) : t)) : old,
+    );
+  }
+}
+
+/** Bulk placement of selected registrations into either an assessment roster or a team roster. */
+export function usePlaceRegistrationsMutation(tryoutId: string, onProgress?: (done: number, total: number) => void) {
+  const qc = useQueryClient();
+  return useMutation({
+    // Keyed on the source assessment — the roster/[id] page uses this key with
+    // useIsMutating to tell "empty roster" apart from "a bulk write from
+    // another screen (Registrations' dummy-data flow, most often) is still
+    // running", since this mutation can run for minutes without the roster's
+    // own query ever refetching.
+    mutationKey: tryoutBulkWriteKey(tryoutId),
+    mutationFn: ({
+      destination,
+      registrationIds,
+    }: {
+      destination: { kind: 'assessment' | 'team'; id: string };
+      registrationIds: string[];
+    }) =>
+      destination.kind === 'team'
+        ? getDataSource().addRegistrationsToTeam(destination.id, registrationIds, onProgress)
+        : getDataSource().addRegistrationsToRoster(destination.id, registrationIds, onProgress),
+    onSuccess: (_count, { destination, registrationIds }) => {
+      if (destination.kind === 'assessment') {
+        // Placing a large selection means the roster page would otherwise sit
+        // on the *previous* cached tryout — Card-heavy, evals/registrations
+        // included — until a full assembleTryouts() refetch lands, which for a
+        // few hundred participants is the slow part the user actually waits
+        // on. Patch in stand-in Player rows from data already in the
+        // registrations cache so the roster updates immediately; the
+        // invalidation below still runs to reconcile real ids/athleteIds in
+        // the background.
+        const regs = qc.getQueryData<Registration[]>(queryKeys.registrations(tryoutId)) ?? [];
+        const regById = new Map(regs.map((r) => [r.id, r]));
+        const stubs: Player[] = registrationIds
+          .map((id) => regById.get(id))
+          .filter((r): r is Registration => !!r)
+          .map((r) => ({
+            id: `reg-${r.id}`,
+            first: r.firstName,
+            last: r.lastName,
+            yearOfBirth: r.yearOfBirth,
+            pos: r.positionTryingOutFor,
+            positionTryingOutFor: r.positionTryingOutFor,
+            currentTeam: r.currentTeam,
+            currentLevel: r.currentLevel,
+            guardianName: r.guardianName,
+            guardianEmail: r.guardianEmail,
+            guardianPhone: r.guardianPhone,
+            medicalInfo: r.medicalInfo,
+            friend1Name: r.friend1Name,
+            friend2Name: r.friend2Name,
+            registrationSource: 'qr',
+            createdAt: Date.now(),
+          }));
+        patchTryoutRosterCaches(qc, destination.id, stubs);
+        if (destination.id !== tryoutId) patchTryoutRosterCaches(qc, tryoutId, stubs);
+        qc.invalidateQueries({ queryKey: queryKeys.tryout(destination.id) });
+        if (destination.id !== tryoutId) {
+          qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+        }
+      } else {
+        qc.invalidateQueries({ queryKey: teamRosterKey(destination.id) });
+      }
+      qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.profile });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
     },
   });
 }
@@ -335,15 +496,31 @@ export function useDismissRegistrationMutation(tryoutId: string) {
   });
 }
 
-export function useGenerateTestDataMutation(tryoutId: string) {
+export function useGenerateTestDataMutation(tryoutId: string, onProgress?: (done: number, total: number) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (options: DummyDataOptions) => getDataSource().generateTestData(tryoutId, options),
-    onSuccess: () => {
+    mutationKey: tryoutBulkWriteKey(tryoutId),
+    mutationFn: (options: DummyDataOptions) => getDataSource().generateTestData(tryoutId, options, onProgress),
+    onSuccess: (res) => {
+      // Same reasoning as usePlaceRegistrationsMutation: bump cached roster
+      // lengths immediately (placeholder rows, since generateTestData only
+      // returns a count) rather than leaving list badges — the dashboard's
+      // "N players" chip — stale until the background refetch below lands.
+      if (res.players > 0) {
+        const stubs: Player[] = Array.from({ length: res.players }, (_, i) => ({
+          id: `dummy-${Date.now()}-${i}`,
+          first: '',
+          last: '',
+          createdAt: Date.now(),
+        }));
+        patchTryoutRosterCaches(qc, tryoutId, stubs);
+      }
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
     },
   });
 }
@@ -360,10 +537,10 @@ export function useClearTestDataMutation(tryoutId: string) {
   });
 }
 
-export function useGenerateDummyTeamsMutation() {
+export function useGenerateDummyTeamsMutation(onProgress?: (done: number, total: number) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (options: DummyTeamOptions) => getDataSource().generateDummyTeams(options),
+    mutationFn: (options: DummyTeamOptions) => getDataSource().generateDummyTeams(options, onProgress),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.teams });
       // Prefix match — invalidates every archived/unarchived tryout list.
@@ -444,6 +621,30 @@ export function useGenerateTeamBuilderMutation(tryoutId: string) {
         'Team builder generation timed out. Claude AI might be taking longer than usual, please try again.'
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) }),
+  });
+}
+
+export function useTeamBuilderResultsQuery(tryoutId: string) {
+  return useQuery({
+    queryKey: queryKeys.teamBuilderResults(tryoutId),
+    queryFn: () => getDataSource().listTeamBuilderResults(tryoutId),
+  });
+}
+
+export function useSaveTeamBuilderResultMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ label, state }: { label: string; state: import('@/data/teamBuilder').TeamBuilderState }) =>
+      getDataSource().saveTeamBuilderResult(tryoutId, label, state),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamBuilderResults(tryoutId) }),
+  });
+}
+
+export function useDeleteTeamBuilderResultMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().deleteTeamBuilderResult(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamBuilderResults(tryoutId) }),
   });
 }
 
@@ -582,11 +783,12 @@ async function syncSeasonRosterFromTeam(teamId: string, seasonId: string) {
         lastName: p.last,
         jersey: p.jersey,
       });
-    } catch (e: any) {
+    } catch (e) {
       // Already on the season roster (unique athlete-per-season constraint) —
       // that's the state we wanted, so don't fail the event that triggered this.
+      const err = e as { code?: string; message?: string } | undefined;
       const duplicate =
-        e?.code === '23505' || /duplicate key value/i.test(e?.message ?? '');
+        err?.code === '23505' || /duplicate key value/i.test(err?.message ?? '');
       if (!duplicate) throw e;
     }
   }
@@ -683,7 +885,7 @@ export function useSetAvailabilityMutation(seasonId: string) {
         await qc.cancelQueries({ queryKey: queryKeys.guardianRosters(userId) });
       }
 
-      const previousSeasons = qc.getQueryData<any[]>(queryKeys.seasons);
+      const previousSeasons = qc.getQueryData<Season[]>(queryKeys.seasons);
       if (previousSeasons) {
         qc.setQueryData(
           queryKeys.seasons,
@@ -691,7 +893,7 @@ export function useSetAvailabilityMutation(seasonId: string) {
             if (season.id === seasonId) {
               return {
                 ...season,
-                events: (season.events || []).map((event: any) => {
+                events: (season.events || []).map((event: SeasonEvent) => {
                   if (event.id === eventId) {
                     return {
                       ...event,
@@ -710,11 +912,11 @@ export function useSetAvailabilityMutation(seasonId: string) {
         );
       }
 
-      const previousSeason = qc.getQueryData<any>(queryKeys.season(seasonId));
+      const previousSeason = qc.getQueryData<Season>(queryKeys.season(seasonId));
       if (previousSeason) {
         qc.setQueryData(queryKeys.season(seasonId), {
           ...previousSeason,
-          events: (previousSeason.events || []).map((event: any) => {
+          events: (previousSeason.events || []).map((event: SeasonEvent) => {
             if (event.id === eventId) {
               return {
                 ...event,
@@ -729,7 +931,7 @@ export function useSetAvailabilityMutation(seasonId: string) {
         });
       }
 
-      const previousRosters = userId ? qc.getQueryData<any[]>(queryKeys.guardianRosters(userId)) : undefined;
+      const previousRosters = userId ? qc.getQueryData<GuardianRosterAthlete[]>(queryKeys.guardianRosters(userId)) : undefined;
       if (userId && previousRosters) {
         qc.setQueryData(
           queryKeys.guardianRosters(userId),
@@ -737,11 +939,11 @@ export function useSetAvailabilityMutation(seasonId: string) {
             if (athlete.id === playerId) {
               return {
                 ...athlete,
-                seasons: (athlete.seasons || []).map((season: any) => {
+                seasons: (athlete.seasons || []).map((season: GuardianRosterAthlete['seasons'][number]) => {
                   if (season.id === seasonId) {
                     return {
                       ...season,
-                      events: (season.events || []).map((event: any) => {
+                      events: (season.events || []).map((event: SeasonEvent) => {
                         if (event.id === eventId) {
                           return {
                             ...event,
@@ -793,6 +995,169 @@ export function useAthleteHistoryQuery(athleteId?: string) {
   });
 }
 
+export function usePlayerProfileQuery(athleteId?: string) {
+  return useQuery({
+    queryKey: ['playerProfile', athleteId],
+    queryFn: () => getDataSource().getPlayerProfile(athleteId!),
+    enabled: !!athleteId,
+  });
+}
+
+// ---- Guardian -> Coach athlete profile sharing ----
+
+export function useCoachDirectoryQuery() {
+  return useQuery({
+    queryKey: queryKeys.coachDirectory,
+    queryFn: () => getDataSource().getCoachDirectory(),
+  });
+}
+
+export function useAthleteSharesQuery(athleteId?: string) {
+  return useQuery({
+    queryKey: queryKeys.athleteShares(athleteId ?? ''),
+    queryFn: () => getDataSource().getMyAthleteShares(athleteId!),
+    enabled: !!athleteId,
+  });
+}
+
+export function useSharedAthletesForCoachQuery() {
+  return useQuery({
+    queryKey: queryKeys.sharedAthletes,
+    queryFn: () => getDataSource().getSharedAthletesForCoach(),
+  });
+}
+
+export function useAthleteShareQuery(shareId?: string) {
+  return useQuery({
+    queryKey: queryKeys.athleteShare(shareId ?? ''),
+    queryFn: () => getDataSource().getAthleteShare(shareId!),
+    enabled: !!shareId,
+    // Scores on a share are a live overlay on top of the frozen snapshot (see
+    // liveAthleteShareAssessments) — poll while this page is open so a coach
+    // watching a pending evaluation come in doesn't have to manually refresh.
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useShareAthleteMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      athleteId,
+      coachUserId,
+      coachAccountId,
+    }: {
+      athleteId: string;
+      coachUserId: string;
+      coachAccountId: string;
+    }) => getDataSource().shareAthleteWithCoach(athleteId, coachUserId, coachAccountId),
+    onSuccess: (_, { athleteId }) => {
+      qc.invalidateQueries({ queryKey: queryKeys.athleteShares(athleteId) });
+    },
+  });
+}
+
+export function useAcceptAthleteShareMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ shareId, tryoutId }: { shareId: string; tryoutId: string }) =>
+      getDataSource().acceptAthleteShare(shareId, tryoutId),
+    onSuccess: (share) => {
+      qc.invalidateQueries({ queryKey: queryKeys.athleteShare(share.id) });
+      qc.invalidateQueries({ queryKey: queryKeys.sharedAthletes });
+      qc.invalidateQueries({ queryKey: queryKeys.athleteShares(share.athleteId) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
+      if (share.assignedTryoutId) {
+        qc.invalidateQueries({ queryKey: queryKeys.tryout(share.assignedTryoutId) });
+      }
+    },
+  });
+}
+
+export function useRejectAthleteShareMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (shareId: string) => getDataSource().rejectAthleteShare(shareId),
+    onSuccess: (share) => {
+      qc.invalidateQueries({ queryKey: queryKeys.athleteShare(share.id) });
+      qc.invalidateQueries({ queryKey: queryKeys.sharedAthletes });
+    },
+  });
+}
+
+export function useShareCommentsQuery(shareId?: string) {
+  return useQuery({
+    queryKey: queryKeys.shareComments(shareId ?? ''),
+    queryFn: () => getDataSource().listShareComments(shareId!),
+    enabled: !!shareId,
+  });
+}
+
+export function useAddShareCommentMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ shareId, body }: { shareId: string; body: string }) => getDataSource().addShareComment(shareId, body),
+    onSuccess: (_, { shareId }) => {
+      qc.invalidateQueries({ queryKey: queryKeys.shareComments(shareId) });
+    },
+  });
+}
+
+// ---- Team chat ----
+export function useTeamMessagesQuery(seasonId?: string) {
+  return useQuery({
+    queryKey: queryKeys.teamMessages(seasonId ?? ''),
+    queryFn: () => getDataSource().listTeamMessages(seasonId!),
+    enabled: !!seasonId,
+  });
+}
+
+export function useSendTeamMessageMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ seasonId, body }: { seasonId: string; body: string }) =>
+      getDataSource().sendTeamMessage(seasonId, body),
+    onSuccess: (_, { seasonId }) => {
+      qc.invalidateQueries({ queryKey: queryKeys.teamMessages(seasonId) });
+    },
+  });
+}
+
+export function useDeleteTeamMessageMutation(seasonId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) => getDataSource().deleteTeamMessage(messageId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamMessages(seasonId) }),
+  });
+}
+
+// Unlike the other realtime hooks here, this one refetches immediately rather
+// than on a debounce — a visible delay between sending and seeing a message is
+// what makes a chat feel broken.
+export function useTeamChatRealtimeSync(seasonId: string | undefined) {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!seasonId) return;
+
+    const uniqueId = Math.random().toString(36).slice(2, 9);
+    const channel = getSupabase()
+      .channel(`realtime:season_chat_${seasonId}_${uniqueId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'season_messages', filter: `season_id=eq.${seasonId}` },
+        () => qc.invalidateQueries({ queryKey: queryKeys.teamMessages(seasonId) }),
+      )
+      .subscribe();
+
+    return () => {
+      getSupabase().removeChannel(channel);
+    };
+  }, [seasonId, qc]);
+}
+
 export function useAthletesQuery() {
   return useQuery({
     queryKey: ['athletes'],
@@ -830,7 +1195,7 @@ export function useResendInviteMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ userId, email, role }: { userId: string; email: string; role: import('@/data/types').OrgRole }) =>
-      (getDataSource() as any).resendGuardianInvite(userId, email, role),
+      getDataSource().resendGuardianInvite(userId, email, role),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgMembers() }),
   });
 }
@@ -839,7 +1204,7 @@ export function useCreateAndInviteMemberMutation() {
   const qc = useQueryClient();
   return useMutation<import('@/data/types').OrgMember, Error, { email: string; password: string; name: string; role: import('@/data/types').OrgRole }>({
     mutationFn: ({ email, password, name, role }) =>
-      (getDataSource() as any).createAndInviteUser(email, password, name, role),
+      getDataSource().createAndInviteUser(email, password, name, role),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgMembers() }),
   });
 }
@@ -882,10 +1247,57 @@ export function useGuardianRostersQuery() {
   });
 }
 
+export function useCreateTeamFeePaymentMutation() {
+  return useMutation({
+    mutationFn: ({ seasonRosterId, successUrl, cancelUrl }: { seasonRosterId: string; successUrl?: string; cancelUrl?: string }) =>
+      getDataSource().createTeamFeePayment(seasonRosterId, successUrl, cancelUrl),
+  });
+}
+
+// A guardian's portal spans every season/tryout their linked athletes are on,
+// not a single season id, so this subscribes broadly rather than per-season.
+export function useGuardianRealtimeSync() {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout | null = null;
+    const triggerInvalidate = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        qc.invalidateQueries({ queryKey: queryKeys.guardianRosters() });
+      }, 1000);
+    };
+
+    const uniqueId = Math.random().toString(36).slice(2, 9);
+    const channel = getSupabase()
+      .channel(`realtime:guardian_${uniqueId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'season_events' }, () => triggerInvalidate())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'event_availability' }, () => triggerInvalidate())
+      .subscribe();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      getSupabase().removeChannel(channel);
+    };
+  }, [qc]);
+}
+
 export function useEnterprisePaymentsQuery() {
   return useQuery({
     queryKey: queryKeys.enterprisePayments,
     queryFn: () => getDataSource().getEnterprisePayments(),
+  });
+}
+
+export function useConnectAccountStatusQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.connectAccountStatus,
+    queryFn: () => getDataSource().getConnectAccountStatus(),
+    enabled,
+    // Each run is a live Stripe accounts.retrieve, and onboarding state barely
+    // ever changes — well past the global 30s default. The post-onboarding poll
+    // calls refetch() directly, which ignores this.
+    staleTime: 5 * 60_000,
   });
 }
 

@@ -9,6 +9,8 @@ import { CreateSeasonFormSchema, SPORTS, type CreateSeasonForm } from '@/data/ty
 import { Button, Card, Chip, ErrorState, Input, LoadingState, PageHeader, SectionLabel } from '@/components/ui';
 import { useCreateSeasonMutation, useTeamsQuery } from '@/features/queries';
 import { PlanGate } from '@/components/PlanGate';
+import { effectiveTierForTeam } from '@/data/plans';
+import { useUser } from '@/state/authStore';
 
 function NewSeasonForm() {
   const router = useRouter();
@@ -32,6 +34,12 @@ function NewSeasonForm() {
   });
 
   const sport = watch('sport');
+  const selectedTeamId = watch('teamId');
+  const user = useUser();
+  // A season created for (or linked to) a delegated team gates against the
+  // owning club's tier, not the viewer's own.
+  const selectedTeam = selectedTeamId ? teamsQuery.data?.find((t) => t.id === selectedTeamId) : undefined;
+  const tier = effectiveTierForTeam(selectedTeam, user?.planTier ?? 'free');
 
   const onSubmit = handleSubmit(async (data) => {
     const season = await createSeason.mutateAsync(data);
@@ -52,7 +60,7 @@ function NewSeasonForm() {
     <div className="mx-auto max-w-2xl">
       <PageHeader title="New Season" subtitle="Team Hub setup" showBack backHref="/seasons" />
 
-      <PlanGate feature="seasonHub" title="Season Hub (Coach+)">
+      <PlanGate feature="seasonHub" title="Season Hub (Coach+)" tierOverride={tier}>
         <Card>
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Controller

@@ -44,6 +44,7 @@ function NewAssessmentForm() {
       eventType: 'Tryout',
       tryoutDate: '',
       startTime: '',
+      endTime: '',
       rink: '',
       // Pre-linked when created from a team's Events section.
       teamId: params.get('teamId') ?? undefined,
@@ -134,7 +135,7 @@ function NewAssessmentForm() {
             </div>
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <Controller
               control={control}
               name="tryoutDate"
@@ -145,6 +146,13 @@ function NewAssessmentForm() {
               name="startTime"
               render={({ field }) => (
                 <TimeField label="Start Time" value={field.value} onChange={field.onChange} />
+              )}
+            />
+            <Controller
+              control={control}
+              name="endTime"
+              render={({ field }) => (
+                <TimeField label="End Time" value={field.value} onChange={field.onChange} />
               )}
             />
           </div>

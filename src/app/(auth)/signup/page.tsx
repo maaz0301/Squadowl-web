@@ -9,7 +9,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { SignupFormSchema } from '@/data/types';
 import { useAuthStore } from '@/state/authStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Button, Input, Select } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
 
 export default function SignupPage() {
   const colors = useThemeColors();
@@ -62,21 +62,6 @@ export default function SignupPage() {
         name="email"
         render={({ field, fieldState }) => (
           <Input label="Email" type="email" autoComplete="email" {...field} error={fieldState.error?.message} />
-        )}
-      />
-      <Controller
-        control={control}
-        name="accountType"
-        render={({ field, fieldState }) => (
-          <Select
-            label="Account Type"
-            options={[
-              { value: 'coach', label: 'Coach / Evaluator' },
-              { value: 'guardian', label: 'Parent / Guardian' },
-            ]}
-            {...field}
-            error={fieldState.error?.message}
-          />
         )}
       />
       <Controller

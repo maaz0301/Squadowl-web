@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { getScoreHeatLevel, normalizeScore } from '@/data/rubrics';
 import { themeTokens } from '@/theme/tokens';
@@ -32,10 +32,15 @@ export function ScorePad({
 }: ScorePadProps) {
   const colors = useThemeColors();
   const [textVal, setTextVal] = useState(value != null ? String(value) : '');
-
-  useEffect(() => {
+  // Local edit buffer re-synced when `value` changes from outside (e.g.
+  // switching players) — React's documented "storing information from
+  // previous renders" pattern, adjusting state during render rather than in
+  // an effect, so the buffer never visibly lags a render behind the prop.
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
     setTextVal(value != null ? String(value) : '');
-  }, [value]);
+  }
 
   if (scoringType && scoringType !== 'skill') {
     const unitText = unit ?? (scoringType === 'time' ? 'sec' : scoringType === 'speed' ? 'mph' : 'ft');

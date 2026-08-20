@@ -14,23 +14,36 @@ interface Props {
   feature: Feature;
   children?: ReactNode;
   title?: string;
+  /**
+   * Gate against this tier instead of the caller's own account tier. Team
+   * screens pass effectiveTierForTeam's result here so a delegated (CLUB
+   * mode) team gates on the owning club's plan, not the delegate's own.
+   */
+  tierOverride?: PlanTier;
 }
 
 const PLAN_REQUIRED: Partial<Record<Feature, PlanTier>> = {
-  teamBuilder: 'club',
-  aiSummaries: 'club',
-  shareLinks: 'club',
+  customRubrics: 'coach',
+  exports: 'coach',
+  teamBuilder: 'coach_plus',
+  aiSummaries: 'coach_plus',
+  shareLinks: 'coach_plus',
   seasonHub: 'coach',
   guardianPortal: 'coach',
-  enterprise: 'association',
-  qrRegistration: 'coach',
+  enterprise: 'club',
+  qrRegistration: 'free',
+  payments: 'coach',
 };
 
-export function PlanGate({ feature, children, title }: Props) {
+function planLabel(tier: PlanTier): string {
+  return tier === 'coach_plus' ? 'Coach+' : tier.charAt(0).toUpperCase() + tier.slice(1);
+}
+
+export function PlanGate({ feature, children, title, tierOverride }: Props) {
   const colors = useThemeColors();
   const router = useRouter();
   const user = useUser();
-  const tier = user?.planTier ?? 'free';
+  const tier = tierOverride ?? user?.planTier ?? 'free';
 
   if (canUseFeature(tier, feature)) return <>{children}</>;
 
@@ -42,8 +55,7 @@ export function PlanGate({ feature, children, title }: Props) {
         {title ?? 'Upgrade Required'}
       </h3>
       <p style={{ color: colors.inkMuted }}>
-        This feature requires the {required.charAt(0).toUpperCase() + required.slice(1)} plan or higher.
-        You&apos;re on {tier}.
+        This feature requires the {planLabel(required)} plan or higher. You&apos;re on {planLabel(tier)}.
       </p>
       <Button label="View Plans" onClick={() => router.push('/upgrade')} />
     </Card>

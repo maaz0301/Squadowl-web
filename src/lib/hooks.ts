@@ -1,15 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+
+const subscribeNever = () => () => {};
 
 /**
  * True only after the first client render. Auth state lives in localStorage, so
  * anything that branches on it must wait for mount to avoid hydration mismatch.
+ * useSyncExternalStore rather than a mount-effect + setState: the "snapshot"
+ * differs between server and client render by definition (that's the whole
+ * point of the hook), so it's the value this API exists for — no cascading
+ * re-render needed to reach the true state.
  */
 export function useMounted(): boolean {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  return mounted;
+  return useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
 }
 
 /** Matches a CSS media query reactively (e.g. desktop breakpoints). */

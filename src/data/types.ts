@@ -33,7 +33,11 @@ export type Sport = (typeof SPORTS)[number];
 export const EVENT_TYPES = ['Tryout', 'Assessment', 'Sort Out', 'Combine'] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
-export const PLAN_TIERS = ['free', 'coach', 'club', 'pro', 'association'] as const;
+// Postgres's plan_tier enum still allows 'pro'/'association' historically (enum values
+// can't be dropped), but they were retired as sellable tiers and every account that was
+// on one got migrated to 'club', which now has equal-or-greater limits and features. This
+// list matches that current 4-tier model — not the raw DB enum.
+export const PLAN_TIERS = ['free', 'coach', 'coach_plus', 'club'] as const;
 export type PlanTier = (typeof PLAN_TIERS)[number];
 
 export const RECOMMENDATIONS = ['Make', 'Keep', 'Bubble', 'Release', ''] as const;
@@ -202,6 +206,7 @@ export const TryoutSchema = z.object({
   eventType: z.enum(EVENT_TYPES).default('Tryout'),
   tryoutDate: z.string().optional(),
   startTime: z.string().optional(),
+  endTime: z.string().optional(),
   rink: z.string().optional(),
   sport: z.enum(SPORTS).default('Hockey'),
   sportOther: z.string().optional(),
@@ -233,6 +238,27 @@ export const TeamSchema = z.object({
   name: z.string(),
   logoUrl: z.string().optional(),
   season: z.string().optional(),
+  /** Whether this team collects a registration fee from guardians via Stripe. */
+  collectsFees: z.boolean().optional(),
+  /** Fee per player, in cents, charged only when collectsFees is true. */
+  registrationFeeCents: z.number().optional(),
+  /** Team brand colour as "#RRGGBB", tinting the team banner and printed results. */
+  brandColor: z.string().optional(),
+  /**
+   * True when the caller reaches this team through a delegation rather than
+   * through their own account — i.e. a club handed them this one team. Drives
+   * the "Managed for <club>" banner treatment and hides account-level actions
+   * (delete, billing) the delegate has no rights to anyway.
+   */
+  managed: z.boolean().optional(),
+  /**
+   * The owning account's plan tier, set only when `managed` is true. Lets a
+   * delegate's screens gate features (exports, AI, Team Builder, custom
+   * rubrics, fees) against the club's plan instead of the delegate's own —
+   * the club already pays for the team, so the coach it was handed to
+   * shouldn't hit an upgrade wall for it.
+   */
+  ownerPlanTier: z.enum(PLAN_TIERS).optional(),
   createdAt: z.number(),
   updatedAt: z.number().optional(),
   tombstone: z.boolean().optional(),
@@ -257,6 +283,17 @@ export const TeamRosterPlayerSchema = z.object({
 
 export type TeamRosterPlayer = z.infer<typeof TeamRosterPlayerSchema>;
 
+/** A permanently-saved snapshot of a Team Builder generation, so regenerating doesn't lose it. */
+export const TeamBuilderResultSchema = z.object({
+  id: z.string(),
+  tryoutId: z.string(),
+  label: z.string(),
+  state: z.any(), // TeamBuilderState, see src/data/teamBuilder.ts
+  createdAt: z.number(),
+});
+
+export type TeamBuilderResult = z.infer<typeof TeamBuilderResultSchema>;
+
 export const UserProfileSchema = z.object({
   id: z.string(),
   email: z.string().email(),
@@ -265,6 +302,11 @@ export const UserProfileSchema = z.object({
   avatarUrl: z.string().optional(),
   planTier: z.enum(PLAN_TIERS).default('coach'),
   subscriptionStatus: z.string().optional(),
+  /** Add-on team licenses purchased beyond the plan's included teams (Club: CAD$10/team/year). */
+  extraTeamLicenses: z.number().int().min(0).default(0),
+  /** Whether the account's Stripe Connect account can accept registration-fee charges/payouts. */
+  connectChargesEnabled: z.boolean().default(false),
+  connectPayoutsEnabled: z.boolean().default(false),
   createdAt: z.number(),
   onboardingCompleted: z.boolean().default(false),
   onboardingSteps: z
@@ -331,6 +373,7 @@ export const CreateAssessmentFormSchema = z.object({
   eventType: z.enum(EVENT_TYPES),
   tryoutDate: z.string().optional(),
   startTime: z.string().optional(),
+  endTime: z.string().optional(),
   rink: z.string().optional(),
   teamId: z.string().optional(),
   headAssessor: z.string().optional(),
@@ -387,7 +430,7 @@ export const ScoreFormSchema = z.object({
   session: z.string(),
   strengths: z.string().optional(),
   improve: z.string().optional(),
-  recommendation: z.enum(RECOMMENDATIONS).refine(val => val.length > 0, 'Recommendation is required'),
+  recommendation: z.enum(RECOMMENDATIONS).optional(),
   scores: z.record(z.string(), z.number()),
 });
 
@@ -454,6 +497,7 @@ export const SeasonEventSchema = z.object({
   type: z.enum(EVENT_KINDS),
   title: z.string(),
   date: z.string(),
+  endDate: z.string().optional(),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
   location: z.string().optional(),
@@ -501,11 +545,19 @@ export const CreateEventFormSchema = z.object({
   type: z.enum(EVENT_KINDS),
   title: z.string().min(1, 'Title is required'),
   date: z.string().min(1, 'Date is required').regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+  endDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'End date must be in YYYY-MM-DD format')
+    .optional()
+    .or(z.literal('')),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
   location: z.string().optional(),
   notes: z.string().optional(),
   playerIds: z.array(z.string()).optional(),
+}).refine((data) => !data.endDate || data.endDate >= data.date, {
+  message: 'End date must be on or after the start date',
+  path: ['endDate'],
 });
 
 export type CreateEventForm = z.infer<typeof CreateEventFormSchema>;
@@ -514,6 +566,52 @@ export interface AthleteHistory {
   athleteId: string;
   pastSeasons: { seasonId: string; seasonName: string; teamName: string }[];
   pastEvaluations: Evaluation[];
+}
+
+export interface PlayerProfileAssessment {
+  tryoutId: string;
+  tryoutName: string;
+  seasonId?: string;
+  /** Name of the season this assessment belongs to (via its team's Season Hub entry), if any. */
+  seasonName?: string;
+  eventType: string;
+  sport: Sport;
+  date?: string;
+  position?: string;
+  /** Name of the team this assessment/tryout was run for, if any. */
+  teamName?: string;
+  /** Weighted overall score for this assessment (0 if no evaluations recorded yet). */
+  overall: number;
+  categoryScores: Record<string, number>;
+  evalCount: number;
+  latestRecommendation: Recommendation;
+  /** tryout_participants.id — needed to deep-link back into that assessment's player screen. */
+  participantId: string;
+  /** The individual evaluations (sessions) that make up this assessment. */
+  evaluations?: (Evaluation & { overall: number })[];
+}
+
+/** Cross-team/cross-season summary of one athlete's whole assessment history. */
+export interface PlayerProfile {
+  athleteId: string;
+  first: string;
+  last: string;
+  avatarUrl?: string;
+  currentPosition?: string;
+  currentTeam?: string;
+  currentLevel?: string;
+  jersey?: string;
+  yearOfBirth?: string;
+  aboutChild?: string;
+  medicalInfo?: string;
+  guardianName?: string;
+  guardianEmail?: string;
+  guardianPhone?: string;
+  pastSeasons: { seasonId: string; seasonName: string; teamName: string }[];
+  /** Every team this athlete is currently rostered on (from Teams, not just self-reported text). */
+  teams: { teamId: string; teamName: string }[];
+  /** Newest first. */
+  assessments: PlayerProfileAssessment[];
 }
 
 // ---- Phase 4: Enterprise & Admin ----
@@ -525,7 +623,7 @@ export const OrgSchema = z.object({
   memberCount: z.number().default(0),
   assessmentCount: z.number().default(0),
   playerCount: z.number().default(0),
-  planTier: z.enum(PLAN_TIERS).default('association'),
+  planTier: z.enum(PLAN_TIERS).default('club'),
   createdAt: z.number(),
 });
 
@@ -546,6 +644,26 @@ export const OrgMemberSchema = z.object({
 });
 
 export type OrgMember = z.infer<typeof OrgMemberSchema>;
+
+/**
+ * Someone a club has handed a single team to (CLUB mode). Distinct from
+ * OrgMember: a membership is account-wide, a team manager reaches exactly one
+ * team. The club's own staff keep their access either way.
+ */
+export const TEAM_MANAGER_ROLES = ['manager', 'coach'] as const;
+export type TeamManagerRole = (typeof TEAM_MANAGER_ROLES)[number];
+
+export const TeamManagerSchema = z.object({
+  id: z.string(),
+  teamId: z.string(),
+  userId: z.string(),
+  email: z.string().email(),
+  name: z.string().optional(),
+  role: z.enum(TEAM_MANAGER_ROLES),
+  createdAt: z.number(),
+});
+
+export type TeamManager = z.infer<typeof TeamManagerSchema>;
 
 export interface AdminStats {
   totalUsers: number;
@@ -569,10 +687,24 @@ export interface AdminUserRow {
 export interface EnterprisePayment {
   id: string;
   playerName: string;
+  teamName: string;
   assessmentName: string;
   amount: number;
   status: 'paid' | 'pending' | 'refunded';
   receivedAt: number;
+}
+
+export interface ConnectAccountStatus {
+  connected: boolean;
+  accountId?: string;
+  email?: string | null;
+  businessName?: string | null;
+  country?: string | null;
+  defaultCurrency?: string | null;
+  chargesEnabled?: boolean;
+  payoutsEnabled?: boolean;
+  /** e.g. 0.005 for 0.5% — TryoutHQ's cut of every registration fee collected via Connect. */
+  platformFeeRate: number;
 }
 
 export const DatabaseSchema = z.object({
@@ -586,6 +718,86 @@ export const DatabaseSchema = z.object({
 });
 
 export type Database = z.infer<typeof DatabaseSchema>;
+
+export interface TeamMessage {
+  id: string;
+  seasonId: string;
+  authorUserId: string;
+  authorName: string;
+  authorRole: 'coach' | 'guardian';
+  body: string;
+  createdAt: number;
+}
+
+export interface CoachDirectoryEntry {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string;
+  accountId: string;
+  accountName: string;
+  sport?: string;
+}
+
+/**
+ * shared    = pending coach response
+ * assigned  = this coach accepted + placed the athlete into one of their assessments
+ * declined  = this coach explicitly rejected
+ * withdrawn = auto-closed because another coach accepted the same athlete first
+ * released  = the coach later removed the athlete from their roster
+ */
+export type AthleteShareStatus = 'shared' | 'assigned' | 'declined' | 'withdrawn' | 'released';
+
+export interface AthleteShare {
+  id: string;
+  athleteId: string;
+  status: AthleteShareStatus;
+  /** Snapshot of the athlete's profile at share time. */
+  athlete: {
+    firstName: string;
+    lastName: string;
+    avatarUrl?: string;
+    yearOfBirth?: number;
+    position?: string;
+    guardianName?: string;
+    guardianEmail?: string;
+    guardianPhone?: string;
+    medicalInfo?: string;
+    about?: string;
+  };
+  /**
+   * Frozen assessment history at share time — the receiving coach has no RLS
+   * access to the guardian's original club's tryouts/evaluations (by design,
+   * so a share can't leak that account's whole roster), so this is a snapshot
+   * rather than a live query. Same shape PlayerProfile.assessments uses, so
+   * it renders with the same <AssessmentHistory> component.
+   */
+  assessments: PlayerProfileAssessment[];
+  /** Snapshot of the coach at share time. */
+  coach: {
+    userId: string;
+    displayName: string;
+    avatarUrl?: string;
+    accountId: string;
+    accountName: string;
+    sport?: string;
+  };
+  guardianUserId: string;
+  assignedTryoutId?: string;
+  assignedAthleteId?: string;
+  assignedParticipantId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ShareComment {
+  id: string;
+  shareId: string;
+  authorUserId: string;
+  authorName: string;
+  authorRole: 'guardian' | 'coach';
+  body: string;
+  createdAt: number;
+}
 
 export interface GuardianRosterAthlete {
   id: string;
@@ -611,5 +823,10 @@ export interface GuardianRosterAthlete {
     sport: string;
     jersey?: string;
     events?: SeasonEvent[];
+    /** season_roster row id — what payment/fee actions key off, not the season id. */
+    seasonRosterId: string;
+    collectsFees: boolean;
+    registrationFeeCents?: number;
+    feeStatus: 'unpaid' | 'paid' | 'waived';
   }[];
 }

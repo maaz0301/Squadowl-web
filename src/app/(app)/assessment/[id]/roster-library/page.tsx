@@ -9,6 +9,7 @@ import { useImportLibraryPlayersMutation, useTryoutsQuery, useTryoutQuery } from
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { buildRosterLibrary } from '@/data/extras';
 import { isAtPlayerLimit } from '@/data/plans';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { useUser } from '@/state/authStore';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 
@@ -60,7 +61,7 @@ export default function RosterLibraryPage() {
         (currentTryoutQuery.data?.roster.length ?? 0) + entries.length - 1,
       )
     ) {
-      setLimitMsg('You have reached the maximum number of players for your current plan.');
+      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
       return;
     }
 

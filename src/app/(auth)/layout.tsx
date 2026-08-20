@@ -24,14 +24,19 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
 
         <div className="w-full max-w-[420px]">
           <div className="mb-7 flex flex-col items-center gap-3">
-            <Image
-              src="/images/tryouthq_logo.png"
-              alt="TryoutHQ"
-              width={260}
-              height={86}
-              priority
-              style={{ height: 'auto', width: 'min(260px, 70vw)' }}
-            />
+            <div
+              className="overflow-hidden rounded-2xl"
+              style={{ boxShadow: '0 12px 32px rgba(0,0,0,0.22)', width: 'min(260px, 70vw)' }}
+            >
+              <Image
+                src="/images/tryouthq_logo.png"
+                alt="TryoutHQ"
+                width={260}
+                height={86}
+                priority
+                style={{ height: 'auto', width: '100%', display: 'block' }}
+              />
+            </div>
           </div>
 
           <div

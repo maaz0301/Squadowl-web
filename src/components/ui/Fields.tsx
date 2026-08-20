@@ -5,6 +5,11 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { FieldShell, useFieldStyle } from './Input';
 import { COUNTRY_CODES } from './countryCodes';
 
+// Longest prefix wins so +242 doesn't get read as +2. Sorted once at module
+// load rather than per-render/per-keystroke — the list itself never changes,
+// only which entry in it matches a given value.
+const COUNTRY_CODES_BY_LENGTH = [...COUNTRY_CODES].sort((a, b) => b.code.length - a.code.length);
+
 const CONTROL =
   'w-full rounded-xl border px-4 py-3 text-[15px] min-h-[48px] outline-none transition-colors focus:border-[color:var(--c-primary)]';
 
@@ -20,18 +25,21 @@ interface DateFieldProps {
   onChange: (value: string) => void;
   error?: string;
   disablePast?: boolean;
+  /** Earliest selectable date (YYYY-MM-DD), e.g. an event's start date for its end date field. */
+  minDate?: string;
   disabled?: boolean;
 }
 
 /** Native date picker — same YYYY-MM-DD contract as the app's calendar sheet. */
-export function DateField({ label, value, onChange, error, disablePast, disabled }: DateFieldProps) {
+export function DateField({ label, value, onChange, error, disablePast, minDate, disabled }: DateFieldProps) {
   const fieldStyle = useFieldStyle(error);
+  const min = minDate ?? (disablePast ? todayKey() : undefined);
   return (
     <FieldShell label={label} error={error}>
       <input
         type="date"
         value={value ?? ''}
-        min={disablePast ? todayKey() : undefined}
+        min={min}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         className={CONTROL}
@@ -133,13 +141,10 @@ export function PhoneField({ label, value = '', onChange, error, placeholder = '
   const colors = useThemeColors();
   const fieldStyle = useFieldStyle(error);
 
-  // Longest prefix wins so +242 doesn't get read as +2.
-  const parsed = useMemo(() => {
-    const sorted = [...COUNTRY_CODES].sort((a, b) => b.code.length - a.code.length);
-    const matched = sorted.find((c) => value.startsWith(c.code));
-    if (matched) return { code: matched.code, number: value.substring(matched.code.length).trim() };
-    return { code: '+1', number: value };
-  }, [value]);
+  const matched = COUNTRY_CODES_BY_LENGTH.find((c) => value.startsWith(c.code));
+  const parsed = matched
+    ? { code: matched.code, number: value.substring(matched.code.length).trim() }
+    : { code: '+1', number: value };
 
   const handleNumberChange = (num: string) => {
     // Cap at 15 digits (ignoring formatting) — matches the 10–15 validation rule.

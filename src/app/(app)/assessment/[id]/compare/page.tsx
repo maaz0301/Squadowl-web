@@ -64,17 +64,17 @@ export default function ComparePage() {
 
         <div className="lg:sticky lg:top-4">
           {heuristic ? (
-            <Card accent className="flex flex-col gap-2">
-              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-                Standard Comparison
-              </span>
-              <span style={{ color: colors.inkMuted }}>{heuristic.summary}</span>
-              <span style={{ color: colors.primary }}>{heuristic.edge}</span>
-              <span>
-                <Badge label={`Best fit: ${heuristic.best_fit}`} variant="info" />
-              </span>
+            <PlanGate feature="aiSummaries" title="AI Compare">
+              <Card accent className="flex flex-col gap-2">
+                <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                  Standard Comparison
+                </span>
+                <span style={{ color: colors.inkMuted }}>{heuristic.summary}</span>
+                <span style={{ color: colors.primary }}>{heuristic.edge}</span>
+                <span>
+                  <Badge label={`Best fit: ${heuristic.best_fit}`} variant="info" />
+                </span>
 
-              <PlanGate feature="aiSummaries" title="AI Compare (Club+)">
                 <div className="mt-2 border-t pt-3" style={{ borderColor: colors.border }}>
                   <p className="mb-2 font-bold" style={{ color: colors.primary }}>
                     Deep AI Insights
@@ -116,8 +116,8 @@ export default function ComparePage() {
                     </div>
                   ) : null}
                 </div>
-              </PlanGate>
-            </Card>
+              </Card>
+            </PlanGate>
           ) : (
             <Card>
               <p className="italic" style={{ color: colors.inkMuted }}>

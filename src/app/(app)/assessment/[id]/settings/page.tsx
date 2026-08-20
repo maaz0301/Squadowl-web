@@ -19,6 +19,7 @@ import {
 } from '@/components/ui';
 import {
   useTryoutQuery,
+  useTryoutsQuery,
   useUpdateTryoutMutation,
   useArchiveTryoutMutation,
   useDeleteTryoutMutation,
@@ -28,6 +29,10 @@ import { getDataSource } from '@/data';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { getDefaultRubrics } from '@/data/rubrics';
 import type { Assessor } from '@/data/types';
+import { useUser } from '@/state/authStore';
+import { isAtAssessmentLimit } from '@/data/plans';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
+import { LimitReachedModal } from '@/components/LimitReachedModal';
 
 export default function SettingsPage() {
   const id = useAssessmentId();
@@ -36,8 +41,10 @@ export default function SettingsPage() {
   const colors = useThemeColors();
   const router = useRouter();
   const { alert, confirm, toast } = useAlert();
+  const user = useUser();
   const welcomedRef = useRef(false);
   const tryoutQuery = useTryoutQuery(id);
+  const tryoutsQuery = useTryoutsQuery(false);
   const updateTryout = useUpdateTryoutMutation();
   const archiveTryout = useArchiveTryoutMutation();
   const deleteTryout = useDeleteTryoutMutation();
@@ -48,10 +55,13 @@ export default function SettingsPage() {
   const [assessorName, setAssessorName] = useState('');
   const [assessorEmail, setAssessorEmail] = useState('');
   const [addingAssessor, setAddingAssessor] = useState(false);
+  const [busyAssessor, setBusyAssessor] = useState<{ index: number; action: 'invite' | 'remove' } | null>(null);
   const [name, setName] = useState('');
   const [tryoutDate, setTryoutDate] = useState('');
   const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [rink, setRink] = useState('');
+  const [limitMsg, setLimitMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (welcome === '1' && !welcomedRef.current) {
@@ -72,6 +82,7 @@ export default function SettingsPage() {
     setName(tryout.name);
     setTryoutDate(tryout.tryoutDate ?? '');
     setStartTime(tryout.startTime ?? '');
+    setEndTime(tryout.endTime ?? '');
     setRink(tryout.rink ?? '');
     setShowEdit(true);
   };
@@ -83,6 +94,7 @@ export default function SettingsPage() {
         name: name.trim() || tryout.name,
         tryoutDate: tryoutDate.trim() || undefined,
         startTime: startTime.trim() || undefined,
+        endTime: endTime.trim() || undefined,
         rink: rink.trim() || undefined,
       },
     });
@@ -172,10 +184,30 @@ export default function SettingsPage() {
   const removeAssessor = async (index: number) => {
     const newAssessors = [...tryout.assessors];
     newAssessors.splice(index, 1);
-    await updateTryout.mutateAsync({ id: tryout.id, updates: { assessors: newAssessors } });
+    setBusyAssessor({ index, action: 'remove' });
+    try {
+      await updateTryout.mutateAsync({ id: tryout.id, updates: { assessors: newAssessors } });
+    } finally {
+      setBusyAssessor(null);
+    }
+  };
+
+  const notifyAssessor = async (index: number, a: Assessor) => {
+    setBusyAssessor({ index, action: 'invite' });
+    try {
+      if (a.status === 'pending') await shareAssessorInvite(a);
+      else await sendReminder(a);
+    } finally {
+      setBusyAssessor(null);
+    }
   };
 
   const handleCopy = async () => {
+    const count = tryoutsQuery.data?.length ?? 0;
+    if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
+      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'assessments'));
+      return;
+    }
     const copy = await copyTryout.mutateAsync(tryout.id);
     router.push(`/assessment/${copy.id}/roster`);
   };
@@ -209,7 +241,9 @@ export default function SettingsPage() {
         </span>
         {tryout.tryoutDate ? (
           <span style={{ color: colors.inkFaint }}>
-            {tryout.tryoutDate} {tryout.startTime ? `· ${tryout.startTime}` : ''} {tryout.rink ? `· ${tryout.rink}` : ''}
+            {tryout.tryoutDate}{' '}
+            {tryout.startTime ? `· ${tryout.startTime}${tryout.endTime ? `–${tryout.endTime}` : ''}` : ''}{' '}
+            {tryout.rink ? `· ${tryout.rink}` : ''}
           </span>
         ) : null}
         {tryout.cloud?.id ? <Badge label={`Code: ${tryout.cloud.id}`} variant="brand" /> : null}
@@ -263,9 +297,18 @@ export default function SettingsPage() {
                   label={a.status === 'pending' ? 'Send Invite' : 'Send Reminder'}
                   size="sm"
                   variant="secondary"
-                  onClick={() => (a.status === 'pending' ? shareAssessorInvite(a) : sendReminder(a))}
+                  loading={busyAssessor?.index === i && busyAssessor.action === 'invite'}
+                  disabled={busyAssessor !== null && busyAssessor.index !== i}
+                  onClick={() => notifyAssessor(i, a)}
                 />
-                <Button label="Remove" size="sm" variant="ghost" onClick={() => removeAssessor(i)} />
+                <Button
+                  label="Remove"
+                  size="sm"
+                  variant="ghost"
+                  loading={busyAssessor?.index === i && busyAssessor.action === 'remove'}
+                  disabled={busyAssessor !== null && busyAssessor.index !== i}
+                  onClick={() => removeAssessor(i)}
+                />
               </div>
             ) : null}
           </div>
@@ -298,6 +341,7 @@ export default function SettingsPage() {
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <DateField label="Date" value={tryoutDate} onChange={setTryoutDate} />
           <TimeField label="Start Time" value={startTime} onChange={setStartTime} />
+          <TimeField label="End Time" value={endTime} onChange={setEndTime} />
           <Input label="Location" value={rink} onChange={(e) => setRink(e.target.value)} placeholder="Rink A" />
           <Button label="Save" onClick={saveEdit} loading={updateTryout.isPending} />
         </div>
@@ -351,6 +395,8 @@ export default function SettingsPage() {
           <Button label="Add" onClick={addAssessor} loading={updateTryout.isPending || addingAssessor} />
         </div>
       </Modal>
+
+      <LimitReachedModal visible={!!limitMsg} message={limitMsg || ''} onClose={() => setLimitMsg(null)} />
     </div>
   );
 }

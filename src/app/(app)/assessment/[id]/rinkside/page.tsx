@@ -46,7 +46,6 @@ export default function RinksidePage() {
   const markSessionCompleted = useSessionStore((s) => s.markSessionCompleted);
   const [session, setSession] = useState('Session 1');
   const [recommendation, setRecommendation] = useState<Recommendation>('');
-  const [showRecError, setShowRecError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const previousStateRef = useRef<string>('');
   const lastLoadedRef = useRef<{ playerId: string; session: string } | null>(null);
@@ -127,12 +126,13 @@ export default function RinksidePage() {
     }
   }, [player?.id, defaultSessionForPlayer]);
 
-  // Opening the screen starts at the first player on a freshly-defaulted, empty session.
+  // Opening the screen starts at the first player on a freshly-defaulted, empty
+  // session. `recommendation` isn't reset here — its own useState initializer
+  // already starts it at '', so resetting it again on mount would just be a
+  // redundant synchronous setState.
   useEffect(() => {
     setRinksideIndex(0);
     lastPlayerIdRef.current = null;
-    setRecommendation('');
-    setShowRecError(false);
     clearWorkingScores();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -151,7 +151,7 @@ export default function RinksidePage() {
         const prevPlayer = roster.find((p) => p.id === lastPlayerId);
         if (prevPlayer) {
           const hasScores = workingScores && Object.values(workingScores).some((val) => val != null && val > 0);
-          if (hasScores && recommendation) {
+          if (hasScores) {
             const prevEval = tryoutQuery.data?.evals.find(
               (e) => e.playerId === lastPlayerId && e.session === lastSession,
             );
@@ -183,7 +183,6 @@ export default function RinksidePage() {
 
       setWorkingScores(loadedScores);
       setRecommendation(loadedRec);
-      setShowRecError(false);
       previousStateRef.current = JSON.stringify({ scores: loadedScores, recommendation: loadedRec });
       lastLoadedRef.current = { playerId: player.id, session };
     }
@@ -225,7 +224,7 @@ export default function RinksidePage() {
       if (!hasUnsavedChanges) return;
 
       const hasScores = scores && Object.values(scores).some((val) => val != null && val > 0);
-      if (hasScores && rec) {
+      if (hasScores) {
         const prevEval = tryoutQuery.data?.evals.find(
           (e) => e.playerId === curPlayer.id && e.session === curSession,
         );
@@ -292,13 +291,7 @@ export default function RinksidePage() {
     if (!hasScores) {
       clearWorkingScores();
       setRecommendation('');
-      setShowRecError(false);
       await advance();
-      return;
-    }
-    if (!recommendation) {
-      setShowRecError(true);
-      await alert('Recommendation required', 'Please select a recommendation before saving.');
       return;
     }
 
@@ -317,7 +310,6 @@ export default function RinksidePage() {
       previousStateRef.current = currentStateStr;
       clearWorkingScores();
       setRecommendation('');
-      setShowRecError(false);
       await advance();
     } catch (err) {
       await alert('Error Saving', err instanceof Error ? err.message : 'Failed to save evaluation. Please try again.');
@@ -473,25 +465,14 @@ export default function RinksidePage() {
         );
       })}
 
-      <div className="mb-2 mt-4 flex items-center justify-between">
-        <SectionLabel>Recommendation *</SectionLabel>
-        {showRecError ? (
-          <span className="text-sm font-medium" style={{ color: colors.danger }}>
-            Recommendation is required
-          </span>
-        ) : null}
-      </div>
+      <SectionLabel className="mb-2 mt-4">Recommendation</SectionLabel>
       <div className="mb-5 flex flex-wrap gap-2">
         {(['Make', 'Keep', 'Bubble', 'Release'] as const).map((rec) => (
           <Chip
             key={rec}
             label={rec}
             active={recommendation === rec}
-            onClick={() => {
-              const next = recommendation === rec ? '' : rec;
-              setRecommendation(next);
-              if (next) setShowRecError(false);
-            }}
+            onClick={() => setRecommendation(recommendation === rec ? '' : rec)}
           />
         ))}
       </div>

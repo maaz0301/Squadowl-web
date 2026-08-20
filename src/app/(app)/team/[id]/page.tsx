@@ -1,11 +1,12 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { useThemeColors, type AppTheme } from '@/theme/ThemeProvider';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Avatar,
   Badge,
@@ -20,6 +21,7 @@ import {
   ModalFooter,
   PageHeader,
   SectionLabel,
+  Spinner,
   Tabs,
   TimeField,
   useAlert,
@@ -30,8 +32,6 @@ import {
   useUpdateTeamMutation,
   useDeleteTeamMutation,
   useUpdateTryoutMutation,
-  useGenerateTestDataMutation,
-  useClearTestDataMutation,
   useTeamRosterQuery,
   useAddTeamRosterPlayersMutation,
   useRemoveTeamRosterPlayerMutation,
@@ -41,12 +41,24 @@ import {
   useUpdateSeasonEventMutation,
   useDeleteSeasonEventMutation,
   useUploadTeamLogoMutation,
+  useSetAvailabilityMutation,
 } from '@/features/queries';
+import { queryKeys } from '@/lib/queryClient';
 import { useUser } from '@/state/authStore';
-import { canUseFeature } from '@/data/plans';
+import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { CreateEventFormSchema, EVENT_KINDS, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
-import { DummyDataModal } from '@/components/DummyDataModal';
-import type { DummyDataOptions } from '@/data/testDataGenerator';
+import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { TeamManagersCard } from '@/components/TeamManagersCard';
+import { TeamBanner } from '@/components/TeamBanner';
+import { TeamColorPicker } from '@/components/TeamColorPicker';
+import { PlanGate } from '@/components/PlanGate';
+import { getDataSource } from '@/data';
+
+function feeCentsFromInput(feeInput: string): number {
+  const dollars = parseFloat(feeInput);
+  return !feeInput.trim() || isNaN(dollars) || dollars <= 0 ? 0 : Math.round(dollars * 100);
+}
 
 type Rsvp = 'yes' | 'maybe' | 'no' | 'pending';
 
@@ -63,6 +75,19 @@ const RSVP_VARIANT: Record<Rsvp, 'success' | 'warning' | 'danger' | 'info'> = {
   no: 'danger',
   pending: 'info',
 };
+
+function PlayerDetailRow({ label, value, colors }: { label: string; value?: string; colors: AppTheme['colors'] }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-sm" style={{ color: colors.inkMuted }}>
+        {label}
+      </span>
+      <span className="max-w-[65%] text-right text-sm font-medium" style={{ color: value ? colors.ink : colors.inkFaint }}>
+        {value || '—'}
+      </span>
+    </div>
+  );
+}
 
 function StatTile({ label, value, colors }: { label: string; value: number; colors: AppTheme['colors'] }) {
   return (
@@ -82,25 +107,42 @@ export default function TeamDetailPage() {
   const id = Array.isArray(routeParams?.id) ? routeParams.id[0] : (routeParams?.id as string);
   const colors = useThemeColors();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { alert, confirm } = useAlert();
   const teamsQuery = useTeamsQuery();
   const tryoutsQuery = useTryoutsQuery(false);
   const updateTeam = useUpdateTeamMutation();
   const deleteTeam = useDeleteTeamMutation();
   const updateTryout = useUpdateTryoutMutation();
+  const [attachingId, setAttachingId] = useState<string | null>(null);
   const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
+  const qc = useQueryClient();
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
   const [season, setSeason] = useState('');
+  const [brandColor, setBrandColor] = useState<string | null>(null);
+  const [collectsFees, setCollectsFees] = useState(false);
+  const [feeInput, setFeeInput] = useState('');
   const [showAttachModal, setShowAttachModal] = useState(false);
-  const [showDummy, setShowDummy] = useState(false);
   const [showAddPlayers, setShowAddPlayers] = useState(false);
   const [pickedAthletes, setPickedAthletes] = useState<Set<string>>(new Set());
+  const [candidateSearch, setCandidateSearch] = useState('');
+  const [candidateTryoutFilter, setCandidateTryoutFilter] = useState<string | null>(null);
+  const [playerSearch, setPlayerSearch] = useState('');
+  const [viewPlayerId, setViewPlayerId] = useState<string | null>(null);
+  const [enrollingAssessments, setEnrollingAssessments] = useState(false);
+  const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [showAddEvent, setShowAddEvent] = useState(false);
-  const [tab, setTab] = useState('schedule');
+  const [tab, setTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'schedule');
   const [openRsvpEventId, setOpenRsvpEventId] = useState<string | null>(null);
+  const [availabilityTarget, setAvailabilityTarget] = useState<{
+    eventId: string;
+    playerId: string;
+    playerName: string;
+    current: Rsvp;
+  } | null>(null);
 
   const rosterQuery = useTeamRosterQuery(id);
   const addRosterPlayers = useAddTeamRosterPlayersMutation(id);
@@ -118,19 +160,14 @@ export default function TeamDetailPage() {
   );
   const updateEvent = useUpdateSeasonEventMutation(teamSeasonId ?? '');
   const deleteEvent = useDeleteSeasonEventMutation(teamSeasonId ?? '');
+  const setAvailability = useSetAvailabilityMutation(teamSeasonId ?? '');
 
   const eventForm = useForm<CreateEventForm>({
     resolver: zodResolver(CreateEventFormSchema),
-    defaultValues: { type: 'Practice', title: '', date: '', startTime: '', location: '', playerIds: [] },
+    defaultValues: { type: 'Practice', title: '', date: '', endDate: '', startTime: '', location: '', playerIds: [] },
   });
   const eventType = eventForm.watch('type');
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
-
-  // Resolve the dummy-data target before the early returns so hooks stay unconditional.
-  const linkedForHooks = (tryoutsQuery.data ?? []).filter((t) => t.teamId === id);
-  const dummyTarget = linkedForHooks[0];
-  const genTest = useGenerateTestDataMutation(dummyTarget?.id ?? '');
-  const clearTest = useClearTestDataMutation(dummyTarget?.id ?? '');
 
   if (teamsQuery.isLoading || tryoutsQuery.isLoading) return <LoadingState message="Loading team..." />;
   if (teamsQuery.isError || tryoutsQuery.isError) {
@@ -158,57 +195,133 @@ export default function TeamDetailPage() {
     );
   }
 
+  // Every surface that gates a paid feature on this screen uses the owning
+  // club's tier for a delegated team, not the viewer's own — the club already
+  // pays for the team, so a delegate coach shouldn't hit an upgrade wall
+  // managing it.
+  const effectiveTier = effectiveTierForTeam(team, user?.planTier ?? 'free');
+
   const linkedTryouts = (tryoutsQuery.data ?? []).filter((t) => t.teamId === team.id);
   const unlinkedTryouts = (tryoutsQuery.data ?? []).filter((t) => !t.teamId);
-  const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
+  const canCollectFees = canUseFeature(effectiveTier, 'payments');
 
   const teamPlayers = rosterQuery.data ?? [];
   const onRoster = new Set(teamPlayers.map((p) => p.athleteId));
+  const filteredTeamPlayers = playerSearch.trim()
+    ? teamPlayers.filter((p) => `${p.first} ${p.last}`.toLowerCase().includes(playerSearch.trim().toLowerCase()))
+    : teamPlayers;
+
+  // The team_roster row only has roster-scoped fields (name, jersey, position).
+  // Guardian/medical/about details live on the assessment-roster Player record,
+  // so the detail modal looks that up by athleteId across every assessment.
+  const viewingRosterEntry = viewPlayerId ? teamPlayers.find((p) => p.athleteId === viewPlayerId) : undefined;
+  const viewingFullPlayer = viewPlayerId
+    ? (tryoutsQuery.data ?? []).flatMap((t) => t.roster ?? []).find((p) => p.athleteId === viewPlayerId)
+    : undefined;
 
   // Candidates: every athlete on any assessment roster, deduped. Already-on-team
   // athletes stay in the list and are flagged instead of hidden.
-  const candidates: {
-    athleteId: string;
-    first: string;
-    last: string;
-    jersey?: string;
-    pos?: string;
-    tryoutId: string;
-    tryoutName: string;
-    alreadyOnTeam: boolean;
-  }[] = [];
-  const seenCandidates = new Set<string>();
+  const candidatesByAthlete = new Map<
+    string,
+    {
+      athleteId: string;
+      first: string;
+      last: string;
+      jersey?: string;
+      pos?: string;
+      yearOfBirth?: string;
+      guardianEmail?: string;
+      tryoutId: string;
+      tryoutName: string;
+      tryoutIds: Set<string>;
+      tryoutNames: Set<string>;
+      alreadyOnTeam: boolean;
+    }
+  >();
   for (const t of tryoutsQuery.data ?? []) {
     for (const p of t.roster ?? []) {
       const athleteId = p.athleteId;
-      if (!athleteId || seenCandidates.has(athleteId)) continue;
-      seenCandidates.add(athleteId);
-      candidates.push({
+      if (!athleteId) continue;
+      const existing = candidatesByAthlete.get(athleteId);
+      if (existing) {
+        existing.tryoutIds.add(t.id);
+        existing.tryoutNames.add(t.name);
+        continue;
+      }
+      candidatesByAthlete.set(athleteId, {
         athleteId,
         first: p.first,
         last: p.last,
         jersey: p.jersey,
         pos: p.pos,
+        yearOfBirth: p.yearOfBirth,
+        guardianEmail: p.guardianEmail,
         tryoutId: t.id,
         tryoutName: t.name,
+        tryoutIds: new Set([t.id]),
+        tryoutNames: new Set([t.name]),
         alreadyOnTeam: onRoster.has(athleteId),
       });
     }
   }
-  candidates.sort((a, b) => Number(a.alreadyOnTeam) - Number(b.alreadyOnTeam));
+  const candidates = [...candidatesByAthlete.values()].sort(
+    (a, b) => Number(a.alreadyOnTeam) - Number(b.alreadyOnTeam),
+  );
   const availableCount = candidates.filter((c) => !c.alreadyOnTeam).length;
+  const filteredCandidates = candidates
+    .filter((c) => !candidateTryoutFilter || c.tryoutIds.has(candidateTryoutFilter))
+    .filter((c) =>
+      candidateSearch.trim() ? `${c.first} ${c.last}`.toLowerCase().includes(candidateSearch.trim().toLowerCase()) : true,
+    );
+  const isAddingPlayers = addRosterPlayers.isPending || enrollingAssessments;
 
   const addPickedPlayers = async () => {
-    const entries = candidates
-      .filter((c) => pickedAthletes.has(c.athleteId))
-      .map((c) => ({ athleteId: c.athleteId, jersey: c.jersey, pos: c.pos, sourceTryoutId: c.tryoutId }));
-    if (entries.length === 0) return;
+    const picked = candidates.filter((c) => pickedAthletes.has(c.athleteId));
+    if (picked.length === 0) return;
+    // The roster lives on the owning club's account for a delegated team, so its
+    // player cap is the club's, not the delegate's own — same reasoning as
+    // effectiveTier everywhere else on this screen.
+    if (isAtPlayerLimit(effectiveTier, teamPlayers.length + picked.length - 1)) {
+      setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
+      return;
+    }
+    const entries = picked.map((c) => ({ athleteId: c.athleteId, jersey: c.jersey, pos: c.pos, sourceTryoutId: c.tryoutId }));
     try {
       await addRosterPlayers.mutateAsync(entries);
+
+      // Keep every assessment already linked to this team in sync: enroll each
+      // picked athlete there too if they aren't already a participant on it.
+      if (linkedTryouts.length > 0) {
+        setEnrollingAssessments(true);
+        const enrollments = picked.flatMap((c) =>
+          linkedTryouts
+            .filter((t) => !c.tryoutIds.has(t.id))
+            .map((t) =>
+              getDataSource().addPlayer(t.id, {
+                athleteId: c.athleteId,
+                first: c.first,
+                last: c.last,
+                jersey: c.jersey || '',
+                pos: c.pos || '',
+                yearOfBirth: c.yearOfBirth || '',
+                guardianEmail: c.guardianEmail || '',
+              }),
+            ),
+        );
+        if (enrollments.length > 0) {
+          await Promise.all(enrollments);
+          for (const t of linkedTryouts) qc.invalidateQueries({ queryKey: queryKeys.tryout(t.id) });
+          qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+        }
+      }
+
       setPickedAthletes(new Set());
+      setCandidateTryoutFilter(null);
       setShowAddPlayers(false);
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Could not add players to the team.');
+    } finally {
+      setEnrollingAssessments(false);
     }
   };
 
@@ -223,9 +336,13 @@ export default function TeamDetailPage() {
   };
 
   const teamSeason = seasonQuery.data;
+  const today = new Date().toISOString().split('T')[0];
+  // Both the "Upcoming" stat tile/tab badge and the Schedule tab itself stay
+  // future-only — a past practice or game has nothing left to RSVP to.
   const upcomingEvents = [...(teamSeason?.events ?? [])]
-    .filter((e) => e.date >= new Date().toISOString().split('T')[0])
+    .filter((e) => e.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const scheduleEvents = upcomingEvents;
 
   // Availability is stored per invited season-roster player; the coach sees a
   // Yes/Maybe/No tally that expands into the actual names.
@@ -251,6 +368,7 @@ export default function TeamDetailPage() {
       type: kind,
       title: '',
       date: '',
+      endDate: '',
       startTime: '',
       endTime: '',
       location: '',
@@ -266,6 +384,7 @@ export default function TeamDetailPage() {
       type: ev.type,
       title: ev.title,
       date: ev.date,
+      endDate: ev.endDate ?? '',
       startTime: ev.startTime ?? '',
       endTime: ev.endTime ?? '',
       location: ev.location ?? '',
@@ -293,6 +412,7 @@ export default function TeamDetailPage() {
               type: data.type,
               title: data.title,
               date: data.date,
+              endDate: data.endDate,
               startTime: data.startTime,
               endTime: data.endTime,
               location: data.location,
@@ -326,46 +446,41 @@ export default function TeamDetailPage() {
     if (ok) deleteEvent.mutate(eventId);
   };
 
-  const runDummy = async (options: DummyDataOptions) => {
-    try {
-      const res = await genTest.mutateAsync(options);
-      setShowDummy(false);
-      await alert(
-        'Dummy data added',
-        `Added ${res.players} players and ${res.evaluations} evaluations to ${dummyTarget?.name}.`,
-      );
-    } catch (e) {
-      await alert(
-        'Error',
-        e instanceof Error && e.message === 'NO_RUBRICS'
-          ? 'Add at least one rubric to that assessment before generating scored players.'
-          : e instanceof Error
-            ? e.message
-            : 'Failed to generate dummy data.',
-      );
-    }
-  };
-
-  const runClearDummy = async () => {
-    try {
-      const res = await clearTest.mutateAsync();
-      await alert('Cleared', `Removed ${res.removed} generated record${res.removed === 1 ? '' : 's'}.`);
-    } catch (e) {
-      await alert('Error', e instanceof Error ? e.message : 'Failed to clear dummy data.');
-    }
-  };
-
   const startEdit = () => {
     setName(team.name);
     setSeason(team.season ?? '');
+    setCollectsFees(team.collectsFees ?? false);
+    setFeeInput(team.registrationFeeCents ? (team.registrationFeeCents / 100).toFixed(2) : '');
+    setBrandColor(team.brandColor ?? null);
     setEditing(true);
   };
 
   const save = async () => {
-    await updateTeam.mutateAsync({
-      id: team.id,
-      updates: { name: name.trim(), season: season.trim() || undefined },
-    });
+    // Only touch fee fields when the coach's plan can actually collect fees — a
+    // free-tier coach never sees the toggle below, so leave whatever's already
+    // stored (e.g. from before a downgrade) untouched here.
+    const feeUpdates = canCollectFees
+      ? collectsFees
+        ? { collectsFees: true, registrationFeeCents: feeCentsFromInput(feeInput) }
+        : { collectsFees: false, registrationFeeCents: 0 }
+      : {};
+    try {
+      await updateTeam.mutateAsync({
+        id: team.id,
+        // '' rather than undefined when no colour is picked: undefined is "leave
+        // it alone" in updateTeam's patch builder, so clearing a colour has to be
+        // an explicit empty value to reach the column as NULL.
+        updates: {
+          name: name.trim(),
+          season: season.trim() || undefined,
+          brandColor: brandColor ?? '',
+          ...feeUpdates,
+        },
+      });
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Failed to save team settings.');
+      return;
+    }
     setEditing(false);
   };
 
@@ -395,13 +510,37 @@ export default function TeamDetailPage() {
   };
 
   return (
-    <>
-      <PageHeader
-        title={team.name}
-        subtitle={team.season || undefined}
-        showBack
-        backHref="/teams"
-        right={<Button label="Edit" variant="ghost" size="sm" onClick={startEdit} />}
+    // Bleeds past `<main>`'s own padding so a personalized team reads as a
+    // themed page top-to-bottom, not just a colored strip — a flat low-alpha
+    // tint over the whole scroll, including behind the title bar. min-h-dvh
+    // (viewport-relative, not a % of an ancestor's flex-computed height) so
+    // a short page's tint reliably reaches the bottom of the screen instead
+    // of stopping where the content does.
+    <div
+      className="-mx-4 -my-6 min-h-dvh px-4 py-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
+      style={{ backgroundColor: team.brandColor ? `${team.brandColor}14` : undefined }}
+    >
+      <PageHeader title="Team" showBack backHref="/teams" />
+
+      {/* The team's own branding leads the hub — logo, season, brand colour, and
+          the "Managed" badge for a club-delegated team so it's never mistaken
+          for one of the coach's own. This is the only place name/season show,
+          so the header above stays generic instead of repeating them.
+          linkToHub is off here since this is the hub. */}
+      <TeamBanner
+        team={team}
+        linkToHub={false}
+        className="mb-5"
+        right={
+          <button
+            type="button"
+            onClick={startEdit}
+            className="rounded-lg px-3 py-1.5 text-sm font-bold transition-colors hover:brightness-110"
+            style={{ color: colors.ink, backgroundColor: colors.tile }}
+          >
+            Edit
+          </button>
+        }
       />
 
       <div className="mb-5 flex gap-2">
@@ -415,14 +554,16 @@ export default function TeamDetailPage() {
           { key: 'schedule', label: 'Schedule', badge: upcomingEvents.length },
           { key: 'players', label: 'Players', badge: teamPlayers.length },
           { key: 'assessments', label: 'Assessments', badge: linkedTryouts.length },
+          { key: 'chat', label: 'Chat' },
           { key: 'settings', label: 'Settings' },
         ]}
         activeKey={tab}
-        onChange={setTab}
+        onChange={(k) => (k === 'chat' ? router.push(`/team/${id}/chat`) : setTab(k))}
         className="mb-5"
       />
 
       {tab === 'schedule' ? (
+        <PlanGate feature="seasonHub" title="Season Hub" tierOverride={effectiveTier}>
         <div>
           <div className="mb-4 flex flex-wrap gap-2">
             <Button label="+ Practice" size="sm" onClick={() => openEventModal('Practice')} />
@@ -433,10 +574,10 @@ export default function TeamDetailPage() {
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               Loading events...
             </p>
-          ) : upcomingEvents.length === 0 ? (
+          ) : scheduleEvents.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
-                No upcoming events
+                No events yet
               </span>
               <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
                 Add a practice or game — everyone on the roster is invited and their guardians can RSVP from
@@ -445,7 +586,7 @@ export default function TeamDetailPage() {
             </Card>
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
-              {upcomingEvents.map((ev) => {
+              {scheduleEvents.map((ev) => {
                 const rsvp = rsvpSummary(ev);
                 const expanded = openRsvpEventId === ev.id;
                 return (
@@ -461,7 +602,9 @@ export default function TeamDetailPage() {
                           {ev.location ? ` · ${ev.location}` : ''}
                         </p>
                       </div>
-                      <Badge label={ev.type} variant={ev.type === 'Game' ? 'brand' : 'info'} />
+                      <div className="flex shrink-0 gap-1">
+                        <Badge label={ev.type} variant={ev.type === 'Game' ? 'brand' : 'info'} />
+                      </div>
                     </div>
 
                     <button
@@ -474,29 +617,43 @@ export default function TeamDetailPage() {
                       <Badge label={`${rsvp.counts.no} no`} variant="danger" size="lg" />
                       {rsvp.counts.pending > 0 ? <Badge label={`${rsvp.counts.pending} pending`} size="lg" /> : null}
                       <span className="ml-auto text-xs font-bold" style={{ color: colors.primary }}>
-                        {expanded ? 'Hide' : 'Who?'}
+                        {expanded ? 'Hide RSVPs' : "Who's coming? Set RSVPs"}
                       </span>
                     </button>
 
                     {expanded ? (
-                      <div className="rounded-xl border" style={{ borderColor: colors.border }}>
+                      <div className="overflow-hidden rounded-xl border" style={{ borderColor: colors.border }}>
                         {rsvp.rows.length === 0 ? (
                           <p className="p-3 text-xs" style={{ color: colors.inkMuted }}>
                             Nobody was invited to this event yet.
                           </p>
                         ) : (
-                          rsvp.rows.map((r, i) => (
-                            <div
-                              key={r.playerId}
-                              className="flex items-center justify-between gap-2 px-3 py-2"
-                              style={{ borderTop: i === 0 ? 'none' : `1px solid ${colors.border}` }}
-                            >
-                              <span className="flex-1 text-sm" style={{ color: colors.ink }}>
-                                {r.name}
-                              </span>
-                              <Badge label={RSVP_LABEL[r.response]} variant={RSVP_VARIANT[r.response]} size="lg" />
-                            </div>
-                          ))
+                          <>
+                            <p className="px-3 py-2 text-xs" style={{ color: colors.inkMuted, backgroundColor: colors.tile }}>
+                              Click a player to set their RSVP
+                            </p>
+                            {rsvp.rows.map((r, i) => (
+                              <button
+                                type="button"
+                                key={r.playerId}
+                                onClick={() =>
+                                  setAvailabilityTarget({
+                                    eventId: ev.id,
+                                    playerId: r.playerId,
+                                    playerName: r.name,
+                                    current: r.response,
+                                  })
+                                }
+                                className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left transition-colors hover:brightness-125"
+                                style={{ borderTop: i === 0 ? 'none' : `1px solid ${colors.border}` }}
+                              >
+                                <span className="flex-1 text-sm font-bold" style={{ color: colors.ink }}>
+                                  {r.name}
+                                </span>
+                                <Badge label={RSVP_LABEL[r.response]} variant={RSVP_VARIANT[r.response]} size="lg" />
+                              </button>
+                            ))}
+                          </>
                         )}
                       </div>
                     ) : null}
@@ -516,6 +673,7 @@ export default function TeamDetailPage() {
             </div>
           )}
         </div>
+        </PlanGate>
       ) : tab === 'players' ? (
         <div>
           <Button
@@ -527,6 +685,14 @@ export default function TeamDetailPage() {
               setShowAddPlayers(true);
             }}
           />
+          {teamPlayers.length > 0 ? (
+            <Input
+              containerClassName="mb-3"
+              placeholder="Search players by name"
+              value={playerSearch}
+              onChange={(e) => setPlayerSearch(e.target.value)}
+            />
+          ) : null}
           {rosterQuery.isLoading ? (
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               Loading roster...
@@ -540,19 +706,32 @@ export default function TeamDetailPage() {
                 Pull players in from any assessment roster to build this team.
               </span>
             </Card>
+          ) : filteredTeamPlayers.length === 0 ? (
+            <Card className="flex flex-col items-center gap-1 py-8 text-center">
+              <span className="font-bold" style={{ color: colors.ink }}>
+                No players match &quot;{playerSearch}&quot;.
+              </span>
+              <Button label="Clear search" variant="ghost" size="sm" onClick={() => setPlayerSearch('')} />
+            </Card>
           ) : (
             <div className="grid gap-2 sm:grid-cols-2">
-              {teamPlayers.map((p) => (
+              {filteredTeamPlayers.map((p) => (
                 <Card key={p.id} className="flex items-center gap-3">
-                  <Avatar first={p.first} last={p.last} size={36} pos={p.pos} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-bold" style={{ color: colors.ink }}>
-                      {p.first} {p.last}
+                  <button
+                    type="button"
+                    onClick={() => setViewPlayerId(p.athleteId)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
+                    <Avatar first={p.first} last={p.last} size={36} pos={p.pos} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-bold" style={{ color: colors.ink }}>
+                        {p.first} {p.last}
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs" style={{ color: colors.inkMuted }}>
+                        {[p.jersey ? `#${p.jersey}` : null, p.pos, p.sourceTryoutName].filter(Boolean).join(' · ')}
+                      </span>
                     </span>
-                    <span className="mt-0.5 block truncate text-xs" style={{ color: colors.inkMuted }}>
-                      {[p.jersey ? `#${p.jersey}` : null, p.pos, p.sourceTryoutName].filter(Boolean).join(' · ')}
-                    </span>
-                  </span>
+                  </button>
                   <Button
                     label="Remove"
                     size="sm"
@@ -618,42 +797,20 @@ export default function TeamDetailPage() {
             <Button label="Edit Team Details" variant="secondary" size="sm" onClick={startEdit} />
           </Card>
 
-          {isAssociation ? (
-            <Card className="flex flex-col items-start gap-2">
-              <SectionLabel>Testing Tools</SectionLabel>
-              {dummyTarget ? (
-                <>
-                  <p className="text-xs" style={{ color: colors.inkMuted }}>
-                    Generate dummy players — optionally scored — into <strong>{dummyTarget.name}</strong>. They
-                    appear under Players.
-                  </p>
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    <Button label="Dummy Players" size="sm" onClick={() => setShowDummy(true)} />
-                    <Button
-                      label="Clear Dummy Data"
-                      size="sm"
-                      variant="ghost"
-                      loading={clearTest.isPending}
-                      onClick={runClearDummy}
-                    />
-                  </div>
-                </>
-              ) : (
-                <p className="text-xs" style={{ color: colors.inkMuted }}>
-                  Link an assessment to this team first — dummy players are added to an assessment&apos;s
-                  roster, which is what fills the Players list.
-                </p>
-              )}
-            </Card>
-          ) : null}
+          <TeamManagersCard teamId={team.id} teamName={team.name} />
 
-          <Card className="flex flex-col items-start gap-2">
-            <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
-            <p className="text-xs" style={{ color: colors.inkMuted }}>
-              Deleting a team removes its roster, schedule, and links to assessments.
-            </p>
-            <Button label="Delete Team" variant="danger" size="sm" onClick={handleDelete} loading={deleteTeam.isPending} />
-          </Card>
+          {/* A delegated manager runs the team but doesn't own it — deleting the
+              club's team isn't theirs to do, and the teams RLS grants them
+              update but not delete, so the button would only ever fail. */}
+          {team.managed ? null : (
+            <Card className="flex flex-col items-start gap-2">
+              <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                Deleting a team removes its roster, schedule, and links to assessments.
+              </p>
+              <Button label="Delete Team" variant="danger" size="sm" onClick={handleDelete} loading={deleteTeam.isPending} />
+            </Card>
+          )}
         </div>
       )}
 
@@ -679,6 +836,37 @@ export default function TeamDetailPage() {
           />
           <Input label="Team name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Season" value={season} onChange={(e) => setSeason(e.target.value)} />
+
+          <TeamColorPicker value={brandColor} onChange={setBrandColor} />
+
+          {canCollectFees ? (
+            <>
+              <div className="flex flex-col gap-2">
+                <SectionLabel>Are you collecting fees?</SectionLabel>
+                <div className="flex gap-2">
+                  <Chip label="No" active={!collectsFees} onClick={() => setCollectsFees(false)} />
+                  <Chip label="Yes" active={collectsFees} onClick={() => setCollectsFees(true)} />
+                </div>
+              </div>
+
+              {collectsFees ? (
+                <Card className="flex flex-col gap-2">
+                  <Input
+                    label="Fee per player (CAD)"
+                    value={feeInput}
+                    onChange={(e) => setFeeInput(e.target.value)}
+                    placeholder="0.00"
+                  />
+                  <p className="text-xs" style={{ color: colors.inkMuted }}>
+                    Saving this creates (or reuses) this team&apos;s season and adds everyone currently on the
+                    roster to it — each player&apos;s guardian will then be asked to pay this fee, plus
+                    TryoutHQ&apos;s 0.5% platform fee, from their portal.
+                  </p>
+                </Card>
+              ) : null}
+            </>
+          ) : null}
+
           <Button label="Save Changes" onClick={save} loading={updateTeam.isPending} />
         </div>
       </Modal>
@@ -693,23 +881,30 @@ export default function TeamDetailPage() {
             <button
               type="button"
               key={t.id}
+              disabled={attachingId !== null}
               onClick={async () => {
+                setAttachingId(t.id);
                 try {
                   await updateTryout.mutateAsync({ id: t.id, updates: { teamId: team.id } });
                   setShowAttachModal(false);
                 } catch (e) {
                   await alert('Error', e instanceof Error ? e.message : 'Could not link assessment.');
+                } finally {
+                  setAttachingId(null);
                 }
               }}
-              className="block w-full border-b p-3 text-left transition-colors hover:brightness-125"
+              className="flex w-full items-center justify-between gap-3 border-b p-3 text-left transition-colors hover:brightness-125 disabled:opacity-50"
               style={{ borderColor: colors.border }}
             >
-              <span className="block font-bold" style={{ color: colors.ink }}>
-                {t.name}
+              <span>
+                <span className="block font-bold" style={{ color: colors.ink }}>
+                  {t.name}
+                </span>
+                <span className="mt-1 block text-xs" style={{ color: colors.inkMuted }}>
+                  {t.sport} · {t.roster.length} players
+                </span>
               </span>
-              <span className="mt-1 block text-xs" style={{ color: colors.inkMuted }}>
-                {t.sport} · {t.roster.length} players
-              </span>
+              {attachingId === t.id ? <Spinner size={18} /> : null}
             </button>
           ))
         )}
@@ -727,18 +922,39 @@ export default function TeamDetailPage() {
                 pickedAthletes.size === 0 ? 'Select players to add' : `Add ${pickedAthletes.size} to ${team.name}`
               }
               disabled={pickedAthletes.size === 0}
-              loading={addRosterPlayers.isPending}
+              loading={isAddingPlayers}
               onClick={addPickedPlayers}
             />
           </ModalFooter>
         }
       >
-        {candidates.length === 0 ? (
+        {isAddingPlayers ? (
+          <LoadingState message="Adding players..." />
+        ) : candidates.length === 0 ? (
           <p className="py-3 text-sm" style={{ color: colors.inkMuted }}>
             No assessments have players yet — add players to an assessment roster first.
           </p>
         ) : (
           <>
+            <Input
+              containerClassName="mb-3"
+              value={candidateSearch}
+              onChange={(e) => setCandidateSearch(e.target.value)}
+              placeholder="Search players by name"
+            />
+            {linkedTryouts.length > 0 ? (
+              <div className="mb-3 flex flex-wrap gap-2">
+                <Chip label="All" active={candidateTryoutFilter === null} onClick={() => setCandidateTryoutFilter(null)} />
+                {linkedTryouts.map((t) => (
+                  <Chip
+                    key={t.id}
+                    label={t.name}
+                    active={candidateTryoutFilter === t.id}
+                    onClick={() => setCandidateTryoutFilter(candidateTryoutFilter === t.id ? null : t.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
             <div className="mb-3 flex items-center justify-between gap-2">
               <span className="text-xs" style={{ color: colors.inkMuted }}>
                 Athletes from all of your assessments. Click to select.
@@ -761,8 +977,13 @@ export default function TeamDetailPage() {
               ) : null}
             </div>
 
+            {filteredCandidates.length === 0 ? (
+              <p className="py-4 text-center text-sm" style={{ color: colors.inkMuted }}>
+                No players match &quot;{candidateSearch}&quot;.
+              </p>
+            ) : null}
             <div className="flex flex-col gap-2">
-              {candidates.map((c) => {
+              {filteredCandidates.map((c) => {
                 const picked = pickedAthletes.has(c.athleteId);
                 return (
                   <button
@@ -843,6 +1064,20 @@ export default function TeamDetailPage() {
           />
           <Controller
             control={eventForm.control}
+            name="endDate"
+            render={({ field, fieldState }) => (
+              <DateField
+                label="End Date (optional)"
+                value={field.value}
+                onChange={field.onChange}
+                error={fieldState.error?.message}
+                disablePast
+                minDate={eventForm.watch('date') || undefined}
+              />
+            )}
+          />
+          <Controller
+            control={eventForm.control}
             name="startTime"
             render={({ field, fieldState }) => (
               <TimeField
@@ -853,6 +1088,13 @@ export default function TeamDetailPage() {
                 disablePast
                 dateValue={eventForm.watch('date')}
               />
+            )}
+          />
+          <Controller
+            control={eventForm.control}
+            name="endTime"
+            render={({ field, fieldState }) => (
+              <TimeField label="End Time" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
             )}
           />
           <Controller
@@ -873,18 +1115,106 @@ export default function TeamDetailPage() {
         </div>
       </Modal>
 
-      <DummyDataModal
-        variant="assessment"
-        visible={showDummy}
-        loading={genTest.isPending}
-        hasRubrics={(dummyTarget?.settings.customRubrics?.length ?? 0) > 0}
-        onAddRubrics={() => {
-          setShowDummy(false);
-          if (dummyTarget) router.push(`/assessment/${dummyTarget.id}/rubrics`);
-        }}
-        onClose={() => setShowDummy(false)}
-        onSubmit={runDummy}
-      />
-    </>
+      <LimitReachedModal visible={!!limitMsg} onClose={() => setLimitMsg(null)} message={limitMsg ?? ''} />
+
+      <Modal
+        visible={!!availabilityTarget}
+        title={availabilityTarget?.playerName ?? 'Availability'}
+        onClose={() => setAvailabilityTarget(null)}
+      >
+        <div className="flex flex-col gap-2">
+          <p className="mb-2 text-sm" style={{ color: colors.inkMuted }}>
+            Set this player&apos;s availability for the event. This overrides whatever they (or their guardian)
+            submitted.
+          </p>
+          {(['yes', 'maybe', 'no'] as const).map((option) => (
+            <Button
+              key={option}
+              label={RSVP_LABEL[option]}
+              variant={availabilityTarget?.current === option ? 'primary' : 'secondary'}
+              loading={setAvailability.isPending}
+              onClick={async () => {
+                if (!availabilityTarget) return;
+                try {
+                  await setAvailability.mutateAsync({
+                    eventId: availabilityTarget.eventId,
+                    playerId: availabilityTarget.playerId,
+                    response: option,
+                  });
+                  setAvailabilityTarget(null);
+                } catch (e) {
+                  await alert('Error', e instanceof Error ? e.message : 'Could not update availability.');
+                }
+              }}
+            />
+          ))}
+        </div>
+      </Modal>
+
+      <Modal
+        visible={!!viewPlayerId}
+        title={viewingRosterEntry ? `${viewingRosterEntry.first} ${viewingRosterEntry.last}` : 'Player'}
+        onClose={() => setViewPlayerId(null)}
+        hideDefaultFooter
+      >
+        {!viewingRosterEntry ? (
+          <p className="text-sm" style={{ color: colors.inkMuted }}>
+            This player may have been removed from the team.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col items-center gap-2 py-2">
+              <Avatar
+                first={viewingRosterEntry.first}
+                last={viewingRosterEntry.last}
+                pos={viewingRosterEntry.pos}
+                uri={viewingFullPlayer?.avatarUrl}
+                size={72}
+              />
+              <span className="text-sm" style={{ color: colors.inkMuted }}>
+                #{viewingRosterEntry.jersey ?? '—'} · {viewingRosterEntry.pos ?? '—'}
+              </span>
+              {viewingFullPlayer?.registrationSource === 'qr' ? <Badge label="QR Registered" variant="info" /> : null}
+            </div>
+
+            <Card className="flex flex-col gap-2">
+              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                Details
+              </span>
+              <PlayerDetailRow
+                label="Year of Birth"
+                value={viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined}
+                colors={colors}
+              />
+              <PlayerDetailRow label="Assessment" value={viewingRosterEntry.sourceTryoutName} colors={colors} />
+              <PlayerDetailRow label="Jersey Colour" value={viewingFullPlayer?.jerseyColour} colors={colors} />
+            </Card>
+
+            <Card className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                  Guardian
+                </span>
+                <Badge
+                  label={viewingFullPlayer?.linkedGuardianId ? 'Account Linked' : 'Not Linked'}
+                  variant={viewingFullPlayer?.linkedGuardianId ? 'success' : 'default'}
+                />
+              </div>
+              <PlayerDetailRow label="Name" value={viewingFullPlayer?.guardianName} colors={colors} />
+              <PlayerDetailRow label="Email" value={viewingFullPlayer?.guardianEmail} colors={colors} />
+              <PlayerDetailRow label="Phone" value={viewingFullPlayer?.guardianPhone} colors={colors} />
+            </Card>
+
+            <Card className="flex flex-col gap-2">
+              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                Additional Info
+              </span>
+              <PlayerDetailRow label="About" value={viewingFullPlayer?.aboutChild} colors={colors} />
+              <PlayerDetailRow label="Medical" value={viewingFullPlayer?.medicalInfo} colors={colors} />
+            </Card>
+          </div>
+        )}
+      </Modal>
+    </div>
   );
 }

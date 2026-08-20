@@ -4,12 +4,13 @@ export const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error) => {
       if (error.message === 'Not authenticated' || error.message.includes('Auth session missing')) {
-        try {
-          const { useAuthStore } = require('../state/authStore');
-          useAuthStore.getState().logout();
-        } catch (e) {
-          console.error('Failed to auto-logout on auth failure:', e);
-        }
+        // Dynamic import rather than a static one: authStore imports queryClient
+        // (to clear the cache on logout), so a top-level import here would be
+        // circular. Deferring the resolution until the callback actually fires
+        // sidesteps the module-load-time cycle.
+        import('../state/authStore')
+          .then(({ useAuthStore }) => useAuthStore.getState().logout())
+          .catch((e) => console.error('Failed to auto-logout on auth failure:', e));
       }
     },
   }),
@@ -29,6 +30,14 @@ export const queryKeys = {
   session: ['session'] as const,
   profile: ['profile'] as const,
   teams: ['teams'] as const,
+  teamManagers: (teamId?: string) => (teamId ? (['team', teamId, 'managers'] as const) : (['team', 'managers'] as const)),
+  teamBuilderResults: (tryoutId: string) => ['tryout', tryoutId, 'teamBuilderResults'] as const,
+  teamMessages: (seasonId: string) => ['season', seasonId, 'messages'] as const,
+  coachDirectory: ['coachDirectory'] as const,
+  athleteShares: (athleteId: string) => ['athleteShares', athleteId] as const,
+  sharedAthletes: ['sharedAthletes'] as const,
+  athleteShare: (shareId: string) => ['athleteShare', shareId] as const,
+  shareComments: (shareId: string) => ['shareComments', shareId] as const,
   tryouts: (archived?: boolean) => ['tryouts', { archived }] as const,
   assignedTryouts: ['tryouts', 'assigned'] as const,
   tryout: (id: string) => ['tryout', id] as const,
@@ -39,8 +48,19 @@ export const queryKeys = {
   org: ['org'] as const,
   orgMembers: (userId?: string) => userId ? ['org', 'members', userId] as const : ['org', 'members'] as const,
   enterprisePayments: ['enterprise', 'payments'] as const,
+  connectAccountStatus: ['connect', 'account-status'] as const,
   adminStats: ['admin', 'stats'] as const,
   adminUsers: ['admin', 'users'] as const,
   aiPlayer: (tryoutId: string, playerId: string) => ['ai', 'player', tryoutId, playerId] as const,
   guardianRosters: (userId?: string) => userId ? ['guardian', 'rosters', userId] as const : ['guardian', 'rosters'] as const,
 };
+
+/**
+ * Shared mutation key for the long-running writes that add players to a tryout
+ * (bulk registration placement, dummy-data generation). These can run for
+ * minutes and are often started from a different screen than the one showing
+ * the roster, so any screen displaying that tryout can call `useIsMutating`
+ * with this key to tell "this roster is genuinely empty" apart from "players
+ * are still being written into it right now".
+ */
+export const tryoutBulkWriteKey = (tryoutId: string) => ['tryoutBulkWrite', tryoutId] as const;

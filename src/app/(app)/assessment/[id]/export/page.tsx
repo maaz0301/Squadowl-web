@@ -1,17 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Card, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
-import { useTryoutQuery, useExportTryoutMutation, useShareLinkMutation } from '@/features/queries';
+import { useTryoutQuery, useShareLinkMutation } from '@/features/queries';
 import { useAssessmentId } from '@/features/useAssessmentId';
-import { canUseFeature } from '@/data/plans';
+import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useUser } from '@/state/authStore';
 import type { ExportFormat } from '@/data/types';
 
 export default function ExportPage() {
   const id = useAssessmentId();
+  const router = useRouter();
   const colors = useThemeColors();
   const { alert, toast } = useAlert();
   const user = useUser();
@@ -28,6 +30,7 @@ export default function ExportPage() {
   const tryout = tryoutQuery.data;
   const tier = user?.planTier ?? 'free';
   const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
+  const allowedFormats = getPlanDefinition(tier).limits.exports;
 
   const handleExport = async (format: ExportFormat) => {
     setIsExporting(format);
@@ -75,21 +78,41 @@ export default function ExportPage() {
               onClick={() => handleExport('csv')}
               loading={isExporting === 'csv'}
             />
-            <PlanGate feature="exports">
+            {allowedFormats.includes('pdf') ? (
               <Button
                 label="Export PDF"
                 variant="secondary"
                 onClick={() => handleExport('pdf')}
                 loading={isExporting === 'pdf'}
               />
+            ) : null}
+            {allowedFormats.includes('xlsx') ? (
               <Button
                 label="Export XLSX"
                 variant="secondary"
                 onClick={() => handleExport('xlsx')}
                 loading={isExporting === 'xlsx'}
               />
-            </PlanGate>
+            ) : null}
           </div>
+          {!allowedFormats.includes('pdf') ? (
+            <Card accent className="flex flex-col gap-2">
+              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                PDF Export
+              </span>
+              <span style={{ color: colors.inkMuted }}>Requires the Coach+ plan or higher. You&apos;re on {tier}.</span>
+              <Button label="View Plans" onClick={() => router.push('/upgrade')} />
+            </Card>
+          ) : null}
+          {!allowedFormats.includes('xlsx') ? (
+            <Card accent className="flex flex-col gap-2">
+              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                XLSX Export
+              </span>
+              <span style={{ color: colors.inkMuted }}>Requires the Club plan or higher. You&apos;re on {tier}.</span>
+              <Button label="View Plans" onClick={() => router.push('/upgrade')} />
+            </Card>
+          ) : null}
         </div>
       ) : (
         <PlanGate feature="exports" title="Exports require Coach plan+" />

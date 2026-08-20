@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/cn';
+import { useMounted } from '@/lib/hooks';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button } from './Button';
 
@@ -34,9 +35,7 @@ export function Modal({
   hideDefaultFooter,
 }: ModalProps) {
   const colors = useThemeColors();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   useEffect(() => {
     if (!visible) return;

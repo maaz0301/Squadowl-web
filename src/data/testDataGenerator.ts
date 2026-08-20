@@ -104,9 +104,9 @@ export interface DummyTeamResult extends DummyDataResult {
 
 export const DUMMY_LIMITS = {
   /** Bounds mirror the DataSource's own clamps, so the UI can't ask for more. */
-  count: { min: 1, max: 250 },
+  count: { min: 1, max: 1000 },
   teams: { min: 1, max: 10 },
-  playersPerTeam: { min: 1, max: 100 },
+  playersPerTeam: { min: 1, max: 1000 },
   sessionsPerPlayer: { min: 1, max: 5 },
 } as const;
 
@@ -319,35 +319,40 @@ export interface AITestPlayer {
  * returns null for an unusable record (caller drops it and tops up locally).
  */
 export function mapAIPlayer(
-  raw: any,
+  rawInput: unknown,
   sport: Sport,
   currentYear: number,
 ): AITestPlayer | null {
-  if (!raw || typeof raw !== 'object') return null;
+  if (!rawInput || typeof rawInput !== 'object') return null;
+  const raw = rawInput as Record<string, unknown>;
   const first = String(raw.firstName ?? '').trim();
   const last = String(raw.lastName ?? '').trim();
   if (!first || !last) return null;
 
   const positions = POSITIONS_BY_SPORT[sport] ?? POSITIONS_BY_SPORT.Other;
-  const pos = positions.includes(raw.position) ? raw.position : pick(positions);
-  const ageNum = Number(raw.age);
+  const pos = typeof raw.position === 'string' && positions.includes(raw.position) ? raw.position : pick(positions);
+  const ageNum = Number(raw.age as string | number | undefined);
   const age = isFinite(ageNum) ? clamp(Math.round(ageNum), 8, 18) : randInt(8, 18);
-  const level = LEVELS.includes(raw.level) ? raw.level : pick(LEVELS);
-  const abilityNum = Number(raw.ability);
+  const level = typeof raw.level === 'string' && LEVELS.includes(raw.level) ? raw.level : pick(LEVELS);
+  const abilityNum = Number(raw.ability as string | number | undefined);
   const ability = isFinite(abilityNum) ? clamp(abilityNum, 0, 1) : Math.random();
 
   const scores: Record<string, number> = {};
   if (raw.scores && typeof raw.scores === 'object') {
-    for (const [k, v] of Object.entries(raw.scores)) {
-      const num = Number(v);
+    for (const [k, v] of Object.entries(raw.scores as Record<string, unknown>)) {
+      const num = Number(v as string | number);
       if (isFinite(num)) scores[k] = num;
     }
   }
 
+  const recommendation = typeof raw.recommendation === 'string' ? raw.recommendation : '';
+  const isRecommendation = (r: string): r is Recommendation =>
+    r === '' || r === 'Make' || r === 'Keep' || r === 'Bubble' || r === 'Release';
+
   return {
     ability,
     scores,
-    recommendation: typeof raw.recommendation === 'string' ? raw.recommendation : undefined,
+    recommendation: isRecommendation(recommendation) ? recommendation : undefined,
     form: {
       first,
       last,

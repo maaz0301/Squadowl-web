@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Chip, Input, Modal, ModalFooter, Switch } from '@/components/ui';
 import {
@@ -39,6 +39,9 @@ interface AssessmentProps {
   variant: 'assessment';
   visible: boolean;
   loading?: boolean;
+  /** How many of the requested records have been created so far — counted
+   * across generation and insertion, whatever the target. */
+  progress?: { done: number; total: number };
   /** Blocks the scoring options and explains why — no rubrics defined yet. */
   hasRubrics: boolean;
   onAddRubrics: () => void;
@@ -50,6 +53,7 @@ interface TeamProps {
   variant: 'team';
   visible: boolean;
   loading?: boolean;
+  progress?: { done: number; total: number };
   onClose: () => void;
   onSubmit: (options: DummyTeamOptions) => void;
 }
@@ -77,7 +81,18 @@ export function DummyDataModal(props: DummyDataModalProps) {
   const teamsN = clampOption(teams, DUMMY_LIMITS.teams, 2);
   const sessionsN = clampOption(sessions, DUMMY_LIMITS.sessionsPerPlayer, 1);
 
+  // `props.loading` only turns true once the mutation's pending state has
+  // propagated back down through React Query — for a heavy submit (e.g. 1000
+  // records) there can be a beat before that happens. This bridges the gap so
+  // the button reacts the instant it's clicked, instead of sitting inert.
+  const [justClicked, setJustClicked] = useState(false);
+  useEffect(() => {
+    if (!props.loading) setJustClicked(false);
+  }, [props.loading]);
+  const loading = props.loading || justClicked;
+
   const submit = () => {
+    setJustClicked(true);
     if (props.variant === 'team') {
       props.onSubmit({
         teams: teamsN,
@@ -108,7 +123,25 @@ export function DummyDataModal(props: DummyDataModalProps) {
       onClose={props.onClose}
       footer={
         <ModalFooter>
-          <Button label={submitLabel} loading={props.loading} onClick={submit} />
+          {props.loading && props.progress && props.progress.total > 0 ? (
+            <div className="flex w-full flex-col gap-1">
+              <div className="h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: colors.tile }}>
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.min(100, Math.max(4, Math.round((props.progress.done / props.progress.total) * 100)))}%`,
+                    backgroundColor: colors.primary,
+                  }}
+                />
+              </div>
+              <p className="text-center text-xs" style={{ color: colors.inkMuted }}>
+                {isTeam
+                  ? `Generated ${props.progress.done} of ${props.progress.total} players...`
+                  : `Created ${props.progress.done} of ${props.progress.total} records...`}
+              </p>
+            </div>
+          ) : null}
+          <Button label={submitLabel} loading={loading} onClick={submit} />
         </ModalFooter>
       }
     >
