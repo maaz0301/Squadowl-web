@@ -214,7 +214,13 @@ export default function SeasonSchedulePage() {
                     loading={reminding === item.id}
                   />
                   <Button label="Edit" variant="secondary" size="sm" onClick={() => openEdit(item)} />
-                  <Button label="Delete" variant="ghost" size="sm" onClick={() => confirmDeleteEvent(item.id, item.title)} />
+                  <Button
+                    label="Delete"
+                    variant="ghost"
+                    size="sm"
+                    loading={deleteEvent.isPending && deleteEvent.variables === item.id}
+                    onClick={() => confirmDeleteEvent(item.id, item.title)}
+                  />
                 </div>
               </Card>
             ))}

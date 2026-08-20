@@ -105,7 +105,7 @@ export default function OrganizationMembersPage() {
                       variant="danger"
                       size="sm"
                       onClick={() => handleRemove(item.id)}
-                      loading={removeMut.isPending}
+                      loading={removeMut.isPending && removeMut.variables === item.id}
                     />
                   )}
                 </div>

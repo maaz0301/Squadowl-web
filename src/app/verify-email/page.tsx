@@ -21,6 +21,7 @@ export default function VerifyEmailPage() {
 
   const [checking, setChecking] = useState(false);
   const [resending, setResending] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   const ready = mounted && isHydrated;
@@ -104,9 +105,15 @@ export default function VerifyEmailPage() {
             label="Sign Out / Back to Login"
             variant="ghost"
             fullWidth
+            loading={signingOut}
             onClick={async () => {
-              await logout();
-              router.replace('/login');
+              setSigningOut(true);
+              try {
+                await logout();
+                router.replace('/login');
+              } finally {
+                setSigningOut(false);
+              }
             }}
           />
         </div>

@@ -47,6 +47,7 @@ import type {
   CreateAssessmentForm,
   CreateEventForm,
   CreateSeasonForm,
+  CustomRubric,
   Database,
   EnterprisePayment,
   Evaluation,
@@ -74,6 +75,8 @@ import type {
 } from '../types';
 
 // ─── small helpers ──────────────────────────────────────────────────────────
+// The one documented escape hatch for loosely-shaped Supabase row/RPC-response objects.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
 
 function unwrap<T>(res: { data: T; error: { message: string; code?: string } | null }): T {
@@ -83,6 +86,25 @@ function unwrap<T>(res: { data: T; error: { message: string; code?: string } | n
     throw err;
   }
   return res.data;
+}
+
+/**
+ * A non-2xx Edge Function invocation surfaces as a generic FunctionsError
+ * ("Edge Function returned a non-2xx status code") — the real reason lives in
+ * the response body, which has to be read off `error.context` (a `Response`)
+ * as JSON. Falls back to `error.message` (or `fallback`) if the body isn't
+ * JSON or doesn't carry an `error`/`message` field.
+ */
+async function extractFunctionErrorMessage(error: unknown, fallback: string): Promise<string> {
+  const err = error as { message?: string; context?: { json?: () => Promise<unknown> } } | null | undefined;
+  let message = err?.message || fallback;
+  try {
+    const body = (await err?.context?.json?.()) as { error?: string; message?: string } | null | undefined;
+    if (body?.error) message = body.message || body.error;
+  } catch {
+    // context wasn't JSON (or didn't exist) — keep the original message.
+  }
+  return message;
 }
 
 const FETCH_PAGE_SIZE = 1000;
@@ -107,14 +129,6 @@ async function fetchAllRows<T>(
     from += FETCH_PAGE_SIZE;
   }
   return rows;
-}
-
-/** Roles the RLS write policies (athletes/teams/tryouts) accept. */
-const WRITABLE_ROLES = ['owner', 'admin', 'coach'];
-
-function isStaleAccountError(err: unknown): boolean {
-  const e = err as { code?: string; message?: string } | undefined;
-  return e?.code === '42501' || /row-level security/i.test(e?.message ?? '');
 }
 
 function toMs(iso: string | null | undefined): number {
@@ -336,7 +350,7 @@ export class SupabaseDataSource implements DataSource {
   private async withFreshAccount<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
-    } catch (error: any) {
+    } catch {
       this.accountId = null;
       return await operation();
     }
@@ -663,11 +677,15 @@ export class SupabaseDataSource implements DataSource {
     } catch (error) {
       console.warn('Supabase signOut failed, force clearing auth storage:', error);
     } finally {
-      const { storage } = require('@/lib/storage');
-      const keys = storage.getAllKeys();
-      for (const key of keys) {
-        if (key.includes('auth-token') || key.startsWith('sb-')) {
-          storage.remove(key);
+      // Sweep the Supabase SDK's own sb-* auth-token keys directly — this
+      // app's storage wrapper namespaces everything it writes under
+      // `aas-web:`, so it never sees (or could remove) these keys anyway.
+      if (typeof window !== 'undefined' && window.localStorage) {
+        for (let i = window.localStorage.length - 1; i >= 0; i--) {
+          const key = window.localStorage.key(i);
+          if (key && (key.includes('auth-token') || key.startsWith('sb-'))) {
+            window.localStorage.removeItem(key);
+          }
         }
       }
     }
@@ -1135,14 +1153,9 @@ export class SupabaseDataSource implements DataSource {
         },
       });
       if (fnError) {
-        let msg = fnError.message;
-        try {
-          const body = await (fnError as any).context.json();
-          if (body?.error) msg = body.error;
-        } catch { }
-        throw new Error(msg || 'Could not create an account for that email address');
+        throw new Error(await extractFunctionErrorMessage(fnError, 'Could not create an account for that email address'));
       }
-      if ((created as any)?.error) throw new Error((created as any).error);
+      if (created?.error) throw new Error(created.error);
 
       ({ data, error } = await invite());
       if (error) throw error;
@@ -1217,7 +1230,36 @@ export class SupabaseDataSource implements DataSource {
       .order('created_at', { ascending: false });
     if (!includeArchived) q = q.eq('archived', false);
     const rows = unwrap(await q) as Row[];
-    return this.assembleTryouts(rows);
+
+    // Assessments linked to a team delegated to this user (CLUB mode) live on
+    // the club's account, so the account_id filter above can't see them — same
+    // reasoning as listTeams()'s managed-teams merge. Pre-migration instances
+    // have no such function; own tryouts are still correct without it.
+    const { data: managedRows, error: managedErr } = await supabase.rpc('list_tryouts_for_managed_teams');
+    if (managedErr) {
+      console.log('list_tryouts_for_managed_teams unavailable:', managedErr.message);
+      return this.assembleTryouts(rows);
+    }
+
+    // Mirror image of the above: a manager creating a *new* assessment for a
+    // team always inserts it under their own account (createTryout always
+    // does), so the club owner needs this to see it too — without it, a team
+    // the club owns could have assessments on it the club's own staff never
+    // see listed, only the delegate who happened to create them.
+    const { data: ownedTeamRows, error: ownedErr } = await supabase.rpc('list_tryouts_on_my_owned_teams');
+    if (ownedErr) {
+      console.log('list_tryouts_on_my_owned_teams unavailable:', ownedErr.message);
+    }
+
+    const ownIds = new Set(rows.map((t) => t.id));
+    const managed = ((managedRows ?? []) as Row[]).filter(
+      (t) => !ownIds.has(t.id) && !t.deleted_at && (includeArchived || !t.archived),
+    );
+    const onOwnedTeams = ((ownedTeamRows ?? []) as Row[]).filter(
+      (t) => !ownIds.has(t.id) && !managed.some((m) => m.id === t.id) && !t.deleted_at && (includeArchived || !t.archived),
+    );
+
+    return this.assembleTryouts([...rows, ...managed, ...onOwnedTeams]);
   }
 
   async getTryout(id: string): Promise<Tryout | null> {
@@ -1240,8 +1282,25 @@ export class SupabaseDataSource implements DataSource {
     const rows = unwrap(
       await supabase.from('tryouts').select('*').in('id', ids).eq('archived', false).is('deleted_at', null),
     ) as Row[];
-    // Exclude tryouts the user already owns (those show in listTryouts).
-    const assigned = rows.filter((t) => t.account_id !== accountId);
+
+    // Exclude tryouts already surfaced by listTryouts(): the caller's own
+    // account, a team delegated to them, or their own team a delegate
+    // created an assessment under (CLUB mode). Comparing account_id to the
+    // caller's single resolved ctx().accountId alone isn't enough for the
+    // latter two — those two return tryouts under an account_id that isn't
+    // the caller's ctx() account, so without this a club owner or coach who
+    // (as an assessor) is also staff on a delegated team's account, or a
+    // delegate managing a team, would see the same tryout listed twice.
+    const [managedRes, ownedTeamRes] = await Promise.all([
+      supabase.rpc('list_tryouts_for_managed_teams'),
+      supabase.rpc('list_tryouts_on_my_owned_teams'),
+    ]);
+    const ownIds = new Set<string>([
+      ...rows.filter((t) => t.account_id === accountId).map((t) => t.id as string),
+      ...((managedRes.data ?? []) as Row[]).map((t) => t.id as string),
+      ...((ownedTeamRes.data ?? []) as Row[]).map((t) => t.id as string),
+    ]);
+    const assigned = rows.filter((t) => !ownIds.has(t.id as string));
     return this.assembleTryouts(assigned);
   }
 
@@ -1429,7 +1488,7 @@ export class SupabaseDataSource implements DataSource {
     );
   }
 
-  async sendEmail(type: 'org_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: any): Promise<void> {
+  async sendEmail(type: 'org_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: Record<string, unknown>): Promise<void> {
     const { supabase } = await this.ctx();
     const { error } = await supabase.functions.invoke('send-email', {
       body: { type, to, payload },
@@ -1525,7 +1584,7 @@ export class SupabaseDataSource implements DataSource {
             account_type: 'guardian'
           });
           if (newUserId && !error) {
-            fields.guardian_user_id = typeof newUserId === 'object' && newUserId !== null ? (newUserId as any).id || newUserId : newUserId;
+            fields.guardian_user_id = typeof newUserId === 'object' && newUserId !== null ? newUserId.id || newUserId : newUserId;
             try {
               await this.sendEmail('org_invite', fields.guardian_email, { role: 'guardian', password: defaultPassword });
             } catch (emailErr) {
@@ -1558,12 +1617,12 @@ export class SupabaseDataSource implements DataSource {
     const { supabase } = await this.ctx();
     const accountId = await this.writableAccountId();
     if (typeof tryoutId === 'object' && tryoutId !== null) {
-      tryoutId = String((tryoutId as any).id || tryoutId);
+      tryoutId = String((tryoutId as unknown as { id?: string }).id || tryoutId);
     }
 
     let athleteId = form.athleteId;
     if (typeof athleteId === 'object' && athleteId !== null) {
-      athleteId = String((athleteId as any).id || athleteId);
+      athleteId = String((athleteId as unknown as { id?: string }).id || athleteId);
     }
 
     if (!athleteId) {
@@ -1991,7 +2050,7 @@ export class SupabaseDataSource implements DataSource {
    * reserved domain, so nothing here can mail a real person.
    */
   private async insertDummyRegistrations(
-    supabase: any,
+    supabase: SupabaseClient,
     tryout: Tryout,
     generated: GeneratedPlayer[],
     /** Called with the running inserted-row count after each chunk lands. */
@@ -2034,7 +2093,7 @@ export class SupabaseDataSource implements DataSource {
    * dummy button and the New Team flow.
    */
   private async insertDummyRoster(
-    supabase: any,
+    supabase: SupabaseClient,
     accountId: string,
     userId: string,
     tryout: Tryout,
@@ -2339,9 +2398,9 @@ export class SupabaseDataSource implements DataSource {
    * feature always yields a full batch even if AI is unavailable.
    */
   private async generateAITestPlayers(
-    supabase: any,
-    tryout: any,
-    rubrics: any[],
+    supabase: SupabaseClient,
+    tryout: Tryout,
+    rubrics: CustomRubric[],
     count: number,
     currentYear: number,
     /** Called with the running generated-player count after each concurrent chunk batch lands. */
@@ -2377,7 +2436,7 @@ export class SupabaseDataSource implements DataSource {
               body: { sport, count: chunkCount, positions, rubrics: rubricDescriptors },
             });
             if (error || !data || data.error || !Array.isArray(data.players)) return [];
-            return (data.players as any[])
+            return (data.players as unknown[])
               .map((p) => mapAIPlayer(p, sport, currentYear))
               .filter((p): p is AITestPlayer => p !== null);
           } catch {
@@ -2593,7 +2652,7 @@ export class SupabaseDataSource implements DataSource {
    * without being awaited — best-effort, kept off the placement critical path
    * since the caller only needs the returned map before it can create athletes.
    */
-  private async resolveGuardiansForRegistrations(supabase: any, regs: Row[]): Promise<Map<string, string>> {
+  private async resolveGuardiansForRegistrations(supabase: SupabaseClient, regs: Row[]): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     const displayNameByEmail = new Map<string, string>();
     for (const reg of regs) {
@@ -2653,7 +2712,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   /** Mark a placed chunk's registrations as added, one request per chunk. */
-  private async markRegistrationsAdded(supabase: any, placed: { reg: Row; athleteId: string }[]): Promise<void> {
+  private async markRegistrationsAdded(supabase: SupabaseClient, placed: { reg: Row; athleteId: string }[]): Promise<void> {
     // `athlete_id` differs per row, so this can't be one `update ... in (...)`.
     // Upserting the whole row instead — and it has to be the *whole* row, spread
     // from the `select('*')` these came back on: an upsert is an INSERT with ON
@@ -2682,7 +2741,7 @@ export class SupabaseDataSource implements DataSource {
    * newly created athletes.
    */
   private async placeRegistrations(
-    supabase: any,
+    supabase: SupabaseClient,
     accountId: string,
     registrationIds: string[],
     place: (placed: { reg: Row; athleteId: string }[]) => Promise<void>,
@@ -2815,14 +2874,14 @@ export class SupabaseDataSource implements DataSource {
         sortMethod: config.sortMethod ?? 'balanced',
         config: {
           teamCount: data.teams?.length || config.teamCount,
-          teamNames: data.teams?.map((t: any) => t.name) || [],
+          teamNames: data.teams?.map((t: Row) => t.name) || [],
           keepFriendPackages: config.keepFriendPackages ?? true,
           splitGoalies: config.splitGoalies ?? true,
         },
         ranks: [], // We can omit full rankings or compute them locally if needed
         warnings: data.warnings || [],
         explanation: data.explanation,
-        teams: (data.teams || []).map((t: any, i: number) => ({
+        teams: (data.teams || []).map((t: Row, i: number) => ({
           index: i,
           id: `ai-team-${i}`,
           name: t.name || `Team ${i + 1}`,
@@ -2887,18 +2946,7 @@ export class SupabaseDataSource implements DataSource {
       body: { action: 'summary', tryout, playerIds: [playerId] }
     });
     if (error) {
-      let message = error.message;
-      try {
-        if ('context' in error && typeof (error as any).context?.json === 'function') {
-          const body = await (error as any).context.json();
-          if (body && body.error) {
-            message = body.message || body.error;
-          }
-        }
-      } catch (e) {
-        // ignore parsing error
-      }
-      throw new Error(message);
+      throw new Error(await extractFunctionErrorMessage(error, error.message));
     }
     // Edge function returns { error, message } for expected errors (status 200)
     if (data?.error) {
@@ -2926,18 +2974,7 @@ export class SupabaseDataSource implements DataSource {
       body: { action: 'compare', tryout, playerIds }
     });
     if (error) {
-      let message = error.message;
-      try {
-        if ('context' in error && typeof (error as any).context?.json === 'function') {
-          const body = await (error as any).context.json();
-          if (body && body.error) {
-            message = body.message || body.error;
-          }
-        }
-      } catch (e) {
-        // ignore parsing error
-      }
-      throw new Error(message);
+      throw new Error(await extractFunctionErrorMessage(error, error.message));
     }
     // Edge function returns { error, message } for expected errors (status 200)
     if (data?.error) {
@@ -2965,6 +3002,7 @@ export class SupabaseDataSource implements DataSource {
     };
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for DataSource interface parity
   async createShareLink(tryoutId: string, _label?: string): Promise<{ token: string; expiresAt: number }> {
     const tryout = await this.getTryout(tryoutId);
     if (!tryout) throw new Error('Tryout not found');
@@ -3090,7 +3128,28 @@ export class SupabaseDataSource implements DataSource {
         .eq('archived', false)
         .order('created_at', { ascending: false }),
     ) as Row[];
-    return this.assembleSeasons(rows, true);
+
+    // Mirrors listTryouts()'s managed/owned-team merge (CLUB mode): a season
+    // for a delegated team can live under either side's account_id depending
+    // on who created it, so the plain account-scoped query above can't see
+    // it alone.
+    const { data: managedRows, error: managedErr } = await supabase.rpc('list_seasons_for_managed_teams');
+    if (managedErr) {
+      console.log('list_seasons_for_managed_teams unavailable:', managedErr.message);
+      return this.assembleSeasons(rows, true);
+    }
+    const { data: ownedTeamRows, error: ownedErr } = await supabase.rpc('list_seasons_on_my_owned_teams');
+    if (ownedErr) {
+      console.log('list_seasons_on_my_owned_teams unavailable:', ownedErr.message);
+    }
+
+    const ownIds = new Set(rows.map((s) => s.id));
+    const managed = ((managedRows ?? []) as Row[]).filter((s) => !ownIds.has(s.id));
+    const onOwnedTeams = ((ownedTeamRows ?? []) as Row[]).filter(
+      (s) => !ownIds.has(s.id) && !managed.some((m) => m.id === s.id),
+    );
+
+    return this.assembleSeasons([...rows, ...managed, ...onOwnedTeams], true);
   }
 
   async getSeason(id: string): Promise<Season | null> {
@@ -3301,11 +3360,12 @@ export class SupabaseDataSource implements DataSource {
       const guardianEmails = new Set<string>();
 
       if (availPlayers) {
-        for (const item of availPlayers as any[]) {
-          const sr = item.season_roster;
+        for (const item of availPlayers) {
+          const sr = Array.isArray(item.season_roster) ? item.season_roster[0] : item.season_roster;
           if (sr) {
             if (sr.player_email) playerEmails.add(sr.player_email);
-            if (sr.athletes?.guardian_email) guardianEmails.add(sr.athletes.guardian_email);
+            const athlete = Array.isArray(sr.athletes) ? sr.athletes[0] : sr.athletes;
+            if (athlete?.guardian_email) guardianEmails.add(athlete.guardian_email);
           }
         }
       }
@@ -3434,13 +3494,13 @@ export class SupabaseDataSource implements DataSource {
 
     // Get all roster IDs that are assigned to at least one event in this season
     const eventIds = season.events.map(e => e.id);
-    let availData: any[] = [];
+    let availData: { roster_id: string }[] = [];
     if (eventIds.length > 0) {
       const { data } = await supabase.from('event_availability').select('roster_id').in('season_event_id', eventIds);
       availData = data || [];
     }
 
-    const assignedRosterIds = new Set(availData.map((a: any) => a.roster_id));
+    const assignedRosterIds = new Set(availData.map((a) => a.roster_id));
 
     // Restrict to players assigned to an event. If no availability rows exist at
     // all (e.g. events created before availability was pre-populated, or a failed
@@ -3582,7 +3642,7 @@ export class SupabaseDataSource implements DataSource {
     if (!athletes) return [];
 
     return athletes.map(a => {
-      const parts = (a.tryout_participants as any[])?.sort((p1, p2) =>
+      const parts = (a.tryout_participants as Row[])?.sort((p1, p2) =>
         new Date(p1.created_at).getTime() - new Date(p2.created_at).getTime()
       ) || [];
       const recentPart = parts.length > 0 ? parts[parts.length - 1] : null;
@@ -3615,11 +3675,14 @@ export class SupabaseDataSource implements DataSource {
       .select('season_id, seasons(name, team_name)')
       .eq('athlete_id', athleteId);
 
-    let pastSeasons = (rosterRows || []).map((r: any) => ({
-      seasonId: r.season_id,
-      seasonName: r.seasons?.name || 'Unknown Season',
-      teamName: r.seasons?.team_name || 'Unknown Team',
-    }));
+    let pastSeasons = (rosterRows || []).map((r) => {
+      const season = Array.isArray(r.seasons) ? r.seasons[0] : r.seasons;
+      return {
+        seasonId: r.season_id,
+        seasonName: season?.name || 'Unknown Season',
+        teamName: season?.team_name || 'Unknown Team',
+      };
+    });
 
     if (pastSeasons.length > 0) {
       const seasonIds = pastSeasons.map((s) => s.seasonId);
@@ -3628,7 +3691,7 @@ export class SupabaseDataSource implements DataSource {
         .select('season_id')
         .in('season_id', seasonIds);
 
-      const seasonsWithEvents = new Set((eventsData || []).map((e: any) => e.season_id));
+      const seasonsWithEvents = new Set((eventsData || []).map((e) => e.season_id));
       pastSeasons = pastSeasons.filter((s) => seasonsWithEvents.has(s.seasonId));
     }
 
@@ -4021,7 +4084,7 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) { }
+      } catch { }
       throw new Error(detail || error.message || 'Failed to create checkout session');
     }
     if (data?.error) throw new Error(data.error);
@@ -4036,7 +4099,7 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) { }
+      } catch { }
       throw new Error(detail || error.message || 'Failed to open portal session');
     }
     if (data?.error) throw new Error(data.error);
@@ -4053,7 +4116,7 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) { }
+      } catch { }
       throw new Error(detail || error.message || 'Failed to create checkout session');
     }
     if (data?.error) throw new Error(data.error);
@@ -4068,7 +4131,7 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) { }
+      } catch { }
       throw new Error(detail || error.message || 'Failed to start payout onboarding');
     }
     if (data?.error) throw new Error(data.error);
@@ -4083,7 +4146,7 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) { }
+      } catch { }
       throw new Error(detail || error.message || 'Failed to load connected account status');
     }
     if (data?.error) throw new Error(data.error);
@@ -4106,7 +4169,7 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) { }
+      } catch { }
       throw new Error(detail || error.message || 'Failed to start registration payment');
     }
     if (data?.error) throw new Error(data.error);
@@ -4127,7 +4190,7 @@ export class SupabaseDataSource implements DataSource {
       try {
         const body = await error.context?.json();
         if (body?.error) detail = body.error;
-      } catch (_) { }
+      } catch { }
       throw new Error(detail || error.message || 'Failed to start team fee payment');
     }
     if (data?.error) throw new Error(data.error);
@@ -4156,7 +4219,7 @@ export class SupabaseDataSource implements DataSource {
       .select('id')
       .eq('account_id', accountId);
 
-    let assData: any[] = [];
+    let assData: Row[] = [];
     if (tryouts && tryouts.length > 0) {
       const tryoutIds = tryouts.map(t => t.id);
       const { data } = await supabase
@@ -4169,7 +4232,7 @@ export class SupabaseDataSource implements DataSource {
 
     // Add memberships
     for (const r of memData || []) {
-      const profiles: any = r.profiles;
+      const profiles = r.profiles;
       const profile = Array.isArray(profiles) ? profiles[0] : profiles;
       const email = profile?.email ?? '';
       const name = profile?.display_name ?? undefined;
@@ -4253,14 +4316,7 @@ export class SupabaseDataSource implements DataSource {
     });
 
     if (fnError) {
-      // A non-2xx status surfaces as a generic FunctionsHttpError ("Edge Function
-      // returned a non-2xx status code"); the real reason is in the response body.
-      let msg = fnError.message;
-      try {
-        const body = await (fnError as any).context.json();
-        if (body?.error) msg = body.error;
-      } catch { }
-      throw new Error(msg || 'Failed to create user account');
+      throw new Error(await extractFunctionErrorMessage(fnError, 'Failed to create user account'));
     }
 
     // If the Edge Function returned an error in the response body
@@ -4397,7 +4453,7 @@ export class SupabaseDataSource implements DataSource {
       athleteId = tpCheck.athlete_id;
     }
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('athletes')
       .update({ guardian_user_id: guardianId })
       .eq('id', athleteId)
@@ -4441,7 +4497,7 @@ export class SupabaseDataSource implements DataSource {
 
     if (fetchError) throw fetchError;
 
-    const tp: any = updatedPlayer || {};
+    const tp = (updatedPlayer || {}) as Row;
     const ath = Array.isArray(tp.athletes) ? tp.athletes[0] : tp.athletes;
 
     return {

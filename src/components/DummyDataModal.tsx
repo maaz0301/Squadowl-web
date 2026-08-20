@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Chip, Input, Modal, ModalFooter, Switch } from '@/components/ui';
 import {
@@ -86,9 +86,13 @@ export function DummyDataModal(props: DummyDataModalProps) {
   // records) there can be a beat before that happens. This bridges the gap so
   // the button reacts the instant it's clicked, instead of sitting inert.
   const [justClicked, setJustClicked] = useState(false);
-  useEffect(() => {
+  // React's documented "storing information from previous renders" pattern,
+  // adjusting state during render rather than in an effect.
+  const [prevPropsLoading, setPrevPropsLoading] = useState(props.loading);
+  if (props.loading !== prevPropsLoading) {
+    setPrevPropsLoading(props.loading);
     if (!props.loading) setJustClicked(false);
-  }, [props.loading]);
+  }
   const loading = props.loading || justClicked;
 
   const submit = () => {

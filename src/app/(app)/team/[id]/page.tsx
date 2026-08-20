@@ -664,6 +664,7 @@ export default function TeamDetailPage() {
                         label="Delete"
                         variant="ghost"
                         size="sm"
+                        loading={deleteEvent.isPending && deleteEvent.variables === ev.id}
                         onClick={() => confirmDeleteEvent(ev.id, ev.title)}
                       />
                     </div>
@@ -736,6 +737,7 @@ export default function TeamDetailPage() {
                     label="Remove"
                     size="sm"
                     variant="ghost"
+                    loading={removeRosterPlayer.isPending && removeRosterPlayer.variables === p.athleteId}
                     onClick={() => confirmRemovePlayer(p.athleteId, `${p.first} ${p.last}`)}
                   />
                 </Card>

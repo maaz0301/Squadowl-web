@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { Button, Chip, Modal, Spinner } from '@/components/ui';
 import { useTeamsQuery, useTryoutsQuery } from '@/features/queries';
@@ -49,9 +49,13 @@ export function AddToRosterModal({
   // registrations) there can be a beat before that happens. This bridges the
   // gap so the button reacts the instant it's clicked, instead of sitting inert.
   const [justClicked, setJustClicked] = useState(false);
-  useEffect(() => {
+  // Adjusted during render on the true->false transition (same "storing
+  // information from previous renders" pattern as `wasVisible` below).
+  const [prevLoadingProp, setPrevLoadingProp] = useState(loadingProp);
+  if (loadingProp !== prevLoadingProp) {
+    setPrevLoadingProp(loadingProp);
     if (!loadingProp) setJustClicked(false);
-  }, [loadingProp]);
+  }
   const loading = loadingProp || justClicked;
 
   const tryoutsQuery = useTryoutsQuery();

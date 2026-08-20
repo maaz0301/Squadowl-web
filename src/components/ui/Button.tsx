@@ -81,7 +81,8 @@ export function Button({
         'hover:brightness-110 active:scale-[0.985] focus-visible:outline-2 focus-visible:outline-offset-2',
         sizeClass[size],
         fullWidth && 'w-full',
-        isDisabled && 'opacity-50 pointer-events-none',
+        isDisabled && 'pointer-events-none',
+        disabled && !loading && 'opacity-50',
         className,
       )}
       style={{ ...variantStyle[variant], outlineColor: colors.primary, ...style }}
