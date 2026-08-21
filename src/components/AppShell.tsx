@@ -95,7 +95,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const sidebarInner = (
     <>
       <Link href="/dashboard" className="mb-6 flex items-center gap-2.5 px-1">
-        <Image src="/images/tryouthq_t_logo.png" alt="" width={34} height={34} />
+        <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={34} height={34} />
         <span
           className="text-lg font-bold tracking-tight"
           style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
@@ -208,7 +208,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </svg>
           </button>
           <Link href="/dashboard" className="flex items-center gap-2">
-            <Image src="/images/tryouthq_t_logo.png" alt="" width={28} height={28} />
+            <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={28} height={28} />
             <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
               {APP_CONFIG.appName}
             </span>

@@ -28,7 +28,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
                 page background. */}
             <div style={{ width: 'min(260px, 70vw)' }}>
               <Image
-                src="/images/tryouthq_logo.png"
+                src="/images/tryouthq_logo_v2.png"
                 alt="TryoutHQ"
                 width={1024}
                 height={777}
