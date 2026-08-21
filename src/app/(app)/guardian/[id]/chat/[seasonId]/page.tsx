@@ -25,9 +25,9 @@ export default function GuardianTeamChatPage() {
   }
 
   return (
-    <>
+    <div className="-mx-4 -my-6 flex min-h-dvh flex-col px-4 py-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
       <PageHeader title={season.teamName} subtitle={season.name} showBack backHref={`/guardian/${playerId}`} />
-      <TeamChat seasonId={season.id} />
-    </>
+      <TeamChat seasonId={season.id} heightClassName="flex-1 min-h-[420px]" />
+    </div>
   );
 }
