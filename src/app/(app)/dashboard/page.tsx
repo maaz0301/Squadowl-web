@@ -20,6 +20,8 @@ import {
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { useUser, usePermissions } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
 import {
@@ -199,7 +201,7 @@ export default function DashboardPage() {
 
   const newAssessment = () => {
     if (isAtAssessmentLimit(planTier, tryouts.length)) {
-      setLimitMsg('You have reached the maximum number of assessments for your current plan.');
+      setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'assessments'));
       return;
     }
     router.push('/assessment/new');
@@ -217,6 +219,8 @@ export default function DashboardPage() {
           </>
         }
       />
+
+      <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="assessments" />
 
       {canUseFeature(planTier, 'enterprise') ? (
         <Link href="/enterprise" className="mb-4 block">

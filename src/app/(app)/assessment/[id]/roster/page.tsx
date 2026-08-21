@@ -34,6 +34,7 @@ import {
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { tryoutBulkWriteKey } from '@/lib/queryClient';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
+import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { useUser } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -206,6 +207,12 @@ export default function RosterPage() {
     <>
       {hasPlayers ? (
         <div className="mb-5 flex flex-col gap-4">
+          <UsageNudgeBanner
+            tier={user?.planTier ?? 'free'}
+            metric="players"
+            count={tryout.roster.length}
+            label="players in this roster"
+          />
           <div className="flex flex-wrap gap-2">
             <Button label="Score Players" onClick={() => router.push(href('rinkside'))} />
             <Button label="+ Add Player" variant="secondary" onClick={openAdd} />
@@ -373,7 +380,6 @@ export default function RosterPage() {
           setDummyProgress(null);
           try {
             const res = await genTest.mutateAsync(options);
-            setShowTestGen(false);
             const parts = [
               res.registrations ? `${res.registrations} pending registrations` : null,
               res.players ? `${res.players} roster players` : null,
@@ -389,6 +395,10 @@ export default function RosterPage() {
                   : 'Failed to generate dummy data.';
             await alert('Error', msg);
           } finally {
+            // In `finally`, not after the await: generateTestData writes
+            // incrementally, so a partial run still created real rows and the
+            // modal must not stay open over a stale form.
+            setShowTestGen(false);
             setDummyProgress(null);
           }
         }}

@@ -503,6 +503,12 @@ export const SeasonEventSchema = z.object({
   location: z.string().optional(),
   notes: z.string().optional(),
   availability: z.record(z.string(), z.enum(['yes', 'maybe', 'no', 'pending'])).optional(),
+  /**
+   * True when the RSVP read failed rather than genuinely coming back empty.
+   * Without this the two are indistinguishable, and a coach who just invited a
+   * full roster is told nobody was invited.
+   */
+  availabilityUnavailable: z.boolean().optional(),
   createdAt: z.number(),
   updatedAt: z.number().optional(),
 });

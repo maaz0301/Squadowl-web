@@ -8,6 +8,7 @@ import { RegistrationForm } from '@/components/assessment/RegistrationForm';
 import { RegistrationProfileModal } from '@/components/assessment/RegistrationProfileModal';
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { PlanGate } from '@/components/PlanGate';
 import { QrCode } from '@/components/QrCode';
 import {
@@ -135,7 +136,7 @@ export default function RegistrationsPage() {
       const target = (allTryouts.data ?? []).find((t) => t.id === destination.id);
       const existing = target?.roster.length ?? 0;
       if (isAtPlayerLimit(user?.planTier ?? 'free', existing + ids.length - 1)) {
-        setLimitMsg('You have reached the maximum number of players for your current plan.');
+        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
         return;
       }
     }
@@ -181,7 +182,6 @@ export default function RegistrationsPage() {
     setDummyProgress(null);
     try {
       const res = await genTest.mutateAsync(options);
-      setShowTestGen(false);
       const parts = [
         res.registrations ? `${res.registrations} pending registrations` : null,
         res.players ? `${res.players} roster players` : null,
@@ -197,6 +197,12 @@ export default function RegistrationsPage() {
             ? e.message
             : 'Failed to generate dummy data.',
       );
+    } finally {
+      // In `finally`, not after the await: generateTestData writes
+      // incrementally, so a partial run still created real rows and the modal
+      // must not stay open over a stale form.
+      setShowTestGen(false);
+      setDummyProgress(null);
     }
   };
 

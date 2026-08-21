@@ -24,8 +24,23 @@ const sizeClass: Record<ButtonSize, string> = {
   lg: 'px-5 py-3 text-base min-h-[52px]',
 };
 
+// The spinner's faint "track" ring is the same color at ~20% alpha. Appending a
+// hex alpha pair only produces valid CSS for a 6-digit hex — `#fff` + `33` is
+// `#fff33`, a 5-digit value the parser rejects, which silently dropped the whole
+// `border` shorthand and left the spinner invisible on primary/nav buttons.
+function trackColor(c: string, hexAlpha = '33') {
+  if (/^#[0-9a-f]{3}$/i.test(c)) {
+    const [, r, g, b] = c;
+    return `#${r}${r}${g}${g}${b}${b}${hexAlpha}`;
+  }
+  if (/^#[0-9a-f]{6}$/i.test(c)) return `${c}${hexAlpha}`;
+  // Named colors, rgb()/hsl(): mix toward transparent instead of concatenating.
+  return `color-mix(in srgb, ${c} 20%, transparent)`;
+}
+
 export function Spinner({ size = 18, color }: { size?: number; color?: string }) {
   const colors = useThemeColors();
+  const c = color ?? colors.primary;
   return (
     <span
       aria-hidden
@@ -33,8 +48,8 @@ export function Spinner({ size = 18, color }: { size?: number; color?: string })
         width: size,
         height: size,
         borderRadius: '50%',
-        border: `2px solid ${color ?? colors.primary}33`,
-        borderTopColor: color ?? colors.primary,
+        border: `2px solid ${trackColor(c)}`,
+        borderTopColor: c,
         display: 'inline-block',
         animation: 'aas-spin 0.7s linear infinite',
       }}

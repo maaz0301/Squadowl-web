@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { useSeasonQuery } from '@/features/queries';
+import { useSeasonQuery, useSeasonRealtimeSync } from '@/features/queries';
 
 const TABS = [
   { slug: '', label: 'Hub' },
@@ -29,6 +29,9 @@ export default function SeasonLayout({
   const colors = useThemeColors();
   const pathname = usePathname();
   const seasonQuery = useSeasonQuery(id);
+  // Live-refresh every season tab below when an event is edited or a guardian
+  // RSVPs, rather than waiting for the coach to reload.
+  useSeasonRealtimeSync(id);
 
   const segment = pathname.split('/')[3] ?? '';
 

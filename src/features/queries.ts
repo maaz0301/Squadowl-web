@@ -25,6 +25,19 @@ import { useSessionStore } from '@/state/sessionStore';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
+/**
+ * A note on `onSuccess: () => { void qc.invalidateQueries(...) }`.
+ *
+ * react-query awaits whatever `onSuccess` resolves to, so writing it as the
+ * shorthand `onSuccess: () => qc.invalidateQueries(...)` implicitly returns the
+ * invalidation promise and makes `mutateAsync` wait for a full refetch of the
+ * list it just changed. On the create paths that refetch is the most expensive
+ * query in the app (listTryouts pulls every participant, assessor, evaluation
+ * and registration), and the user sits on a spinner for it before the screen
+ * they asked for even starts loading. `void` fires the refetch and lets the
+ * caller move on; the list updates itself when it lands.
+ */
+
 // ---- Auth ----
 export function useProfileQuery() {
   return useQuery({
@@ -41,12 +54,25 @@ export function useTeamsQuery() {
   });
 }
 
+/**
+ * Just the number of teams, for plan-limit checks — see countTeams(). Keyed
+ * under ['teams'] so the existing team invalidations refresh it for free.
+ */
+export function useTeamCountQuery() {
+  return useQuery({
+    queryKey: queryKeys.teamCount,
+    queryFn: () => getDataSource().countTeams(),
+  });
+}
+
 export function useCreateTeamMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ name, season }: { name: string; season?: string }) =>
       withTimeout(getDataSource().createTeam(name, season), 15000),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teams }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+    },
   });
 }
 
@@ -58,7 +84,9 @@ export function useUploadTeamLogoMutation() {
       await getDataSource().updateTeam(teamId, { logoUrl });
       return logoUrl;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teams }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+    },
   });
 }
 
@@ -73,12 +101,17 @@ export function useTeamRosterQuery(teamId: string | undefined) {
   });
 }
 
-export function useAddTeamRosterPlayersMutation(teamId: string) {
+export function useAddTeamRosterPlayersMutation(
+  teamId: string,
+  onProgress?: (done: number, total: number) => void,
+) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (entries: { athleteId: string; jersey?: string; pos?: string; sourceTryoutId?: string }[]) =>
-      getDataSource().addTeamRosterPlayers(teamId, entries),
-    onSuccess: () => qc.invalidateQueries({ queryKey: teamRosterKey(teamId) }),
+      getDataSource().addTeamRosterPlayers(teamId, entries, onProgress),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+    },
   });
 }
 
@@ -86,7 +119,9 @@ export function useRemoveTeamRosterPlayerMutation(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (athleteId: string) => getDataSource().removeTeamRosterPlayer(teamId, athleteId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: teamRosterKey(teamId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+    },
   });
 }
 
@@ -110,7 +145,9 @@ export function useInviteTeamManagerMutation(teamId: string) {
       role: import('@/data/types').TeamManagerRole;
       name?: string;
     }) => getDataSource().inviteTeamManager(teamId, email, role, name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) });
+    },
   });
 }
 
@@ -118,7 +155,9 @@ export function useRemoveTeamManagerMutation(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (managerId: string) => getDataSource().removeTeamManager(managerId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) });
+    },
   });
 }
 
@@ -155,6 +194,14 @@ export function useTryoutsQuery(includeArchived = false) {
   return useQuery({
     queryKey: queryKeys.tryouts(includeArchived),
     queryFn: () => getDataSource().listTryouts(includeArchived),
+  });
+}
+
+/** Just the number of assessments, for plan-limit checks — see countAssessments(). */
+export function useAssessmentCountQuery() {
+  return useQuery({
+    queryKey: queryKeys.assessmentCount,
+    queryFn: () => getDataSource().countAssessments(),
   });
 }
 
@@ -215,8 +262,9 @@ export function useCreateTryoutMutation() {
   return useMutation({
     mutationFn: (form: CreateAssessmentForm) => withTimeout(getDataSource().createTryout(form), 15000),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
-      qc.invalidateQueries({ queryKey: queryKeys.profile });
+      void qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      void qc.invalidateQueries({ queryKey: queryKeys.assessmentCount });
+      void qc.invalidateQueries({ queryKey: queryKeys.profile });
     },
   });
 }
@@ -283,7 +331,9 @@ export function useUpdatePlayerMutation(tryoutId: string) {
   return useMutation({
     mutationFn: ({ playerId, updates }: { playerId: string; updates: Partial<import('@/data/types').Player> }) =>
       withTimeout(getDataSource().updatePlayer(tryoutId, playerId, updates), 15000),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+    },
   });
 }
 
@@ -367,7 +417,9 @@ export function useSubmitRegistrationMutation(tryoutId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (form: RegistrationSubmit) => getDataSource().submitRegistration(tryoutId, form),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
+    },
   });
 }
 
@@ -492,7 +544,9 @@ export function useDismissRegistrationMutation(tryoutId: string) {
   return useMutation({
     mutationFn: (registrationId: string) =>
       getDataSource().dismissRegistration(tryoutId, registrationId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
+    },
   });
 }
 
@@ -515,6 +569,12 @@ export function useGenerateTestDataMutation(tryoutId: string, onProgress?: (done
         }));
         patchTryoutRosterCaches(qc, tryoutId, stubs);
       }
+    },
+    // Same reasoning as useGenerateDummyTeamsMutation: this writes
+    // incrementally, so a failure mid-batch still leaves real rows. The
+    // optimistic stubs above stay on success (they need the result count), but
+    // the refetch has to happen either way.
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
@@ -541,10 +601,15 @@ export function useGenerateDummyTeamsMutation(onProgress?: (done: number, total:
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (options: DummyTeamOptions) => getDataSource().generateDummyTeams(options, onProgress),
-    onSuccess: () => {
+    // onSettled, not onSuccess: generateDummyTeams creates its teams one at a
+    // time, so a failure partway through still leaves real teams and
+    // assessments behind. Refetching only on success left those rows invisible
+    // until the user manually reloaded the page.
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: queryKeys.teams });
       // Prefix match — invalidates every archived/unarchived tryout list.
       qc.invalidateQueries({ queryKey: ['tryouts'] });
+      qc.invalidateQueries({ queryKey: queryKeys.seasons });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
     },
   });
@@ -585,7 +650,9 @@ export function useUpdateProfileMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (updates: Partial<UserProfile>) => useAuthStore.getState().updateProfile(updates),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.profile }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
   });
 }
 
@@ -600,7 +667,9 @@ export function useUploadCoachPhotoMutation() {
       }
       return publicUrl;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.profile }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
   });
 }
 
@@ -614,13 +683,22 @@ export function useUpdatePasswordMutation() {
 export function useGenerateTeamBuilderMutation(tryoutId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (config: import('@/data/teamBuilder').TeamBuilderConfig) =>
-      withTimeout(
+    mutationFn: (config: import('@/data/teamBuilder').TeamBuilderConfig) => {
+      // Claude has to enumerate every roster player in its response, so generation
+      // time scales with roster size — a flat 60s cap only ever worked up to
+      // roughly 100 players. Scale the client-side timeout with roster size instead,
+      // capped at 5 minutes (large rosters can legitimately take that long to stream).
+      const rosterSize = qc.getQueryData<Tryout>(queryKeys.tryout(tryoutId))?.roster.length ?? 0;
+      const timeoutMs = Math.min(300000, Math.max(60000, 20000 + rosterSize * 300));
+      return withTimeout(
         getDataSource().generateTeamBuilder(tryoutId, config),
-        60000,
+        timeoutMs,
         'Team builder generation timed out. Claude AI might be taking longer than usual, please try again.'
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) }),
+      );
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+    },
   });
 }
 
@@ -636,7 +714,9 @@ export function useSaveTeamBuilderResultMutation(tryoutId: string) {
   return useMutation({
     mutationFn: ({ label, state }: { label: string; state: import('@/data/teamBuilder').TeamBuilderState }) =>
       getDataSource().saveTeamBuilderResult(tryoutId, label, state),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamBuilderResults(tryoutId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teamBuilderResults(tryoutId) });
+    },
   });
 }
 
@@ -644,7 +724,9 @@ export function useDeleteTeamBuilderResultMutation(tryoutId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => getDataSource().deleteTeamBuilderResult(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamBuilderResults(tryoutId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teamBuilderResults(tryoutId) });
+    },
   });
 }
 
@@ -683,7 +765,9 @@ export function useUploadPlayerPhotoMutation(tryoutId: string) {
   return useMutation({
     mutationFn: ({ athleteId, fileUri, fileType }: { athleteId: string; fileUri: string; fileType: string }) =>
       withTimeout(getDataSource().uploadPlayerPhoto(athleteId, fileUri, fileType), 15000, 'Uploading photo timed out. Please check your connection.'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+    },
   });
 }
 
@@ -722,11 +806,53 @@ export function useSeasonQuery(id: string | undefined) {
   });
 }
 
+export function useSeasonRealtimeSync(id: string | undefined) {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!id) return;
+
+    let timeoutId: NodeJS.Timeout | null = null;
+    const triggerInvalidate = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        qc.invalidateQueries({ queryKey: queryKeys.season(id) });
+        // A guardian viewing the same season (e.g. via a shared device) sees it too.
+        qc.invalidateQueries({ queryKey: queryKeys.guardianRosters() });
+      }, 1000);
+    };
+
+    const uniqueId = Math.random().toString(36).slice(2, 9);
+    const channel = getSupabase()
+      .channel(`realtime:season_${id}_${uniqueId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'season_events', filter: `season_id=eq.${id}` },
+        () => triggerInvalidate()
+      )
+      .on(
+        // event_availability has no season_id column of its own (it keys off
+        // season_event_id + roster_id), so this can't be filtered server-side.
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'event_availability' },
+        () => triggerInvalidate()
+      )
+      .subscribe();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      getSupabase().removeChannel(channel);
+    };
+  }, [id, qc]);
+}
+
 export function useCreateSeasonMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (form: import('@/data/types').CreateSeasonForm) => withTimeout(getDataSource().createSeason(form), 15000),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.seasons }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.seasons });
+    },
   });
 }
 
@@ -746,16 +872,38 @@ export function useDeleteSeasonMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => getDataSource().deleteSeason(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.seasons }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.seasons });
+    },
   });
 }
 
-export function useAddSeasonEventMutation(seasonId: string) {
+/**
+ * Bounded worker pool, mirroring the one inside SupabaseDataSource — kept as
+ * its own small copy here rather than exported across the module boundary for
+ * this one caller (syncSeasonRosterFromTeam).
+ */
+async function mapPool<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const workers = Math.max(1, Math.min(items.length, limit));
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      for (let i = next++; i < items.length; i = next++) {
+        await task(items[i]);
+      }
+    }),
+  );
+}
+
+/** onProgress reports guardian-email invite fanout as the event's roster is notified. */
+export function useAddSeasonEventMutation(seasonId: string, onProgress?: (done: number, total: number) => void) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (form: import('@/data/types').CreateEventForm) =>
-      getDataSource().addSeasonEvent(seasonId, form),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) }),
+      getDataSource().addSeasonEvent(seasonId, form, onProgress),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
+    },
   });
 }
 
@@ -765,7 +913,13 @@ export function useAddSeasonEventMutation(seasonId: string) {
  * visibility) is keyed on season roster entries, so this is what makes a team
  * player actually receive events.
  */
-async function syncSeasonRosterFromTeam(teamId: string, seasonId: string) {
+const SEASON_ROSTER_SYNC_CONCURRENCY = 8;
+
+async function syncSeasonRosterFromTeam(
+  teamId: string,
+  seasonId: string,
+  onProgress?: (done: number, total: number) => void,
+) {
   const ds = getDataSource();
   const [teamRoster, season] = await Promise.all([
     ds.listTeamRoster(teamId),
@@ -775,7 +929,12 @@ async function syncSeasonRosterFromTeam(teamId: string, seasonId: string) {
   const missing = teamRoster.filter((p) => p.athleteId && !alreadyOnSeason.has(p.athleteId));
   if (missing.length === 0) return season?.roster ?? [];
 
-  for (const p of missing) {
+  // One insert per missing player, run through a bounded pool rather than in
+  // series — a large team otherwise stalls here, one round trip per player,
+  // before the event (and its invites) is even created.
+  onProgress?.(0, missing.length);
+  let done = 0;
+  await mapPool(missing, SEASON_ROSTER_SYNC_CONCURRENCY, async (p) => {
     try {
       await ds.addSeasonPlayer(seasonId, {
         athleteId: p.athleteId,
@@ -790,8 +949,10 @@ async function syncSeasonRosterFromTeam(teamId: string, seasonId: string) {
       const duplicate =
         err?.code === '23505' || /duplicate key value/i.test(err?.message ?? '');
       if (!duplicate) throw e;
+    } finally {
+      onProgress?.(++done, missing.length);
     }
-  }
+  });
   const refreshed = await ds.getSeason(seasonId);
   return refreshed?.roster ?? [];
 }
@@ -802,10 +963,17 @@ async function syncSeasonRosterFromTeam(teamId: string, seasonId: string) {
  * machinery. A team that has no season yet gets one silently on its first event,
  * which also covers teams created before seasons were auto-provisioned.
  */
+/**
+ * onProgress covers the two serial phases a team's first event can spend real
+ * time in for a large roster: syncing missing players onto the season roster,
+ * then sending each guardian their invite email. `phase` tells the caller
+ * which one a given (done, total) belongs to, since they're different totals.
+ */
 export function useAddTeamEventMutation(
   teamId: string,
   teamName: string,
   seasonId: string | undefined,
+  onProgress?: (phase: 'roster' | 'invites', done: number, total: number) => void,
 ) {
   const qc = useQueryClient();
   return useMutation({
@@ -823,8 +991,10 @@ export function useAddTeamEventMutation(
       // Everyone on the team's Players list is invited, so a player added to the
       // team after the season existed still gets the event (and their guardian
       // sees it in the portal).
-      const roster = await syncSeasonRosterFromTeam(teamId, sid);
-      await getDataSource().addSeasonEvent(sid, { ...form, playerIds: roster.map((p) => p.id) });
+      const roster = await syncSeasonRosterFromTeam(teamId, sid, (done, total) => onProgress?.('roster', done, total));
+      await getDataSource().addSeasonEvent(sid, { ...form, playerIds: roster.map((p) => p.id) }, (done, total) =>
+        onProgress?.('invites', done, total),
+      );
       return sid;
     },
     onSuccess: (sid) => {
@@ -844,7 +1014,9 @@ export function useUpdateSeasonEventMutation(seasonId: string) {
       eventId: string;
       updates: Partial<import('@/data/types').SeasonEvent>;
     }) => getDataSource().updateSeasonEvent(seasonId, eventId, updates),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
+    },
   });
 }
 
@@ -852,7 +1024,9 @@ export function useDeleteSeasonEventMutation(seasonId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (eventId: string) => getDataSource().deleteSeasonEvent(seasonId, eventId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
+    },
   });
 }
 
@@ -861,7 +1035,9 @@ export function usePortalInviteMutation(seasonId: string) {
   return useMutation({
     mutationFn: ({ playerId, email }: { playerId: string; email: string }) =>
       getDataSource().sendPortalInvite(seasonId, playerId, email),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
+    },
   });
 }
 
@@ -1129,7 +1305,9 @@ export function useDeleteTeamMessageMutation(seasonId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (messageId: string) => getDataSource().deleteTeamMessage(messageId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teamMessages(seasonId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teamMessages(seasonId) });
+    },
   });
 }
 
@@ -1187,7 +1365,9 @@ export function useInviteMemberMutation() {
   return useMutation({
     mutationFn: ({ email, role }: { email: string; role: import('@/data/types').OrgRole }) =>
       getDataSource().inviteOrgMember(email, role),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgMembers() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
+    },
   });
 }
 
@@ -1196,7 +1376,9 @@ export function useResendInviteMutation() {
   return useMutation({
     mutationFn: ({ userId, email, role }: { userId: string; email: string; role: import('@/data/types').OrgRole }) =>
       getDataSource().resendGuardianInvite(userId, email, role),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgMembers() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
+    },
   });
 }
 
@@ -1205,7 +1387,9 @@ export function useCreateAndInviteMemberMutation() {
   return useMutation<import('@/data/types').OrgMember, Error, { email: string; password: string; name: string; role: import('@/data/types').OrgRole }>({
     mutationFn: ({ email, password, name, role }) =>
       getDataSource().createAndInviteUser(email, password, name, role),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgMembers() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
+    },
   });
 }
 
@@ -1214,7 +1398,9 @@ export function useUpdateMemberRoleMutation() {
   return useMutation({
     mutationFn: ({ memberId, role }: { memberId: string; role: import('@/data/types').OrgRole }) =>
       getDataSource().updateOrgMemberRole(memberId, role),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgMembers() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
+    },
   });
 }
 
@@ -1222,7 +1408,9 @@ export function useRemoveMemberMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (memberId: string) => getDataSource().removeOrgMember(memberId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orgMembers() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
+    },
   });
 }
 
@@ -1409,7 +1597,9 @@ export function useUpdateTeamMutation() {
   return useMutation({
     mutationFn: ({ id, updates }: { id: string; updates: Partial<Team> }) =>
       getDataSource().updateTeam(id, updates),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.teams }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+    },
   });
 }
 

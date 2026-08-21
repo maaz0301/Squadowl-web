@@ -8,6 +8,7 @@ import {
   Badge,
   Button,
   Card,
+  EmptyState,
   ErrorState,
   LoadingState,
   PageHeader,
@@ -57,6 +58,23 @@ export default function TeamBuilderPage() {
     [tryoutQuery.data],
   );
 
+  // Rebuilding these from a 1000-player roster is expensive; without memoizing
+  // them here, typing in the prompt textarea below (which only changes local
+  // `textPrompt` state) was re-deriving all three maps and re-rendering every
+  // player row on each keystroke.
+  const nameMap = useMemo(
+    () => (tryoutQuery.data ? getPlayerNameMap(tryoutQuery.data) : {}),
+    [tryoutQuery.data],
+  );
+  const playerById = useMemo(
+    () => new Map((tryoutQuery.data?.roster ?? []).map((p) => [p.id, p])),
+    [tryoutQuery.data],
+  );
+  const overallByPlayerId = useMemo(
+    () => new Map(results.map((r) => [r.player.id, r.overall])),
+    [results],
+  );
+
   // The interval is a real external-system subscription (a timer), so it
   // stays an effect — but nothing in the effect body sets state synchronously
   // on mount/dependency-change; the index only advances inside the interval
@@ -96,9 +114,6 @@ export default function TeamBuilderPage() {
     ? (selectedResult.state as TeamBuilderState)
     : liveHidden ? undefined : liveTeamBuilder;
   const isUnsaved = !selectedResult && !!teamBuilder && teamBuilder.generatedAt !== lastSavedGeneratedAt;
-  const nameMap = getPlayerNameMap(tryout);
-  const playerById = new Map(tryout.roster.map((p) => [p.id, p]));
-  const overallByPlayerId = new Map(results.map((r) => [r.player.id, r.overall]));
 
   const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
   const allowedFormats = getPlanDefinition(tier).limits.exports;
@@ -187,6 +202,21 @@ export default function TeamBuilderPage() {
     );
   };
 
+  // Computed once and reused by both the balance overview and the team cards
+  // below, instead of re-filtering `results` against each team twice per render.
+  const teamStats = (teamBuilder?.teams ?? []).map((team) => {
+    const playerIds = new Set(team.players);
+    const teamPlayerResults = results.filter((r) => playerIds.has(r.player.id) && r.evalCount > 0);
+    const avgScore =
+      teamPlayerResults.length > 0
+        ? teamPlayerResults.reduce((sum, r) => sum + r.overall, 0) / teamPlayerResults.length
+        : null;
+    return { team, avgScore };
+  });
+  const teamAverages = teamStats.filter(
+    (t): t is { team: (typeof teamStats)[number]['team']; avgScore: number } => t.avgScore != null,
+  );
+
   const handleDeleteResult = async (resultId: string, label: string) => {
     const ok = await confirm({
       title: 'Delete saved teams?',
@@ -212,12 +242,12 @@ export default function TeamBuilderPage() {
         <div className="grid gap-5 lg:grid-cols-[minmax(0,380px)_1fr] lg:items-start">
           <div className="flex flex-col gap-5">
           <Card accent className="flex flex-col gap-3">
-            <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-              Configuration
-            </span>
-            <span className="text-sm" style={{ color: colors.inkMuted }}>
-              {tryout.roster.length} players
-            </span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                ⚙️ Configuration
+              </span>
+              <Badge label={`${tryout.roster.length} players`} variant="info" />
+            </div>
 
             <Textarea
               rows={5}
@@ -228,31 +258,39 @@ export default function TeamBuilderPage() {
             />
 
             {generate.isPending ? (
-              <div className="flex flex-col items-center gap-2 p-4">
+              <div
+                className="flex flex-col items-center gap-2 rounded-xl border p-4"
+                style={{ backgroundColor: colors.tile, borderColor: colors.border }}
+              >
                 <Spinner size={28} />
-                <span style={{ color: colors.ink }}>{tbLoadingText}</span>
+                <span className="text-sm font-medium" style={{ color: colors.ink }}>
+                  {tbLoadingText}
+                </span>
               </div>
             ) : (
               <Button label="✨ Generate Teams with AI" onClick={handleGenerate} />
             )}
 
             {generate.isError ? (
-              <div className="mt-1 rounded-xl p-3" style={{ backgroundColor: colors.tile }}>
-                <p className="font-bold" style={{ color: colors.ink }}>
-                  Notice
+              <div
+                className="mt-1 flex flex-col items-start gap-2 rounded-xl border p-3"
+                style={{ backgroundColor: colors.danger + '12', borderColor: colors.danger + '30' }}
+              >
+                <p className="flex items-center gap-1.5 font-bold" style={{ color: colors.danger }}>
+                  <span aria-hidden>⚠️</span> Generation failed
                 </p>
-                <p className="mt-1" style={{ color: colors.inkMuted }}>
+                <p style={{ color: colors.inkMuted }}>
                   {generate.error?.message ||
                     'Team builder generation timed out. The server might be busy, please try again.'}
                 </p>
-                <Button label="Retry" size="sm" variant="secondary" className="mt-2" onClick={handleGenerate} />
+                <Button label="Retry" size="sm" variant="secondary" onClick={handleGenerate} />
               </div>
             ) : null}
           </Card>
 
           <Card className="flex flex-col gap-3">
             <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-              Saved Splits
+              💾 Saved Splits
             </span>
             {savedResults.length === 0 ? (
               <span className="text-sm" style={{ color: colors.inkMuted }}>
@@ -340,6 +378,43 @@ export default function TeamBuilderPage() {
                 </div>
               </div>
             ) : null}
+
+            {!teamBuilder ? (
+              <Card>
+                <EmptyState
+                  icon={<span style={{ fontSize: 40 }}>🧩</span>}
+                  title="No teams generated yet"
+                  message="Describe how you'd like the roster split on the left, then hit Generate — or pick a saved split to view it here."
+                />
+              </Card>
+            ) : null}
+
+            {teamAverages.length >= 2 ? (
+              <Card className="flex flex-col gap-3">
+                <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                  ⚖️ Team Balance
+                </span>
+                <div className="flex flex-col gap-2">
+                  {teamAverages.map(({ team, avgScore }) => (
+                    <div key={team.id} className="flex items-center gap-3">
+                      <span className="w-28 shrink-0 truncate text-sm font-medium" style={{ color: colors.ink }}>
+                        {team.name}
+                      </span>
+                      <div className="h-2.5 flex-1 overflow-hidden rounded-full" style={{ backgroundColor: colors.tile }}>
+                        <div
+                          className="h-full rounded-full transition-[width] duration-500"
+                          style={{ width: `${Math.min(100, (avgScore / 5) * 100)}%`, backgroundColor: colors.primary }}
+                        />
+                      </div>
+                      <span className="w-8 shrink-0 text-right text-sm font-bold" style={{ color: colors.inkMuted }}>
+                        {avgScore.toFixed(1)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ) : null}
+
             {teamBuilder?.explanation ? (
               <Card style={{ borderColor: 'rgba(255,107,43,0.25)', backgroundColor: 'rgba(255,107,43,0.08)' }}>
                 <p className="mb-1 font-bold" style={{ color: colors.primary, fontFamily: 'var(--font-space-grotesk)' }}>
@@ -373,17 +448,9 @@ export default function TeamBuilderPage() {
               </div>
             ) : null}
 
-            {teamBuilder?.teams?.map((team) => {
-              const teamPlayerResults = results.filter(
-                (r) => team.players.includes(r.player.id) && r.evalCount > 0,
-              );
-              const avgScore =
-                teamPlayerResults.length > 0
-                  ? (teamPlayerResults.reduce((sum, r) => sum + r.overall, 0) / teamPlayerResults.length).toFixed(1)
-                  : null;
-
+            {teamStats.map(({ team, avgScore }) => {
               return (
-                <Card key={team.id} className="flex flex-col gap-2">
+                <Card key={team.id} accent className="flex flex-col gap-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span
                       className="text-lg font-bold"
@@ -392,7 +459,7 @@ export default function TeamBuilderPage() {
                       {team.name}
                     </span>
                     <span className="flex gap-2">
-                      {avgScore ? <Badge label={`Avg: ${avgScore}`} variant="success" /> : null}
+                      {avgScore != null ? <Badge label={`Avg: ${avgScore.toFixed(1)}`} variant="success" /> : null}
                       <Badge label={`${team.players.length} players`} />
                     </span>
                   </div>
@@ -417,7 +484,10 @@ export default function TeamBuilderPage() {
             })}
 
             {teamBuilder?.unassigned?.length ? (
-              <Card className="flex flex-col gap-2">
+              <Card
+                className="flex flex-col gap-2"
+                style={{ borderLeftWidth: 3, borderLeftColor: colors.warning }}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span
                     className="text-lg font-bold"

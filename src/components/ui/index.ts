@@ -12,3 +12,4 @@ export { ThemeToggle } from './ThemeToggle';
 export { ScorePad, ScoreButton } from './ScorePad';
 export { DateField, TimeField, YearField, PhoneField } from './Fields';
 export { AlertProvider, useAlert } from './Alert';
+export { FormLock } from './FormLock';
