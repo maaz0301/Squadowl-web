@@ -37,6 +37,7 @@ import {
   useRemoveTeamRosterPlayerMutation,
   useSeasonsQuery,
   useSeasonQuery,
+  useSeasonRealtimeSync,
   useAddTeamEventMutation,
   useUpdateSeasonEventMutation,
   useDeleteSeasonEventMutation,
@@ -153,6 +154,9 @@ export default function TeamDetailPage() {
   const seasonsQuery = useSeasonsQuery();
   const teamSeasonId = (seasonsQuery.data ?? []).find((s) => s.teamId === id)?.id;
   const seasonQuery = useSeasonQuery(teamSeasonId);
+  // The Season Hub tab renders this season's schedule and RSVPs inline, so it
+  // needs the same live updates the dedicated season pages get.
+  useSeasonRealtimeSync(teamSeasonId);
   const addEvent = useAddTeamEventMutation(
     id,
     teamsQuery.data?.find((t) => t.id === id)?.name ?? 'Team',

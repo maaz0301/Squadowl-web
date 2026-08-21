@@ -722,6 +722,46 @@ export function useSeasonQuery(id: string | undefined) {
   });
 }
 
+export function useSeasonRealtimeSync(id: string | undefined) {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!id) return;
+
+    let timeoutId: NodeJS.Timeout | null = null;
+    const triggerInvalidate = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        qc.invalidateQueries({ queryKey: queryKeys.season(id) });
+        // A guardian viewing the same season (e.g. via a shared device) sees it too.
+        qc.invalidateQueries({ queryKey: queryKeys.guardianRosters() });
+      }, 1000);
+    };
+
+    const uniqueId = Math.random().toString(36).slice(2, 9);
+    const channel = getSupabase()
+      .channel(`realtime:season_${id}_${uniqueId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'season_events', filter: `season_id=eq.${id}` },
+        () => triggerInvalidate()
+      )
+      .on(
+        // event_availability has no season_id column of its own (it keys off
+        // season_event_id + roster_id), so this can't be filtered server-side.
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'event_availability' },
+        () => triggerInvalidate()
+      )
+      .subscribe();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      getSupabase().removeChannel(channel);
+    };
+  }, [id, qc]);
+}
+
 export function useCreateSeasonMutation() {
   const qc = useQueryClient();
   return useMutation({

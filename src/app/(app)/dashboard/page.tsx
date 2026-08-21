@@ -20,6 +20,8 @@ import {
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { useUser, usePermissions } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
 import {
@@ -196,10 +198,14 @@ export default function DashboardPage() {
   const tryouts = tryoutsQuery.data ?? [];
   const teams = teamsQuery.data ?? [];
   const planTier = user?.planTier ?? 'free';
+  // Teams delegated to this account by a club don't consume its own allowance,
+  // so the nudge counts only owned teams — unlike the visible Teams badge above,
+  // which counts everything the coach can actually see.
+  const ownedTeamCount = teams.filter((t) => !t.managed).length;
 
   const newAssessment = () => {
     if (isAtAssessmentLimit(planTier, tryouts.length)) {
-      setLimitMsg('You have reached the maximum number of assessments for your current plan.');
+      setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'assessments'));
       return;
     }
     router.push('/assessment/new');
@@ -217,6 +223,9 @@ export default function DashboardPage() {
           </>
         }
       />
+
+      <UsageNudgeBanner tier={planTier} metric="teams" count={ownedTeamCount} label="teams" />
+      <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="assessments" />
 
       {canUseFeature(planTier, 'enterprise') ? (
         <Link href="/enterprise" className="mb-4 block">

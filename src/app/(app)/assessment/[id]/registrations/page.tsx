@@ -8,6 +8,7 @@ import { RegistrationForm } from '@/components/assessment/RegistrationForm';
 import { RegistrationProfileModal } from '@/components/assessment/RegistrationProfileModal';
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { PlanGate } from '@/components/PlanGate';
 import { QrCode } from '@/components/QrCode';
 import {
@@ -135,7 +136,7 @@ export default function RegistrationsPage() {
       const target = (allTryouts.data ?? []).find((t) => t.id === destination.id);
       const existing = target?.roster.length ?? 0;
       if (isAtPlayerLimit(user?.planTier ?? 'free', existing + ids.length - 1)) {
-        setLimitMsg('You have reached the maximum number of players for your current plan.');
+        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
         return;
       }
     }

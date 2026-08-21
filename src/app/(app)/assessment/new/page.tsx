@@ -23,6 +23,7 @@ import { useCreateTryoutMutation, useTeamsQuery, useTryoutsQuery } from '@/featu
 import { useSessionStore } from '@/state/sessionStore';
 import { useUser } from '@/state/authStore';
 import { isAtAssessmentLimit } from '@/data/plans';
+import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 
 function NewAssessmentForm() {
@@ -58,7 +59,7 @@ function NewAssessmentForm() {
   const onSubmit = handleSubmit(async (data) => {
     const count = tryoutsQuery.data?.length ?? 0;
     if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
-      setLimitMsg('You have reached the maximum number of assessments for your current plan.');
+      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'assessments'));
       return;
     }
     const tryout = await createTryout.mutateAsync(data);

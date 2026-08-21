@@ -34,6 +34,7 @@ import {
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { tryoutBulkWriteKey } from '@/lib/queryClient';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
+import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { useUser } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -206,6 +207,12 @@ export default function RosterPage() {
     <>
       {hasPlayers ? (
         <div className="mb-5 flex flex-col gap-4">
+          <UsageNudgeBanner
+            tier={user?.planTier ?? 'free'}
+            metric="players"
+            count={tryout.roster.length}
+            label="players in this roster"
+          />
           <div className="flex flex-wrap gap-2">
             <Button label="Score Players" onClick={() => router.push(href('rinkside'))} />
             <Button label="+ Add Player" variant="secondary" onClick={openAdd} />
