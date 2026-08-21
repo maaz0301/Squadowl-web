@@ -10,19 +10,20 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
-import { Avatar, Badge, Button, Card, Chip, ErrorState, Input, LoadingState, PageHeader, SectionLabel, useAlert } from '@/components/ui';
+import { Avatar, Badge, Button, Card, Chip, ErrorState, FormLock, Input, PageHeader, SectionLabel, useAlert } from '@/components/ui';
 import { canUseFeature, isAtTeamLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { getDataSource } from '@/data';
 import { queryKeys } from '@/lib/queryClient';
 import type { DummyTeamOptions } from '@/data/testDataGenerator';
+import type { Team } from '@/data/types';
 import {
   useClearDummyTeamsMutation,
   useCreateSeasonMutation,
   useCreateTeamMutation,
   useUpdateTeamMutation,
   useGenerateDummyTeamsMutation,
-  useTeamsQuery,
+  useTeamCountQuery,
   useUploadTeamLogoMutation,
 } from '@/features/queries';
 import { useConnectStatus } from '@/features/useConnectStatus';
@@ -42,7 +43,7 @@ export default function NewTeamPage() {
   const { alert } = useAlert();
   const createTeam = useCreateTeamMutation();
   const createSeason = useCreateSeasonMutation();
-  const teamsQuery = useTeamsQuery();
+  const teamCount = useTeamCountQuery();
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
   const genDummy = useGenerateDummyTeamsMutation((done, total) => setDummyProgress({ done, total }));
   const clearDummy = useClearDummyTeamsMutation();
@@ -60,6 +61,11 @@ export default function NewTeamPage() {
   const qc = useQueryClient();
   const restoreSession = useAuthStore((s) => s.restoreSession);
   const connect = useConnectStatus();
+
+  // Every write the submit fans out to. Drives both the button's spinner and
+  // the form lock, so they can never disagree about whether a save is running.
+  const saving =
+    createTeam.isPending || createSeason.isPending || uploadLogo.isPending || updateTeam.isPending;
 
   const onLogoPicked = (file: File | undefined) => {
     if (!file) return;
@@ -96,64 +102,67 @@ export default function NewTeamPage() {
   });
 
   const onSubmit = handleSubmit(async (data) => {
-    // Delegated teams belong to the club that pays for them, not to this plan.
-    const count = (teamsQuery.data ?? []).filter((t) => !t.managed).length;
+    // Delegated teams belong to the club that pays for them, not to this plan;
+    // countTeams() only counts this account's own. Awaited here because the
+    // form no longer waits for the count before rendering.
+    const count = teamCount.data ?? (await teamCount.refetch()).data ?? 0;
     if (isAtTeamLimit(user?.planTier ?? 'free', count, user?.extraTeamLicenses ?? 0)) {
       setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'teams', 'teams', user?.extraTeamLicenses ?? 0));
       return;
     }
     const team = await createTeam.mutateAsync({ name: data.name, season: data.season });
-    // Events hang off a season, so every team gets one up front — the coach
-    // never sees it, they just add practices and games on the team screen.
-    try {
-      await createSeason.mutateAsync({
-        name: data.season ? `${data.name} ${data.season}` : `${data.name} Season`,
-        teamName: data.name,
-        sport: 'Hockey',
-        year: data.season,
-        teamId: team.id,
-      });
-    } catch {
-      // Non-fatal: the team exists, and its first event will create the season.
-    }
 
-    // createTeam only takes name/season, so branding is a follow-up write. Logo
-    // and colour go together in one update when both are set, so a team that
-    // picked both doesn't pay for two round trips.
-    let logoUrl: string | undefined;
-    if (logo) {
-      try {
-        logoUrl = await uploadLogo.mutateAsync({ teamId: team.id, fileUri: logo.uri, fileType: logo.type });
-      } catch (e) {
-        await alert('Logo Upload Error', `The team was created, but uploading the logo failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-      }
-    }
-    if (logoUrl || brandColor) {
-      try {
-        await updateTeam.mutateAsync({
-          id: team.id,
-          updates: { ...(logoUrl ? { logoUrl } : {}), ...(brandColor ? { brandColor } : {}) },
-        });
-      } catch (e) {
-        await alert('Branding Error', `The team was created, but saving its branding failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-      }
-    }
-
+    // createTeam only takes name/season, so the season, the logo and the
+    // branding are all follow-up writes — but none of them depends on any of
+    // the others, so they go out together. Run one after another they were the
+    // bulk of the wait between hitting Create and landing on the team.
+    const updates: Partial<Team> = {};
+    if (brandColor) updates.brandColor = brandColor;
     if (collectsFees && canCollectFees) {
       const dollars = parseFloat(feeInput);
-      const cents = !feeInput.trim() || isNaN(dollars) || dollars <= 0 ? 0 : Math.round(dollars * 100);
-      try {
-        await updateTeam.mutateAsync({ id: team.id, updates: { collectsFees: true, registrationFeeCents: cents } });
-      } catch (e) {
-        await alert('Fee Setup Error', `The team was created, but saving the fee failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-      }
+      updates.collectsFees = true;
+      updates.registrationFeeCents =
+        !feeInput.trim() || isNaN(dollars) || dollars <= 0 ? 0 : Math.round(dollars * 100);
     }
+
+    const describe = (e: unknown) => (e instanceof Error ? e.message : 'Unknown error');
+
+    await Promise.all([
+      // Events hang off a season, so every team gets one up front — the coach
+      // never sees it, they just add practices and games on the team screen.
+      // Non-fatal: the team exists, and its first event will create the season.
+      createSeason
+        .mutateAsync({
+          name: data.season ? `${data.name} ${data.season}` : `${data.name} Season`,
+          teamName: data.name,
+          sport: 'Hockey',
+          year: data.season,
+          teamId: team.id,
+        })
+        .catch(() => {}),
+      // The upload mutation writes logoUrl onto the team itself, so there is no
+      // separate update to make here.
+      logo
+        ? uploadLogo
+            .mutateAsync({ teamId: team.id, fileUri: logo.uri, fileType: logo.type })
+            .catch((e) =>
+              alert('Logo Upload Error', `The team was created, but uploading the logo failed: ${describe(e)}`),
+            )
+        : null,
+      Object.keys(updates).length
+        ? updateTeam
+            .mutateAsync({ id: team.id, updates })
+            .catch((e) =>
+              alert('Branding Error', `The team was created, but saving its settings failed: ${describe(e)}`),
+            )
+        : null,
+    ]);
 
     router.push(`/team/${team.id}`);
   });
 
   const runDummy = async (options: DummyTeamOptions) => {
-    const existing = (teamsQuery.data ?? []).filter((t) => !t.managed).length;
+    const existing = teamCount.data ?? (await teamCount.refetch()).data ?? 0;
     if (isAtTeamLimit(user?.planTier ?? 'free', existing + options.teams - 1, user?.extraTeamLicenses ?? 0)) {
       setShowDummy(false);
       setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'teams', 'teams', user?.extraTeamLicenses ?? 0));
@@ -162,7 +171,6 @@ export default function NewTeamPage() {
     setDummyProgress(null);
     try {
       const res = await genDummy.mutateAsync(options);
-      setShowDummy(false);
       await alert(
         'Dummy teams created',
         `Created ${res.teams} team${res.teams === 1 ? '' : 's'} with ${res.assessments} linked ` +
@@ -172,6 +180,11 @@ export default function NewTeamPage() {
       router.push('/teams');
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Failed to generate dummy teams.');
+    } finally {
+      // In `finally`, not after the await: a partial run still created real
+      // teams, and leaving the modal open over a stale form made it look like
+      // nothing had happened at all.
+      setShowDummy(false);
     }
   };
 
@@ -190,12 +203,14 @@ export default function NewTeamPage() {
     }
   };
 
-  if (teamsQuery.isLoading) return <LoadingState message="Loading..." />;
-  if (teamsQuery.isError) {
+  // Only the plan-limit check needs the count, and onSubmit waits for it if it
+  // hasn't landed — so the form itself renders straight away instead of behind
+  // a spinner for a number nothing on screen displays.
+  if (teamCount.isError) {
     return (
       <>
         <PageHeader title="New Team" showBack />
-        <ErrorState message="Could not load teams." onRetry={() => teamsQuery.refetch()} />
+        <ErrorState message="Could not load teams." onRetry={() => teamCount.refetch()} />
       </>
     );
   }
@@ -206,90 +221,88 @@ export default function NewTeamPage() {
 
       <Card>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            className="flex flex-col items-center gap-1 self-center"
-          >
-            <Avatar first={logo ? '' : '+'} last="" uri={logo?.uri} size={72} />
-            <span className="text-xs" style={{ color: colors.primary }}>
-              {logo ? 'Change Team Logo' : 'Upload Team Logo'}
-            </span>
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => onLogoPicked(e.target.files?.[0])}
-          />
-          <Controller
-            control={control}
-            name="name"
-            render={({ field, fieldState }) => (
-              <Input label="Team Name" {...field} error={fieldState.error?.message} />
-            )}
-          />
-          <Controller
-            control={control}
-            name="season"
-            render={({ field }) => <Input label="Season (optional)" {...field} value={field.value ?? ''} />}
-          />
+          <FormLock busy={saving} className="flex flex-col gap-4">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="flex flex-col items-center gap-1 self-center"
+            >
+              <Avatar first={logo ? '' : '+'} last="" uri={logo?.uri} size={72} />
+              <span className="text-xs" style={{ color: colors.primary }}>
+                {logo ? 'Change Team Logo' : 'Upload Team Logo'}
+              </span>
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => onLogoPicked(e.target.files?.[0])}
+            />
+            <Controller
+              control={control}
+              name="name"
+              render={({ field, fieldState }) => (
+                <Input label="Team Name" {...field} error={fieldState.error?.message} />
+              )}
+            />
+            <Controller
+              control={control}
+              name="season"
+              render={({ field }) => <Input label="Season (optional)" {...field} value={field.value ?? ''} />}
+            />
 
-          <TeamColorPicker value={brandColor} onChange={setBrandColor} label="Team colour (optional)" />
+            <TeamColorPicker value={brandColor} onChange={setBrandColor} label="Team colour (optional)" />
 
-          {canCollectFees ? (
-            <>
-              <div className="flex flex-col gap-2">
-                <SectionLabel>Are you collecting fees?</SectionLabel>
-                <div className="flex gap-2">
-                  <Chip label="No" active={!collectsFees} onClick={() => setCollectsFees(false)} />
-                  <Chip label="Yes" active={collectsFees} onClick={() => setCollectsFees(true)} />
+            {canCollectFees ? (
+              <>
+                <div className="flex flex-col gap-2">
+                  <SectionLabel>Are you collecting fees?</SectionLabel>
+                  <div className="flex gap-2">
+                    <Chip label="No" active={!collectsFees} onClick={() => setCollectsFees(false)} />
+                    <Chip label="Yes" active={collectsFees} onClick={() => setCollectsFees(true)} />
+                  </div>
                 </div>
-              </div>
 
-              {collectsFees ? (
-                <Card className="flex flex-col gap-2">
-                  <Input
-                    label="Fee per player (CAD)"
-                    value={feeInput}
-                    onChange={(e) => setFeeInput(e.target.value)}
-                    placeholder="0.00"
-                  />
-                  <p className="text-xs" style={{ color: colors.inkMuted }}>
-                    Creating this team creates (or reuses) its season and adds everyone on the roster to it —
-                    each player&apos;s guardian will then be asked to pay this fee, plus TryoutHQ&apos;s 0.5%
-                    platform fee, from their portal. QR/link assessment registration always stays free.
-                  </p>
-                  {connect.chargesEnabled ? (
-                    <Badge label="Stripe connected" variant="success" />
-                  ) : (
-                    <>
-                      <p className="text-xs" style={{ color: colors.warning }}>
-                        {connect.onboardingIncomplete
-                          ? "Your Stripe account isn't finished — Stripe needs more information before it will accept charges. You can still create the team now and finish after."
-                          : 'Connect a Stripe account before guardians can pay — you can still create the team now and connect after.'}
-                      </p>
-                      <Button
-                        label={connect.onboardingIncomplete ? 'Continue Stripe Setup' : 'Connect with Stripe'}
-                        variant="secondary"
-                        size="sm"
-                        loading={connecting}
-                        onClick={connectPayouts}
-                      />
-                    </>
-                  )}
-                </Card>
-              ) : null}
-            </>
-          ) : null}
+                {collectsFees ? (
+                  <Card className="flex flex-col gap-2">
+                    <Input
+                      label="Fee per player (CAD)"
+                      value={feeInput}
+                      onChange={(e) => setFeeInput(e.target.value)}
+                      placeholder="0.00"
+                    />
+                    <p className="text-xs" style={{ color: colors.inkMuted }}>
+                      Creating this team creates (or reuses) its season and adds everyone on the roster to it —
+                      each player&apos;s guardian will then be asked to pay this fee, plus TryoutHQ&apos;s 0.5%
+                      platform fee, from their portal. QR/link assessment registration always stays free.
+                    </p>
+                    {connect.chargesEnabled ? (
+                      <Badge label="Stripe connected" variant="success" />
+                    ) : (
+                      <>
+                        <p className="text-xs" style={{ color: colors.warning }}>
+                          {connect.onboardingIncomplete
+                            ? "Your Stripe account isn't finished — Stripe needs more information before it will accept charges. You can still create the team now and finish after."
+                            : 'Connect a Stripe account before guardians can pay — you can still create the team now and connect after.'}
+                        </p>
+                        <Button
+                          label={connect.onboardingIncomplete ? 'Continue Stripe Setup' : 'Connect with Stripe'}
+                          variant="secondary"
+                          size="sm"
+                          loading={connecting}
+                          onClick={connectPayouts}
+                        />
+                      </>
+                    )}
+                  </Card>
+                ) : null}
+              </>
+            ) : null}
 
-          <Button
-            type="submit"
-            label="Create Team"
-            loading={createTeam.isPending || createSeason.isPending || uploadLogo.isPending || updateTeam.isPending}
-            size="lg"
-          />
+          </FormLock>
+
+          <Button type="submit" label="Create Team" loading={saving} size="lg" />
         </form>
       </Card>
 

@@ -380,7 +380,6 @@ export default function RosterPage() {
           setDummyProgress(null);
           try {
             const res = await genTest.mutateAsync(options);
-            setShowTestGen(false);
             const parts = [
               res.registrations ? `${res.registrations} pending registrations` : null,
               res.players ? `${res.players} roster players` : null,
@@ -396,6 +395,10 @@ export default function RosterPage() {
                   : 'Failed to generate dummy data.';
             await alert('Error', msg);
           } finally {
+            // In `finally`, not after the await: generateTestData writes
+            // incrementally, so a partial run still created real rows and the
+            // modal must not stay open over a stale form.
+            setShowTestGen(false);
             setDummyProgress(null);
           }
         }}

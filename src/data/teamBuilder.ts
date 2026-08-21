@@ -53,17 +53,21 @@ export interface TeamBuilderConfig {
 function detectFriendPackages(roster: Player[]): FriendPackage[] {
   const packages: FriendPackage[] = [];
   const seen = new Set<string>();
+  // Precompute lowercased full names once instead of re-deriving them on every
+  // comparison inside the loop below — cuts the constant factor of the O(n²)
+  // friend-name matching enough to stay usable on 1000+ player rosters.
+  const nameLowerById = new Map<string, string>();
+  for (const p of roster) nameLowerById.set(p.id, `${p.first} ${p.last}`.toLowerCase());
 
   for (const player of roster) {
     if (!player.friend1Name && !player.friend2Name) continue;
-    const friends = roster.filter(
-      (p) =>
-        p.id !== player.id &&
-        ((player.friend1Name &&
-          `${p.first} ${p.last}`.toLowerCase().includes(player.friend1Name.toLowerCase())) ||
-          (player.friend2Name &&
-            `${p.first} ${p.last}`.toLowerCase().includes(player.friend2Name.toLowerCase()))),
-    );
+    const friend1 = player.friend1Name?.toLowerCase();
+    const friend2 = player.friend2Name?.toLowerCase();
+    const friends = roster.filter((p) => {
+      if (p.id === player.id) return false;
+      const name = nameLowerById.get(p.id)!;
+      return (!!friend1 && name.includes(friend1)) || (!!friend2 && name.includes(friend2));
+    });
     if (friends.length === 0) continue;
     const ids = [player.id, ...friends.map((f) => f.id)].sort();
     const key = ids.join('-');
@@ -85,10 +89,17 @@ export function buildTeams(tryout: Tryout, config: TeamBuilderConfig): TeamBuild
     .sort((a, b) => b.overall - a.overall)
     .map((r, i) => ({ playerId: r.player.id, overall: r.overall, rank: i + 1 }));
 
-  const unscored = tryout.roster.filter((p) => !ranked.find((r) => r.playerId === p.id));
+  const rankedIds = new Set(ranked.map((r) => r.playerId));
+  const unscored = tryout.roster.filter((p) => !rankedIds.has(p.id));
   for (const p of unscored) {
     ranked.push({ playerId: p.id, overall: 0, rank: ranked.length + 1 });
   }
+
+  // Built once and reused below instead of re-scanning the roster/ranks with
+  // .find() inside per-player assignment loops — the O(n²) lookups that made
+  // this function noticeably slow at 1000+ players.
+  const playerById = new Map(tryout.roster.map((p) => [p.id, p]));
+  const overallByPlayerId = new Map(ranked.map((r) => [r.playerId, r.overall]));
 
   let teamCount = Math.max(2, config.teamCount);
   let sortMethod = config.sortMethod ?? 'snake';
@@ -132,7 +143,7 @@ export function buildTeams(tryout: Tryout, config: TeamBuilderConfig): TeamBuild
     for (const pid of unassigned) {
       targetTeam.players.push(pid);
       assigned.add(pid);
-      const player = tryout.roster.find((p) => p.id === pid);
+      const player = playerById.get(pid);
       if (player?.pos?.toUpperCase() === 'GTL') targetTeam.goalies.push(pid);
       else targetTeam.skaters.push(pid);
     }
@@ -151,7 +162,7 @@ export function buildTeams(tryout: Tryout, config: TeamBuilderConfig): TeamBuild
           teamIdx += direction;
         }
       }
-      const player = tryout.roster.find((p) => p.id === entry.playerId)!;
+      const player = playerById.get(entry.playerId)!;
       teams[teamIdx].players.push(entry.playerId);
       if (player.pos?.toUpperCase() === 'GTL') teams[teamIdx].goalies.push(entry.playerId);
       else teams[teamIdx].skaters.push(entry.playerId);
@@ -163,28 +174,32 @@ export function buildTeams(tryout: Tryout, config: TeamBuilderConfig): TeamBuild
       }
     }
   } else {
+    // Maintain a running sum/count per team instead of recomputing every
+    // team's average from scratch (via nested .reduce/.find) for every player
+    // placed — that was O(n²) and dominated on large rosters. Seed the running
+    // totals from any players already placed via friend packages above so the
+    // averages stay identical to the previous recompute-from-scratch approach.
+    const teamSum = teams.map((t) =>
+      t.players.reduce((s, pid) => s + (overallByPlayerId.get(pid) ?? 0), 0),
+    );
+    const teamPlayerCount = teams.map((t) => t.players.length);
     for (const entry of pool) {
-      const targetTeam = teams.reduce((best, t) => {
-        const bestAvg =
-          best.players.length === 0
-            ? 0
-            : best.players.reduce((s, pid) => {
-                const r = ranked.find((x) => x.playerId === pid);
-                return s + (r?.overall ?? 0);
-              }, 0) / best.players.length;
-        const tAvg =
-          t.players.length === 0
-            ? 0
-            : t.players.reduce((s, pid) => {
-                const r = ranked.find((x) => x.playerId === pid);
-                return s + (r?.overall ?? 0);
-              }, 0) / t.players.length;
-        return tAvg < bestAvg ? t : best;
-      });
-      const player = tryout.roster.find((p) => p.id === entry.playerId)!;
+      let bestIdx = 0;
+      let bestAvg = teamPlayerCount[0] === 0 ? 0 : teamSum[0] / teamPlayerCount[0];
+      for (let i = 1; i < teams.length; i++) {
+        const avg = teamPlayerCount[i] === 0 ? 0 : teamSum[i] / teamPlayerCount[i];
+        if (avg < bestAvg) {
+          bestAvg = avg;
+          bestIdx = i;
+        }
+      }
+      const targetTeam = teams[bestIdx];
+      const player = playerById.get(entry.playerId)!;
       targetTeam.players.push(entry.playerId);
       if (player.pos?.toUpperCase() === 'GTL') targetTeam.goalies.push(entry.playerId);
       else targetTeam.skaters.push(entry.playerId);
+      teamSum[bestIdx] += overallByPlayerId.get(entry.playerId) ?? 0;
+      teamPlayerCount[bestIdx] += 1;
     }
   }
 

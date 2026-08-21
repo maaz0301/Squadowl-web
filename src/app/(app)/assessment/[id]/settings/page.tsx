@@ -160,6 +160,14 @@ export default function SettingsPage() {
       setAssessorEmail('');
       setShowAssessor(false);
       await shareAssessorInvite(newAssessor);
+    } catch (e) {
+      // Without this the whole handler was try/finally with no catch: a failing
+      // checkUserExistsByEmail or updateTryout threw straight past
+      // setShowAssessor(false) as an unhandled rejection, so the modal just sat
+      // there with no error and no visible reason — which reads as "the modal
+      // won't close". The modal deliberately stays open on failure so the entry
+      // can be corrected and retried; what was missing was saying why.
+      await alert('Error', e instanceof Error ? e.message : 'Could not add this assessor.');
     } finally {
       setAddingAssessor(false);
     }

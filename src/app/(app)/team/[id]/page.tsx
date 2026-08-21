@@ -15,6 +15,7 @@ import {
   Chip,
   DateField,
   ErrorState,
+  FormLock,
   Input,
   LoadingState,
   Modal,
@@ -138,6 +139,7 @@ export default function TeamDetailPage() {
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [tab, setTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'schedule');
   const [openRsvpEventId, setOpenRsvpEventId] = useState<string | null>(null);
+  const [rsvpSearch, setRsvpSearch] = useState('');
   const [availabilityTarget, setAvailabilityTarget] = useState<{
     eventId: string;
     playerId: string;
@@ -146,7 +148,8 @@ export default function TeamDetailPage() {
   } | null>(null);
 
   const rosterQuery = useTeamRosterQuery(id);
-  const addRosterPlayers = useAddTeamRosterPlayersMutation(id);
+  const [addPlayersProgress, setAddPlayersProgress] = useState<{ done: number; total: number } | null>(null);
+  const addRosterPlayers = useAddTeamRosterPlayersMutation(id, (done, total) => setAddPlayersProgress({ done, total }));
   const removeRosterPlayer = useRemoveTeamRosterPlayerMutation(id);
 
   // Events live on the season attached to this team, but that's an implementation
@@ -157,10 +160,14 @@ export default function TeamDetailPage() {
   // The Season Hub tab renders this season's schedule and RSVPs inline, so it
   // needs the same live updates the dedicated season pages get.
   useSeasonRealtimeSync(teamSeasonId);
+  const [eventProgress, setEventProgress] = useState<{ phase: 'roster' | 'invites'; done: number; total: number } | null>(
+    null,
+  );
   const addEvent = useAddTeamEventMutation(
     id,
     teamsQuery.data?.find((t) => t.id === id)?.name ?? 'Team',
     teamSeasonId,
+    (phase, done, total) => setEventProgress({ phase, done, total }),
   );
   const updateEvent = useUpdateSeasonEventMutation(teamSeasonId ?? '');
   const deleteEvent = useDeleteSeasonEventMutation(teamSeasonId ?? '');
@@ -271,12 +278,17 @@ export default function TeamDetailPage() {
   const candidates = [...candidatesByAthlete.values()].sort(
     (a, b) => Number(a.alreadyOnTeam) - Number(b.alreadyOnTeam),
   );
-  const availableCount = candidates.filter((c) => !c.alreadyOnTeam).length;
+  // "Select all" and its available-count must track the ACTIVE assessment
+  // filter, not the full cross-assessment candidate pool — otherwise picking
+  // one assessment's tab still selects every athlete on the account when
+  // "Select all" is clicked, which is what actually produced a batch of 1001
+  // instead of the one assessment's roster.
   const filteredCandidates = candidates
     .filter((c) => !candidateTryoutFilter || c.tryoutIds.has(candidateTryoutFilter))
     .filter((c) =>
       candidateSearch.trim() ? `${c.first} ${c.last}`.toLowerCase().includes(candidateSearch.trim().toLowerCase()) : true,
     );
+  const availableCount = filteredCandidates.filter((c) => !c.alreadyOnTeam).length;
   const isAddingPlayers = addRosterPlayers.isPending || enrollingAssessments;
 
   const addPickedPlayers = async () => {
@@ -290,6 +302,7 @@ export default function TeamDetailPage() {
       return;
     }
     const entries = picked.map((c) => ({ athleteId: c.athleteId, jersey: c.jersey, pos: c.pos, sourceTryoutId: c.tryoutId }));
+    setAddPlayersProgress({ done: 0, total: entries.length });
     try {
       await addRosterPlayers.mutateAsync(entries);
 
@@ -297,11 +310,21 @@ export default function TeamDetailPage() {
       // picked athlete there too if they aren't already a participant on it.
       if (linkedTryouts.length > 0) {
         setEnrollingAssessments(true);
-        const enrollments = picked.flatMap((c) =>
+        // Build the (athlete, tryout) work list first — deferred, not started —
+        // then run it through a bounded worker pool below. `picked.flatMap(...
+        // .map((t) => getDataSource().addPlayer(...)))` looked bounded because
+        // of the `await Promise.all(...)` after it, but `.map()`'s callback
+        // calls and returns the promise immediately: every addPlayer() call —
+        // up to players × linked assessments — fired over the wire in the same
+        // tick, well past what the connection pool or a statement timeout can
+        // absorb for a large batch. Promise.all was only ever waiting on
+        // requests that had already all been fired at once.
+        const enrollmentTasks = picked.flatMap((c) =>
           linkedTryouts
             .filter((t) => !c.tryoutIds.has(t.id))
-            .map((t) =>
-              getDataSource().addPlayer(t.id, {
+            .map((t) => ({
+              tryoutId: t.id,
+              form: {
                 athleteId: c.athleteId,
                 first: c.first,
                 last: c.last,
@@ -309,11 +332,25 @@ export default function TeamDetailPage() {
                 pos: c.pos || '',
                 yearOfBirth: c.yearOfBirth || '',
                 guardianEmail: c.guardianEmail || '',
-              }),
-            ),
+              },
+            })),
         );
-        if (enrollments.length > 0) {
-          await Promise.all(enrollments);
+        if (enrollmentTasks.length > 0) {
+          const ENROLLMENT_CONCURRENCY = 8;
+          let nextIndex = 0;
+          let completed = 0;
+          setAddPlayersProgress({ done: 0, total: enrollmentTasks.length });
+          const worker = async () => {
+            while (nextIndex < enrollmentTasks.length) {
+              const task = enrollmentTasks[nextIndex++];
+              await getDataSource().addPlayer(task.tryoutId, task.form);
+              completed++;
+              setAddPlayersProgress({ done: completed, total: enrollmentTasks.length });
+            }
+          };
+          await Promise.all(
+            Array.from({ length: Math.min(ENROLLMENT_CONCURRENCY, enrollmentTasks.length) }, worker),
+          );
           for (const t of linkedTryouts) qc.invalidateQueries({ queryKey: queryKeys.tryout(t.id) });
           qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
         }
@@ -326,6 +363,7 @@ export default function TeamDetailPage() {
       await alert('Error', e instanceof Error ? e.message : 'Could not add players to the team.');
     } finally {
       setEnrollingAssessments(false);
+      setAddPlayersProgress(null);
     }
   };
 
@@ -368,6 +406,7 @@ export default function TeamDetailPage() {
 
   const openEventModal = (kind: EventKind) => {
     setEditingEventId(null);
+    setEventProgress(null);
     eventForm.reset({
       type: kind,
       title: '',
@@ -384,6 +423,7 @@ export default function TeamDetailPage() {
 
   const openEditEventModal = (ev: SeasonEvent) => {
     setEditingEventId(ev.id);
+    setEventProgress(null);
     eventForm.reset({
       type: ev.type,
       title: ev.title,
@@ -428,6 +468,7 @@ export default function TeamDetailPage() {
         }
         setShowAddEvent(false);
         setEditingEventId(null);
+        setEventProgress(null);
       } catch (e) {
         await alert('Error', e instanceof Error ? e.message : 'Could not save the event.');
       }
@@ -509,8 +550,12 @@ export default function TeamDetailPage() {
       destructive: true,
     });
     if (!ok) return;
-    await deleteTeam.mutateAsync(team.id);
-    router.replace('/teams');
+    try {
+      await deleteTeam.mutateAsync(team.id);
+      router.replace('/teams');
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not delete this team.');
+    }
   };
 
   return (
@@ -613,7 +658,10 @@ export default function TeamDetailPage() {
 
                     <button
                       type="button"
-                      onClick={() => setOpenRsvpEventId(expanded ? null : ev.id)}
+                      onClick={() => {
+                        setOpenRsvpEventId(expanded ? null : ev.id);
+                        setRsvpSearch('');
+                      }}
                       className="flex flex-wrap items-center gap-2 py-1 text-left"
                     >
                       <Badge label={`${rsvp.counts.yes} yes`} variant="success" size="lg" />
@@ -626,39 +674,72 @@ export default function TeamDetailPage() {
                     </button>
 
                     {expanded ? (
-                      <div className="overflow-hidden rounded-xl border" style={{ borderColor: colors.border }}>
-                        {rsvp.rows.length === 0 ? (
-                          <p className="p-3 text-xs" style={{ color: colors.inkMuted }}>
-                            Nobody was invited to this event yet.
-                          </p>
-                        ) : (
-                          <>
-                            <p className="px-3 py-2 text-xs" style={{ color: colors.inkMuted, backgroundColor: colors.tile }}>
-                              Click a player to set their RSVP
+                      <div className="flex flex-col gap-2">
+                        {rsvp.rows.length > 8 ? (
+                          <Input
+                            placeholder="Search players by name"
+                            value={rsvpSearch}
+                            onChange={(e) => setRsvpSearch(e.target.value)}
+                          />
+                        ) : null}
+                        <div className="overflow-hidden rounded-xl border" style={{ borderColor: colors.border }}>
+                          {ev.availabilityUnavailable && rsvp.rows.length === 0 ? (
+                            <p className="p-3 text-xs" style={{ color: colors.warning }}>
+                              RSVPs couldn&apos;t be loaded for this event. Everyone invited is still
+                              invited — reload to try again.
                             </p>
-                            {rsvp.rows.map((r, i) => (
-                              <button
-                                type="button"
-                                key={r.playerId}
-                                onClick={() =>
-                                  setAvailabilityTarget({
-                                    eventId: ev.id,
-                                    playerId: r.playerId,
-                                    playerName: r.name,
-                                    current: r.response,
-                                  })
-                                }
-                                className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left transition-colors hover:brightness-125"
-                                style={{ borderTop: i === 0 ? 'none' : `1px solid ${colors.border}` }}
+                          ) : rsvp.rows.length === 0 ? (
+                            <p className="p-3 text-xs" style={{ color: colors.inkMuted }}>
+                              Nobody was invited to this event yet.
+                            </p>
+                          ) : (
+                            <>
+                              <p
+                                className="px-3 py-2 text-xs"
+                                style={{
+                                  color: ev.availabilityUnavailable ? colors.warning : colors.inkMuted,
+                                  backgroundColor: colors.tile,
+                                }}
                               >
-                                <span className="flex-1 text-sm font-bold" style={{ color: colors.ink }}>
-                                  {r.name}
-                                </span>
-                                <Badge label={RSVP_LABEL[r.response]} variant={RSVP_VARIANT[r.response]} size="lg" />
-                              </button>
-                            ))}
-                          </>
-                        )}
+                                {ev.availabilityUnavailable
+                                  ? `Showing the ${rsvp.rows.length} RSVPs that loaded — the rest timed out. Reload to retry.`
+                                  : 'Click a player to set their RSVP'}
+                              </p>
+                              {(() => {
+                                const q = rsvpSearch.trim().toLowerCase();
+                                const visible = q ? rsvp.rows.filter((r) => r.name.toLowerCase().includes(q)) : rsvp.rows;
+                                if (visible.length === 0) {
+                                  return (
+                                    <p className="p-3 text-center text-xs" style={{ color: colors.inkMuted }}>
+                                      No players match &quot;{rsvpSearch}&quot;.
+                                    </p>
+                                  );
+                                }
+                                return visible.map((r, i) => (
+                                  <button
+                                    type="button"
+                                    key={r.playerId}
+                                    onClick={() =>
+                                      setAvailabilityTarget({
+                                        eventId: ev.id,
+                                        playerId: r.playerId,
+                                        playerName: r.name,
+                                        current: r.response,
+                                      })
+                                    }
+                                    className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left transition-colors hover:brightness-125"
+                                    style={{ borderTop: i === 0 ? 'none' : `1px solid ${colors.border}` }}
+                                  >
+                                    <span className="flex-1 text-sm font-bold" style={{ color: colors.ink }}>
+                                      {r.name}
+                                    </span>
+                                    <Badge label={RSVP_LABEL[r.response]} variant={RSVP_VARIANT[r.response]} size="lg" />
+                                  </button>
+                                ));
+                              })()}
+                            </>
+                          )}
+                        </div>
                       </div>
                     ) : null}
 
@@ -923,6 +1004,22 @@ export default function TeamDetailPage() {
         onClose={() => setShowAddPlayers(false)}
         footer={
           <ModalFooter>
+            {isAddingPlayers && addPlayersProgress && addPlayersProgress.total > 0 ? (
+              <div className="mb-2 flex flex-col gap-1">
+                <div className="h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: colors.tile }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.min(100, Math.max(4, Math.round((addPlayersProgress.done / addPlayersProgress.total) * 100)))}%`,
+                      backgroundColor: colors.primary,
+                    }}
+                  />
+                </div>
+                <p className="text-center text-xs" style={{ color: colors.inkMuted }}>
+                  Added {addPlayersProgress.done} of {addPlayersProgress.total} players...
+                </p>
+              </div>
+            ) : null}
             <Button
               label={
                 pickedAthletes.size === 0 ? 'Select players to add' : `Add ${pickedAthletes.size} to ${team.name}`
@@ -935,7 +1032,13 @@ export default function TeamDetailPage() {
         }
       >
         {isAddingPlayers ? (
-          <LoadingState message="Adding players..." />
+          <LoadingState
+            message={
+              addPlayersProgress && addPlayersProgress.total > 0
+                ? `Added ${addPlayersProgress.done} of ${addPlayersProgress.total} players...`
+                : 'Adding players...'
+            }
+          />
         ) : candidates.length === 0 ? (
           <p className="py-3 text-sm" style={{ color: colors.inkMuted }}>
             No assessments have players yet — add players to an assessment roster first.
@@ -972,7 +1075,7 @@ export default function TeamDetailPage() {
                     setPickedAthletes((prev) =>
                       prev.size === availableCount
                         ? new Set()
-                        : new Set(candidates.filter((c) => !c.alreadyOnTeam).map((c) => c.athleteId)),
+                        : new Set(filteredCandidates.filter((c) => !c.alreadyOnTeam).map((c) => c.athleteId)),
                     )
                   }
                   className="text-xs font-bold"
@@ -1043,76 +1146,97 @@ export default function TeamDetailPage() {
         hideDefaultFooter
       >
         <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap gap-2">
-            {EVENT_KINDS.map((t) => (
-              <Chip key={t} label={t} active={eventType === t} onClick={() => eventForm.setValue('type', t)} />
-            ))}
-          </div>
-          <Controller
-            control={eventForm.control}
-            name="title"
-            render={({ field, fieldState }) => (
-              <Input label="Title" {...field} error={fieldState.error?.message} />
+          <FormLock busy={addEvent.isPending || updateEvent.isPending} className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {EVENT_KINDS.map((t) => (
+                <Chip key={t} label={t} active={eventType === t} onClick={() => eventForm.setValue('type', t)} />
+              ))}
+            </div>
+            <Controller
+              control={eventForm.control}
+              name="title"
+              render={({ field, fieldState }) => (
+                <Input label="Title" {...field} error={fieldState.error?.message} />
+              )}
+            />
+            <Controller
+              control={eventForm.control}
+              name="date"
+              render={({ field, fieldState }) => (
+                <DateField
+                  label="Date"
+                  value={field.value}
+                  onChange={field.onChange}
+                  error={fieldState.error?.message}
+                  disablePast
+                />
+              )}
+            />
+            <Controller
+              control={eventForm.control}
+              name="endDate"
+              render={({ field, fieldState }) => (
+                <DateField
+                  label="End Date (optional)"
+                  value={field.value}
+                  onChange={field.onChange}
+                  error={fieldState.error?.message}
+                  disablePast
+                  minDate={eventForm.watch('date') || undefined}
+                />
+              )}
+            />
+            <Controller
+              control={eventForm.control}
+              name="startTime"
+              render={({ field, fieldState }) => (
+                <TimeField
+                  label="Start Time"
+                  value={field.value}
+                  onChange={field.onChange}
+                  error={fieldState.error?.message}
+                  disablePast
+                  dateValue={eventForm.watch('date')}
+                />
+              )}
+            />
+            <Controller
+              control={eventForm.control}
+              name="endTime"
+              render={({ field, fieldState }) => (
+                <TimeField label="End Time" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+              )}
+            />
+            <Controller
+              control={eventForm.control}
+              name="location"
+              render={({ field }) => <Input label="Location" {...field} value={field.value ?? ''} />}
+            />
+            {editingEventId ? null : (
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                Everyone on the roster is invited by default.
+              </p>
             )}
-          />
-          <Controller
-            control={eventForm.control}
-            name="date"
-            render={({ field, fieldState }) => (
-              <DateField
-                label="Date"
-                value={field.value}
-                onChange={field.onChange}
-                error={fieldState.error?.message}
-                disablePast
-              />
-            )}
-          />
-          <Controller
-            control={eventForm.control}
-            name="endDate"
-            render={({ field, fieldState }) => (
-              <DateField
-                label="End Date (optional)"
-                value={field.value}
-                onChange={field.onChange}
-                error={fieldState.error?.message}
-                disablePast
-                minDate={eventForm.watch('date') || undefined}
-              />
-            )}
-          />
-          <Controller
-            control={eventForm.control}
-            name="startTime"
-            render={({ field, fieldState }) => (
-              <TimeField
-                label="Start Time"
-                value={field.value}
-                onChange={field.onChange}
-                error={fieldState.error?.message}
-                disablePast
-                dateValue={eventForm.watch('date')}
-              />
-            )}
-          />
-          <Controller
-            control={eventForm.control}
-            name="endTime"
-            render={({ field, fieldState }) => (
-              <TimeField label="End Time" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
-            )}
-          />
-          <Controller
-            control={eventForm.control}
-            name="location"
-            render={({ field }) => <Input label="Location" {...field} value={field.value ?? ''} />}
-          />
-          {editingEventId ? null : (
-            <p className="text-xs" style={{ color: colors.inkMuted }}>
-              Everyone on the roster is invited by default.
-            </p>
-          )}
+          </FormLock>
+
+          {addEvent.isPending && eventProgress && eventProgress.total > 0 ? (
+            <div className="flex flex-col gap-1">
+              <div className="h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: colors.tile }}>
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${Math.min(100, Math.max(4, Math.round((eventProgress.done / eventProgress.total) * 100)))}%`,
+                    backgroundColor: colors.primary,
+                  }}
+                />
+              </div>
+              <p className="text-center text-xs" style={{ color: colors.inkMuted }}>
+                {eventProgress.phase === 'roster'
+                  ? `Adding ${eventProgress.done} of ${eventProgress.total} players to the roster...`
+                  : `Sending invites to ${eventProgress.done} of ${eventProgress.total} guardians...`}
+              </p>
+            </div>
+          ) : null}
           <Button
             label={editingEventId ? 'Update Event' : 'Save Event'}
             onClick={submitEvent}

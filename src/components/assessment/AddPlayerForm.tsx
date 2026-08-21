@@ -5,7 +5,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { AddPlayerFormSchema, type AddPlayerForm as AddPlayerFormType, type Athlete } from '@/data/types';
-import { Avatar, Button, Input, Modal, PhoneField, Textarea, YearField, useAlert } from '@/components/ui';
+import { Avatar, Button, FormLock, Input, Modal, PhoneField, Textarea, YearField, useAlert } from '@/components/ui';
 import { useAthletesQuery } from '@/features/queries';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
@@ -95,137 +95,140 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
 
   return (
     <div className="flex flex-col gap-4 pb-2">
-      {athletesQuery.data && athletesQuery.data.length > 0 ? (
-        <Button label="Search Existing Players" variant="secondary" onClick={() => setModalVisible(true)} />
-      ) : null}
+      <FormLock busy={loading} className="flex flex-col gap-4">
+        {athletesQuery.data && athletesQuery.data.length > 0 ? (
+          <Button label="Search Existing Players" variant="secondary" onClick={() => setModalVisible(true)} />
+        ) : null}
 
-      <Modal visible={modalVisible} title="Select Existing Player" onClose={() => setModalVisible(false)}>
-        <Input
-          label="Search by name"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          autoFocus
-        />
-        <div className="mt-4 flex flex-col gap-2">
-          {filteredAthletes.map((a) => (
-            <button
-              type="button"
-              key={a.id}
-              className="rounded-xl border p-3 text-left transition-colors hover:brightness-125"
-              style={{ borderColor: colors.border, backgroundColor: colors.card }}
-              onClick={() => selectAthlete(a)}
-            >
-              <span className="block font-bold" style={{ color: colors.ink }}>
-                {a.first} {a.last}
-              </span>
-              {a.yearOfBirth ? (
-                <span className="block text-xs" style={{ color: colors.inkMuted }}>
-                  Born: {a.yearOfBirth}
+        <Modal visible={modalVisible} title="Select Existing Player" onClose={() => setModalVisible(false)}>
+          <Input
+            label="Search by name"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            autoFocus
+          />
+          <div className="mt-4 flex flex-col gap-2">
+            {filteredAthletes.map((a) => (
+              <button
+                type="button"
+                key={a.id}
+                className="rounded-xl border p-3 text-left transition-colors hover:brightness-125"
+                style={{ borderColor: colors.border, backgroundColor: colors.card }}
+                onClick={() => selectAthlete(a)}
+              >
+                <span className="block font-bold" style={{ color: colors.ink }}>
+                  {a.first} {a.last}
                 </span>
-              ) : null}
-              {(a.pastSeasonsCount ?? 0) > 0 ? (
-                <span className="mt-1 block text-xs" style={{ color: colors.primary }}>
-                  Played in {a.pastSeasonsCount} previous season{a.pastSeasonsCount === 1 ? '' : 's'}
-                </span>
-              ) : null}
-            </button>
-          ))}
-          {filteredAthletes.length === 0 ? (
-            <p className="mt-4 text-center italic" style={{ color: colors.inkMuted }}>
-              No players found.
-            </p>
-          ) : null}
+                {a.yearOfBirth ? (
+                  <span className="block text-xs" style={{ color: colors.inkMuted }}>
+                    Born: {a.yearOfBirth}
+                  </span>
+                ) : null}
+                {(a.pastSeasonsCount ?? 0) > 0 ? (
+                  <span className="mt-1 block text-xs" style={{ color: colors.primary }}>
+                    Played in {a.pastSeasonsCount} previous season{a.pastSeasonsCount === 1 ? '' : 's'}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+            {filteredAthletes.length === 0 ? (
+              <p className="mt-4 text-center italic" style={{ color: colors.inkMuted }}>
+                No players found.
+              </p>
+            ) : null}
+          </div>
+        </Modal>
+
+        <div className="my-1 flex flex-col items-center gap-2">
+          <Avatar first={firstVal || 'P'} last={lastVal || 'L'} size={96} uri={photoUri || undefined} />
+          <Button
+            label={photoUri ? 'Change Photo' : 'Add Photo'}
+            variant="secondary"
+            size="sm"
+            onClick={() => fileRef.current?.click()}
+          />
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => pickPhoto(e.target.files?.[0])}
+          />
         </div>
-      </Modal>
 
-      <div className="my-1 flex flex-col items-center gap-2">
-        <Avatar first={firstVal || 'P'} last={lastVal || 'L'} size={96} uri={photoUri || undefined} />
-        <Button
-          label={photoUri ? 'Change Photo' : 'Add Photo'}
-          variant="secondary"
-          size="sm"
-          onClick={() => fileRef.current?.click()}
-        />
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => pickPhoto(e.target.files?.[0])}
-        />
-      </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Controller
+            control={control}
+            name="first"
+            render={({ field, fieldState }) => (
+              <Input label="First Name *" {...field} error={fieldState.error?.message} />
+            )}
+          />
+          <Controller
+            control={control}
+            name="last"
+            render={({ field, fieldState }) => (
+              <Input label="Last Name *" {...field} error={fieldState.error?.message} />
+            )}
+          />
+          <Controller
+            control={control}
+            name="jersey"
+            render={({ field, fieldState }) => (
+              <Input label="Jersey # *" inputMode="numeric" {...field} error={fieldState.error?.message} />
+            )}
+          />
+          <Controller
+            control={control}
+            name="pos"
+            render={({ field, fieldState }) => (
+              <Input
+                label="Position (FWD/DEF/GTL) *"
+                {...field}
+                onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                error={fieldState.error?.message}
+              />
+            )}
+          />
+          <Controller
+            control={control}
+            name="yearOfBirth"
+            render={({ field, fieldState }) => (
+              <YearField label="Year of Birth *" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+            )}
+          />
+          <Controller
+            control={control}
+            name="guardianName"
+            render={({ field, fieldState }) => (
+              <Input label="Guardian Name" {...field} error={fieldState.error?.message} />
+            )}
+          />
+          <Controller
+            control={control}
+            name="guardianEmail"
+            render={({ field, fieldState }) => (
+              <Input label="Guardian Email" type="email" {...field} error={fieldState.error?.message} />
+            )}
+          />
+          <Controller
+            control={control}
+            name="guardianPhone"
+            render={({ field, fieldState }) => (
+              <PhoneField label="Guardian Phone" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+            )}
+          />
+        </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
         <Controller
           control={control}
-          name="first"
+          name="medicalInfo"
           render={({ field, fieldState }) => (
-            <Input label="First Name *" {...field} error={fieldState.error?.message} />
+            <Textarea label="Medical Info" rows={2} {...field} error={fieldState.error?.message} />
           )}
         />
-        <Controller
-          control={control}
-          name="last"
-          render={({ field, fieldState }) => (
-            <Input label="Last Name *" {...field} error={fieldState.error?.message} />
-          )}
-        />
-        <Controller
-          control={control}
-          name="jersey"
-          render={({ field, fieldState }) => (
-            <Input label="Jersey # *" inputMode="numeric" {...field} error={fieldState.error?.message} />
-          )}
-        />
-        <Controller
-          control={control}
-          name="pos"
-          render={({ field, fieldState }) => (
-            <Input
-              label="Position (FWD/DEF/GTL) *"
-              {...field}
-              onChange={(e) => field.onChange(e.target.value.toUpperCase())}
-              error={fieldState.error?.message}
-            />
-          )}
-        />
-        <Controller
-          control={control}
-          name="yearOfBirth"
-          render={({ field, fieldState }) => (
-            <YearField label="Year of Birth *" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
-          )}
-        />
-        <Controller
-          control={control}
-          name="guardianName"
-          render={({ field, fieldState }) => (
-            <Input label="Guardian Name" {...field} error={fieldState.error?.message} />
-          )}
-        />
-        <Controller
-          control={control}
-          name="guardianEmail"
-          render={({ field, fieldState }) => (
-            <Input label="Guardian Email" type="email" {...field} error={fieldState.error?.message} />
-          )}
-        />
-        <Controller
-          control={control}
-          name="guardianPhone"
-          render={({ field, fieldState }) => (
-            <PhoneField label="Guardian Phone" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
-          )}
-        />
-      </div>
 
-      <Controller
-        control={control}
-        name="medicalInfo"
-        render={({ field, fieldState }) => (
-          <Textarea label="Medical Info" rows={2} {...field} error={fieldState.error?.message} />
-        )}
-      />
+      </FormLock>
 
       <Button label="Save Player" onClick={submit} loading={loading} size="lg" />
     </div>

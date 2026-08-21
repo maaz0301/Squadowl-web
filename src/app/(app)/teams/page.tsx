@@ -19,6 +19,7 @@ import {
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { useSeasonsQuery, useTeamsQuery, useDeleteTeamMutation } from '@/features/queries';
 import { useUser } from '@/state/authStore';
 import { isAtTeamLimit } from '@/data/plans';
@@ -27,7 +28,7 @@ import { buildLimitReachedMessage } from '@/lib/usageNudges';
 export default function TeamsPage() {
   const colors = useThemeColors();
   const router = useRouter();
-  const { confirm } = useAlert();
+  const { alert, confirm } = useAlert();
   const user = useUser();
   const teamsQuery = useTeamsQuery();
   const seasonsQuery = useSeasonsQuery();
@@ -64,7 +65,13 @@ export default function TeamsPage() {
     });
     if (!ok) return;
     setBusyId(id);
-    deleteTeam.mutate(id, { onSettled: () => setBusyId(null) });
+    try {
+      await deleteTeam.mutateAsync(id);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not delete this team.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -73,6 +80,13 @@ export default function TeamsPage() {
         title="Teams"
         subtitle="Rosters, schedules and season events"
         right={<Button label="+ New Team" onClick={newTeam} />}
+      />
+
+      <UsageNudgeBanner
+        tier={user?.planTier ?? 'free'}
+        metric="teams"
+        count={teams.filter((t) => !t.managed).length}
+        label="teams"
       />
 
       {teams.length === 0 ? (

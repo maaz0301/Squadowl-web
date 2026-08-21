@@ -13,6 +13,7 @@ import {
   isGoaliePosition,
   weightedOverallAcrossEvals,
 } from '../rubrics';
+import { computePlayerResults } from '../scoring';
 import type { TeamBuilderConfig, TeamBuilderState } from '../teamBuilder';
 import { buildTeams, formatExportCsv } from '../teamBuilder';
 import {
@@ -140,6 +141,28 @@ function toMs(iso: string | null | undefined): number {
 // chunks rather than one full round trip per registration (fetch, create
 // athlete, insert participant, update status) — for a large selection that
 // per-item chain is the dominant cost of "Add to Roster" being slow.
+/**
+ * Rows per request when reading a team roster. The embedded `athletes(*)` join
+ * makes PostgREST evaluate the athletes_read policy — can_access_athlete(),
+ * five OR'd EXISTS subqueries after the assessor/sharing/team-manager
+ * migrations widened it — once per row. A large roster read in one statement
+ * therefore outruns the statement timeout long before it outruns the row cap,
+ * so the read is paged to keep each statement's share of that predicate bounded.
+ */
+const TEAM_ROSTER_PAGE = 200;
+
+/**
+ * Rows per request when reading event RSVPs, and how many events' worth to ask
+ * for at a time. Same shape of problem as TEAM_ROSTER_PAGE: the read policy on
+ * event_availability is evaluated per row, so one unbounded
+ * `in('season_event_id', [...])` over a large team's event covers thousands of
+ * rows in a single statement and dies on the statement timeout (57014) — and
+ * even when it survived, an unranged select silently stops at PostgREST's
+ * 1,000-row default and undercounts every event after the first.
+ */
+const EVENT_AVAILABILITY_PAGE = 500;
+const EVENT_AVAILABILITY_EVENT_CHUNK = 25;
+
 const REGISTRATION_CHUNK = 20;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
 const GUARDIAN_EMAIL_CONCURRENCY = 10;
@@ -249,6 +272,11 @@ export class SupabaseDataSource implements DataSource {
   private userId: string | null = null;
   private accountId: string | null = null;
   private profileCache: Record<string, UserProfile> = {};
+  /** Membership role per account, filled in by ctx()'s memberships lookup. */
+  private roleByAccountId: Record<string, string> = {};
+  /** Onboarding flags already known to be set, so markOnboarding() can no-op. */
+  private onboardingSteps: Record<string, boolean> | null = null;
+  private authListenerAttached = false;
 
   private notImplemented(method: string): never {
     throw new Error(`SupabaseDataSource.${method}() not implemented yet.`);
@@ -266,17 +294,50 @@ export class SupabaseDataSource implements DataSource {
   // ctx().
   private async userCtx(): Promise<{ supabase: SupabaseClient; userId: string }> {
     const supabase = getSupabase();
-    let uId = this.userId;
-    if (!uId) {
-      const {
-        data: { user },
-        error,
-      } = await supabase.auth.getUser();
-      if (error || !user) throw new Error('User not authenticated');
-      uId = user.id;
-      this.userId = uId;
-    }
-    return { supabase, userId: uId };
+    return { supabase, userId: await this.resolveUserId() };
+  }
+
+  /**
+   * The signed-in user's id, read from the locally persisted session.
+   *
+   * Deliberately `getSession()` and not `getUser()`: `getUser()` makes an HTTP
+   * call to the Auth server *every* time, and `ctx()` sits in front of ~90
+   * datasource methods, so creating a team used to spend half a dozen network
+   * round trips just re-asking who the caller is. `getSession()` reads storage
+   * and only goes to the network when the token has actually expired. Nothing
+   * is trusted on the strength of this value — it only decides which rows to
+   * ask for, and RLS re-verifies the JWT server-side on every query.
+   */
+  private async resolveUserId(): Promise<string> {
+    const supabase = getSupabase();
+    this.ensureAuthListener(supabase);
+    if (this.userId) return this.userId;
+    const { data, error } = await supabase.auth.getSession();
+    const uId = data.session?.user?.id;
+    if (error || !uId) throw new Error('User not authenticated');
+    this.userId = uId;
+    return uId;
+  }
+
+  /**
+   * Keeps the cached identity honest now that resolveUserId() reads it from
+   * storage rather than asking the Auth server on every call: the SDK tells us
+   * when the session is replaced or dropped, and everything derived from the
+   * old one gets thrown away. Attached on first use, not at construction —
+   * getSupabase() throws when the app isn't configured, which must not happen
+   * at module load.
+   */
+  private ensureAuthListener(supabase: SupabaseClient): void {
+    if (this.authListenerAttached) return;
+    this.authListenerAttached = true;
+    supabase.auth.onAuthStateChange((event, session) => {
+      const nextUserId = session?.user?.id ?? null;
+      // A token refresh for the same person changes nothing worth dropping.
+      if (event !== 'SIGNED_OUT' && nextUserId === this.userId) return;
+      this.userId = nextUserId;
+      this.profileCache = {};
+      this.resetAccountCaches();
+    });
   }
 
   private async ctx(): Promise<{
@@ -285,17 +346,7 @@ export class SupabaseDataSource implements DataSource {
     accountId: string;
   }> {
     const supabase = getSupabase();
-
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-
-    if (error || !user) {
-      throw new Error('User not authenticated');
-    }
-
-    const uId = user.id;
+    const uId = await this.resolveUserId();
 
     if (!this.accountId) {
       const m = await supabase
@@ -319,6 +370,10 @@ export class SupabaseDataSource implements DataSource {
       );
 
       this.accountId = sorted[0].account_id;
+      // The role came back on the same row, so writableAccountId() never has
+      // to go ask for it again.
+      this.roleByAccountId = {};
+      for (const row of memberships) this.roleByAccountId[row.account_id] = row.role;
     }
 
     const accountId = this.accountId;
@@ -335,40 +390,76 @@ export class SupabaseDataSource implements DataSource {
 
   private async writableAccountId(): Promise<string> {
     const { supabase, userId, accountId } = await this.ctx();
-    const { data: m } = await supabase
-      .from('memberships')
-      .select('role')
-      .eq('user_id', userId)
-      .eq('account_id', accountId)
-      .single();
-    if (!m || !['owner', 'admin', 'coach'].includes(m.role)) {
+    // ctx() already reads `role` alongside `account_id`, so the common path
+    // costs nothing. Only re-query when the cache was cleared (or the account
+    // was resolved before this cache existed) — this used to be an extra round
+    // trip on every single write.
+    let role = this.roleByAccountId[accountId];
+    if (role === undefined) {
+      const { data: m } = await supabase
+        .from('memberships')
+        .select('role')
+        .eq('user_id', userId)
+        .eq('account_id', accountId)
+        .single();
+      role = m?.role;
+      if (role !== undefined) this.roleByAccountId[accountId] = role;
+    }
+    if (!role || !['owner', 'admin', 'coach'].includes(role)) {
       throw new Error('Current account lacks write permissions for this operation.');
     }
     return accountId;
+  }
+
+  /**
+   * Drops everything derived from "which account is this user acting as" —
+   * the account id itself plus the role and onboarding flags cached against it.
+   * Called whenever the signed-in identity changes or an operation fails in a
+   * way that suggests the cached account is wrong.
+   */
+  private resetAccountCaches(): void {
+    this.accountId = null;
+    this.roleByAccountId = {};
+    this.onboardingSteps = null;
   }
 
   private async withFreshAccount<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     } catch {
-      this.accountId = null;
+      this.resetAccountCaches();
       return await operation();
     }
   }
 
-  private async markOnboarding(patch: Record<string, boolean>): Promise<void> {
-    try {
-      const { supabase, userId } = await this.ctx();
-      const prof = await supabase
-        .from('profiles')
-        .select('onboarding_steps')
-        .eq('id', userId)
-        .single();
-      const steps = { ...(prof.data?.onboarding_steps ?? {}), ...patch };
-      await supabase.from('profiles').update({ onboarding_steps: steps }).eq('id', userId);
-    } catch {
-      // onboarding flags are best-effort; never block the primary mutation
-    }
+  /**
+   * Best-effort onboarding checklist flags.
+   *
+   * Resolves immediately and does the read-modify-write in the background: the
+   * flags are never read back by the caller, and awaiting them was adding three
+   * serial round trips (whoami + select + update) to the end of every create.
+   * Once a flag is known set, repeat calls cost nothing at all.
+   */
+  private markOnboarding(patch: Record<string, boolean>): Promise<void> {
+    const known = this.onboardingSteps;
+    if (known && Object.entries(patch).every(([k, v]) => known[k] === v)) return Promise.resolve();
+
+    void (async () => {
+      try {
+        const { supabase, userId } = await this.ctx();
+        const prof = await supabase
+          .from('profiles')
+          .select('onboarding_steps')
+          .eq('id', userId)
+          .single();
+        const steps = { ...(prof.data?.onboarding_steps ?? {}), ...patch };
+        await supabase.from('profiles').update({ onboarding_steps: steps }).eq('id', userId);
+        this.onboardingSteps = steps;
+      } catch {
+        // onboarding flags are best-effort; never block the primary mutation
+      }
+    })();
+    return Promise.resolve();
   }
 
   // ─── shape mappers ──────────────────────────────────────────────────────────
@@ -641,7 +732,7 @@ export class SupabaseDataSource implements DataSource {
     const supabase = getSupabase();
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error || !data.session) throw new Error(error?.message ?? 'Login failed');
-    this.accountId = null;
+    this.resetAccountCaches();
     this.userId = data.session.user.id;
     const user = await this.loadUserProfile(data.session.user.id);
     return this.toAuthSession(data.session, user);
@@ -663,14 +754,14 @@ export class SupabaseDataSource implements DataSource {
       }
       session = signIn.session;
     }
-    this.accountId = null;
+    this.resetAccountCaches();
     this.userId = session.user.id;
     const user = await this.loadUserProfile(session.user.id);
     return this.toAuthSession(session, user);
   }
 
   async logout(): Promise<void> {
-    this.accountId = null;
+    this.resetAccountCaches();
     this.userId = null;
     try {
       await getSupabase().auth.signOut();
@@ -696,7 +787,7 @@ export class SupabaseDataSource implements DataSource {
     const { data, error } = await supabase.auth.getSession();
     if (error || !data.session) {
       this.userId = null;
-      this.accountId = null;
+      this.resetAccountCaches();
       return null;
     }
     try {
@@ -709,20 +800,26 @@ export class SupabaseDataSource implements DataSource {
     } catch (e) {
       console.warn('Failed to restore session profile, signing out:', e);
       this.userId = null;
-      this.accountId = null;
+      this.resetAccountCaches();
       await supabase.auth.signOut();
       return null;
     }
   }
 
   async getProfile(forceRefresh?: boolean): Promise<UserProfile | null> {
-    const supabase = getSupabase();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) return null;
-    if (forceRefresh) {
-      delete this.profileCache[data.user.id];
+    // resolveUserId() rather than auth.getUser(): the profile query is
+    // refetched after most writes, and it does not need a network hop to the
+    // Auth server to find out whose profile to load.
+    let userId: string;
+    try {
+      userId = await this.resolveUserId();
+    } catch {
+      return null;
     }
-    return this.loadUserProfile(data.user.id);
+    if (forceRefresh) {
+      delete this.profileCache[userId];
+    }
+    return this.loadUserProfile(userId);
   }
 
   async updateProfile(updates: Partial<UserProfile>): Promise<UserProfile> {
@@ -785,7 +882,7 @@ export class SupabaseDataSource implements DataSource {
     const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
     if (error) throw new Error(error.message);
     if (data.session) {
-      this.accountId = null;
+      this.resetAccountCaches();
       this.userId = null;
     }
   }
@@ -797,7 +894,7 @@ export class SupabaseDataSource implements DataSource {
     if (!data.session) throw new Error('Failed to start session after OTP verification');
     const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
     if (updateError) throw new Error(updateError.message);
-    this.accountId = null;
+    this.resetAccountCaches();
     this.userId = null;
   }
 
@@ -952,6 +1049,25 @@ export class SupabaseDataSource implements DataSource {
     return [...own, ...managed];
   }
 
+  /**
+   * How many teams count against this account's plan.
+   *
+   * The limit checks only ever needed a number, and listTeams() costs three
+   * queries plus a full row mapping to produce one. Teams delegated by another
+   * club are excluded here for the same reason every caller filtered out
+   * `managed` — the club that pays for them owns them.
+   */
+  async countTeams(): Promise<number> {
+    const { supabase, accountId } = await this.ctx();
+    const { count, error } = await supabase
+      .from('teams')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', accountId)
+      .eq('archived', false);
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+  }
+
   async createTeam(name: string, season?: string): Promise<Team> {
     return this.withFreshAccount(() => this._createTeam(name, season));
   }
@@ -976,13 +1092,24 @@ export class SupabaseDataSource implements DataSource {
    */
   async listTeamRoster(teamId: string): Promise<TeamRosterPlayer[]> {
     const { supabase } = await this.ctx();
-    const rows = unwrap(
-      await supabase
-        .from('team_roster')
-        .select('*, athletes(*), tryouts:source_tryout_id(name)')
-        .eq('team_id', teamId)
-        .order('created_at', { ascending: true }),
-    ) as Row[];
+    const rows: Row[] = [];
+    for (let from = 0; ; from += TEAM_ROSTER_PAGE) {
+      const page = unwrap(
+        await supabase
+          .from('team_roster')
+          .select('*, athletes(*), tryouts:source_tryout_id(name)')
+          .eq('team_id', teamId)
+          // created_at ties are the norm here, not the exception — a bulk add
+          // writes a whole chunk on the same timestamp — so id breaks them.
+          // Without a total order the pages can overlap or skip rows.
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, from + TEAM_ROSTER_PAGE - 1),
+      ) as Row[] | null;
+      const batch = page ?? [];
+      rows.push(...batch);
+      if (batch.length < TEAM_ROSTER_PAGE) break;
+    }
     return rows.map((r) => this.rowToTeamRosterPlayer(r));
   }
 
@@ -1012,6 +1139,7 @@ export class SupabaseDataSource implements DataSource {
   async addTeamRosterPlayers(
     teamId: string,
     entries: { athleteId: string; jersey?: string; pos?: string; sourceTryoutId?: string }[],
+    onProgress?: (done: number, total: number) => void,
   ): Promise<TeamRosterPlayer[]> {
     if (entries.length === 0) return [];
     const { supabase } = await this.ctx();
@@ -1019,22 +1147,31 @@ export class SupabaseDataSource implements DataSource {
     // that hits the same conflict target twice.
     const byAthlete = new Map<string, (typeof entries)[number]>();
     for (const e of entries) if (e.athleteId) byAthlete.set(e.athleteId, e);
+    const rows = [...byAthlete.values()].map((e) => ({
+      team_id: teamId,
+      athlete_id: e.athleteId,
+      jersey: e.jersey || null,
+      position: e.pos || null,
+      source_tryout_id: e.sourceTryoutId || null,
+    }));
 
-    unwrap(
-      await supabase
-        .from('team_roster')
-        .upsert(
-          [...byAthlete.values()].map((e) => ({
-            team_id: teamId,
-            athlete_id: e.athleteId,
-            jersey: e.jersey || null,
-            position: e.pos || null,
-            source_tryout_id: e.sourceTryoutId || null,
-          })),
-          { onConflict: 'team_id,athlete_id' },
-        )
-        .select('id'),
-    );
+    // A single upsert with a large enough batch (hundreds+ rows — a real club
+    // combine, not just test data) can outrun Postgres's statement timeout and
+    // fail the whole write with nothing saved. Chunk it at the same size this
+    // codebase already proved safe for a comparable upsert (REGISTRATION_CHUNK,
+    // used for the registration bulk-placement path — see TODO.md 1i) rather
+    // than guessing a larger number.
+    const CHUNK_SIZE = 20;
+    onProgress?.(0, rows.length);
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      unwrap(
+        await supabase
+          .from('team_roster')
+          .upsert(rows.slice(i, i + CHUNK_SIZE), { onConflict: 'team_id,athlete_id' })
+          .select('id'),
+      );
+      onProgress?.(Math.min(rows.length, i + CHUNK_SIZE), rows.length);
+    }
     return this.listTeamRoster(teamId);
   }
 
@@ -1053,11 +1190,31 @@ export class SupabaseDataSource implements DataSource {
   async deleteTeam(id: string): Promise<void> {
     const { supabase } = await this.ctx();
     // Assessments outlive the team they were grouped under — detach them so they
-    // show up as unlinked and can be attached to another team.
-    unwrap(await supabase.from('tryouts').update({ team_id: null }).eq('team_id', id).select());
+    // show up as unlinked and can be attached to another team. Goes through an
+    // RPC, not a plain update: a tryout created by a delegated manager (or, from
+    // a manager's side, one created by the club) can carry an account_id other
+    // than the caller's own, and no RLS policy's WITH CHECK can authorize nulling
+    // team_id on such a row directly — see migration
+    // 20260821100000_fix_team_delete_tryout_detach.sql for the full story.
+    const { error: detachError } = await supabase.rpc('detach_team_tryouts', { p_team_id: id });
+    if (detachError) throw new Error(detachError.message);
     // The team's schedule goes with it; a new team provisions its own season.
     unwrap(await supabase.from('seasons').update({ archived: true }).eq('team_id', id).select());
-    unwrap(await supabase.from('teams').update({ archived: true }).eq('id', id).select().maybeSingle());
+    // `.maybeSingle()` on its own hides an RLS-blocked write: an update that
+    // matches zero rows comes back as { data: null, error: null }, identical to
+    // a genuine "no row with this id" — so a delete silently blocked by teams_rw
+    // (caller isn't owner/admin/coach on this team's account) looked like a
+    // successful delete. Same silent-no-op trap as the team-chat and
+    // assessor-status deletes; check the row actually came back before treating
+    // this as done, same as the caller's own confirm-then-navigate assumes.
+    const row = unwrap(
+      await supabase.from('teams').update({ archived: true }).eq('id', id).select().maybeSingle(),
+    );
+    if (!row) {
+      throw new Error(
+        "This team couldn't be deleted. You need to be an owner, admin, or coach on the account that owns it.",
+      );
+    }
   }
 
   async updateTeam(id: string, updates: Partial<Team>): Promise<Team> {
@@ -1262,6 +1419,33 @@ export class SupabaseDataSource implements DataSource {
     return this.assembleTryouts([...rows, ...managed, ...onOwnedTeams]);
   }
 
+  /**
+   * How many assessments count against this account's plan.
+   *
+   * Same three sources as listTryouts(), but it stops at the tryout rows.
+   * Going through listTryouts() for a count meant pulling every participant,
+   * athlete, assessor, evaluation, score and registration in the account —
+   * the heaviest query in the app — before the new-assessment form would
+   * render. The three sources also go out together here rather than in series.
+   */
+  async countAssessments(): Promise<number> {
+    const { supabase, accountId } = await this.ctx();
+    const [ownRes, managedRes, ownedTeamRes] = await Promise.all([
+      supabase.from('tryouts').select('id').eq('account_id', accountId).is('deleted_at', null).eq('archived', false),
+      supabase.rpc('list_tryouts_for_managed_teams'),
+      supabase.rpc('list_tryouts_on_my_owned_teams'),
+    ]);
+    const ids = new Set((unwrap(ownRes) as Row[]).map((t) => t.id as string));
+    // Pre-migration instances have no such functions; own assessments are
+    // still counted correctly without them, same degrade as listTryouts().
+    for (const rows of [managedRes.data, ownedTeamRes.data]) {
+      for (const t of (rows ?? []) as Row[]) {
+        if (!t.deleted_at && !t.archived) ids.add(t.id as string);
+      }
+    }
+    return ids.size;
+  }
+
   async getTryout(id: string): Promise<Tryout | null> {
     const { supabase } = await this.ctx();
     const row = (
@@ -1340,8 +1524,11 @@ export class SupabaseDataSource implements DataSource {
           event_type: EVENT_TYPE_TO_DB[form.eventType] ?? 'tryout',
           sport: form.sport,
           sport_other: form.sportOther ?? null,
-          tryout_date: form.tryoutDate ?? null,
-          start_time: form.startTime ?? null,
+          // `||`, not `??`: an untouched date/time input submits '', which
+          // Postgres rejects for a date/time column ("invalid input syntax for
+          // type date"). Both are nullable, so an empty one means "not set".
+          tryout_date: form.tryoutDate || null,
+          start_time: form.startTime || null,
           location: form.rink ?? null,
           head_coach: form.headCoach ?? profile.displayName,
           head_assessor: form.headAssessor ?? profile.displayName,
@@ -2856,10 +3043,44 @@ export class SupabaseDataSource implements DataSource {
 
     let result: TeamBuilderState;
     if (config.prompt) {
+      // Map UUIDs to short IDs to drastically reduce token usage and prevent truncation
+      const idMap = new Map<string, string>(); // shortId -> realId
+      const realToShort = new Map<string, string>(); // realId -> shortId
+
+      // Pool every evaluation down to one weighted overall + per-category average
+      // per player (matches the ranking shown in Roster/Export). Sending this instead
+      // of raw eval records (strengths/improve text, dates, evaluator names, one row
+      // per session) keeps the payload flat as roster size and eval count grow —
+      // otherwise a large roster with multiple sessions per player blows past the
+      // model's input token limit.
+      const results = computePlayerResults(tryout);
+      const resultByPlayerId = new Map(results.map((r) => [r.player.id, r]));
+
+      const shortTryout = {
+        ...tryout,
+        roster: tryout.roster.map((p, i) => {
+          const shortId = `p${i}`;
+          idMap.set(shortId, p.id);
+          realToShort.set(p.id, shortId);
+          return { ...p, id: shortId };
+        }),
+        rankings: tryout.roster.map((p) => {
+          const r = resultByPlayerId.get(p.id);
+          return {
+            id: realToShort.get(p.id) || p.id,
+            overall: r?.overall ?? 0,
+            categoryScores: r?.categoryScores ?? {},
+            recommendation: r?.latestRecommendation || undefined,
+          };
+        }),
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `evals` isn't optional on Tryout; deleting it here (post-spread) needs a loose cast
+      delete (shortTryout as any).evals;
+
       // Call Claude via edge function
       const { supabase } = await this.ctx();
       const { data, error } = await supabase.functions.invoke('generate-ai-insights', {
-        body: { action: 'team_builder', tryout, prompt: config.prompt }
+        body: { action: 'team_builder', tryout: shortTryout, prompt: config.prompt }
       });
       if (error) {
         throw new Error(error.message);
@@ -2867,6 +3088,10 @@ export class SupabaseDataSource implements DataSource {
       if (data?.error) {
         throw new Error(data.message || data.error);
       }
+
+      // Restore real UUIDs
+      const restoreIds = (arr: string[] = []) => arr.map((short) => idMap.get(short) || short);
+      const posById = new Map(tryout.roster.map((p) => [p.id, p.pos]));
 
       // Merge Claude's response with local state structure
       result = {
@@ -2881,15 +3106,18 @@ export class SupabaseDataSource implements DataSource {
         ranks: [], // We can omit full rankings or compute them locally if needed
         warnings: data.warnings || [],
         explanation: data.explanation,
-        teams: (data.teams || []).map((t: Row, i: number) => ({
-          index: i,
-          id: `ai-team-${i}`,
-          name: t.name || `Team ${i + 1}`,
-          players: t.players || [],
-          skaters: t.skaters || [],
-          goalies: t.goalies || []
-        })),
-        unassigned: data.unassigned || [],
+        teams: (data.teams || []).map((t: Row, i: number) => {
+          const players = restoreIds(t.players);
+          return {
+            index: i,
+            id: `ai-team-${i}`,
+            name: t.name || `Team ${i + 1}`,
+            players,
+            skaters: players.filter((id) => !isGoaliePosition(posById.get(id))),
+            goalies: players.filter((id) => isGoaliePosition(posById.get(id))),
+          };
+        }),
+        unassigned: restoreIds(data.unassigned),
       };
     } else {
       result = buildTeams(tryout, config);
@@ -3017,9 +3245,14 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // ─── Phase 3: Seasons ───────────────────────────────────────────────────────────
-  private rowToSeasonEvent(ev: Row, availability: Record<string, string>): SeasonEvent {
+  private rowToSeasonEvent(
+    ev: Row,
+    availability: Record<string, string>,
+    availabilityUnavailable = false,
+  ): SeasonEvent {
     return {
       id: ev.id,
+      availabilityUnavailable: availabilityUnavailable || undefined,
       type: EVENT_KIND_FROM_DB[ev.kind] ?? 'Game',
       title: ev.title,
       date: ev.event_date,
@@ -3055,6 +3288,164 @@ export class SupabaseDataSource implements DataSource {
     };
   }
 
+  /**
+   * Every RSVP row for a set of events.
+   *
+   * Prefers the `get_event_availability` RPC, for exactly the reason
+   * getGuardianRosters() prefers `get_guardian_rosters`: reading this table
+   * directly makes Postgres evaluate the row-level policy once per RSVP row,
+   * and on a full-roster event that overruns the statement timeout (57014)
+   * before any rows come back. Client-side paging does not help — the policy
+   * runs on candidate rows *before* the LIMIT applies, so `limit=500` on a
+   * single event times out exactly as an unbounded read does. The RPC
+   * authorizes once per event instead of once per row.
+   *
+   * Returns `failed: true` rather than throwing when the read didn't work.
+   * Reporting zero RSVPs and "nobody was invited" for what is really a failed
+   * read is the worse outcome: it reads as data loss to a coach who just
+   * invited a full roster.
+   */
+  private async fetchEventAvailability(
+    supabase: SupabaseClient,
+    eventIds: string[],
+  ): Promise<{ rows: Row[]; failed: boolean }> {
+    if (eventIds.length === 0) return { rows: [], failed: false };
+
+    const { data, error } = await supabase.rpc('get_event_availability', { p_event_ids: eventIds });
+    if (!error) return { rows: (data as Row[]) ?? [], failed: false };
+
+    const missingFunction = error.code === 'PGRST202' || error.code === '42883';
+    if (!missingFunction) {
+      console.error('get_event_availability failed:', error);
+      return { rows: [], failed: true };
+    }
+    console.warn('get_event_availability() not deployed — trying the embedded read.');
+
+    // Attempt 2: read the rows as an embed hanging off season_events instead of
+    // filtering event_availability directly.
+    //
+    // Same statement, different plan. In the direct form the `season_event_id`
+    // filter is an ordinary user qual, and Postgres evaluates the table's
+    // row-level policy *ahead* of it — which is why narrowing to `limit=25` on a
+    // single event still ran the full 8s and got killed. As an embed, PostgREST
+    // emits a LATERAL keyed on `season_events.id`, so the FK is a join condition
+    // that can drive the scan before the policy is applied to what survives.
+    // This is the shape that makes the comparable evaluations +
+    // evaluation_scores read return ~900 rows in under a second.
+    const embedded = await this.fetchAvailabilityViaEvents(supabase, eventIds);
+    if (embedded.ok) return { rows: embedded.rows, failed: false };
+
+    const eventChunks: string[][] = [];
+    for (let i = 0; i < eventIds.length; i += EVENT_AVAILABILITY_EVENT_CHUNK) {
+      eventChunks.push(eventIds.slice(i, i + EVENT_AVAILABILITY_EVENT_CHUNK));
+    }
+    let failed = false;
+    const chunks = await mapPool(eventChunks, REGISTRATION_CHUNK_CONCURRENCY, async (chunk) => {
+      const { rows, complete } = await this.readAvailabilityChunk(supabase, chunk);
+      if (!complete) failed = true;
+      return rows;
+    });
+    return { rows: chunks.flat(), failed };
+  }
+
+  /**
+   * RSVP rows read as an embed on their parent event.
+   *
+   * Only the three fields the callers actually use are selected — the rest of
+   * the row is dead weight through a LATERAL. Returns `ok: false` on any error
+   * so the caller can fall through to the direct read rather than this becoming
+   * another way to silently report zero RSVPs.
+   */
+  private async fetchAvailabilityViaEvents(
+    supabase: SupabaseClient,
+    eventIds: string[],
+  ): Promise<{ rows: Row[]; ok: boolean }> {
+    const rows: Row[] = [];
+    const chunks: string[][] = [];
+    for (let i = 0; i < eventIds.length; i += EVENT_AVAILABILITY_EVENT_CHUNK) {
+      chunks.push(eventIds.slice(i, i + EVENT_AVAILABILITY_EVENT_CHUNK));
+    }
+
+    try {
+      const parentChunks = await mapPool(chunks, REGISTRATION_CHUNK_CONCURRENCY, (chunk) =>
+        fetchAllRows<Row>((from, to) =>
+          supabase
+            .from('season_events')
+            .select('id, event_availability(roster_id, response)')
+            .in('id', chunk)
+            .range(from, to),
+        ),
+      );
+      for (const parent of parentChunks.flat()) {
+        for (const a of (parent.event_availability ?? []) as Row[]) {
+          // Flattened back into the row shape the direct read returns, so the
+          // caller can't tell which path produced it.
+          rows.push({ season_event_id: parent.id, roster_id: a.roster_id, response: a.response });
+        }
+      }
+      return { rows, ok: true };
+    } catch (e) {
+      console.warn('Embedded event_availability read failed; falling back to the direct read.', e);
+      return { rows: [], ok: false };
+    }
+  }
+
+  /**
+   * One chunk of events' RSVP rows, paged.
+   *
+   * Deliberately does *not* retry a statement timeout (57014) at a smaller page
+   * size. That was tried and measured: on a full-roster event `limit=25` for a
+   * single event times out at the full 8s exactly as an unbounded read does,
+   * because the row-level policy on this table is evaluated across the table
+   * before the caller's filter and LIMIT are applied. Narrowing the window buys
+   * nothing and only multiplies the time spent failing, so this fails on the
+   * first timeout and lets the UI say so. The real fix is get_event_availability
+   * (see supabase/migrations) or an index that lets the filter run first.
+   *
+   * Whatever pages did land are kept. A partial RSVP list is more use to a coach
+   * than an empty one, so `complete` reports the shortfall instead of the rows
+   * being thrown away.
+   */
+  private async readAvailabilityChunk(
+    supabase: SupabaseClient,
+    eventIds: string[],
+  ): Promise<{ rows: Row[]; complete: boolean }> {
+    const rows: Row[] = [];
+    let from = 0;
+
+    for (;;) {
+      try {
+        const page = (unwrap(
+          await supabase
+            .from('event_availability')
+            .select('*')
+            .in('season_event_id', eventIds)
+            // Offset paging needs a total order or pages silently overlap and
+            // skip — the same trap documented on the team_roster read. This
+            // pair is the table's unique key, so it orders rows completely.
+            .order('season_event_id', { ascending: true })
+            .order('roster_id', { ascending: true })
+            .range(from, from + EVENT_AVAILABILITY_PAGE - 1),
+        ) ?? []) as Row[];
+
+        rows.push(...page);
+        if (page.length < EVENT_AVAILABILITY_PAGE) return { rows, complete: true };
+        from += EVENT_AVAILABILITY_PAGE;
+      } catch (e) {
+        if ((e as { code?: string } | undefined)?.code === '57014') {
+          console.error(
+            'event_availability read hit the statement timeout. This is a database-side problem — ' +
+              'the row-level policy runs before the season_event_id filter. Apply ' +
+              'supabase/migrations/20260821000000_event_availability_indexes.sql.',
+          );
+        } else {
+          console.error('Failed to read event_availability', e);
+        }
+        return { rows, complete: false };
+      }
+    }
+  }
+
   private async assembleSeasons(seasonRows: Row[], withDetail: boolean): Promise<Season[]> {
     if (seasonRows.length === 0) return [];
     const supabase = getSupabase();
@@ -3068,17 +3459,17 @@ export class SupabaseDataSource implements DataSource {
     const rosterRows = unwrap(rosterRes) as Row[];
 
     let availabilityRows: Row[] = [];
+    let availabilityFailed = false;
     let inviteRows: Row[] = [];
     if (withDetail) {
-      const eventIds = eventRows.map((e) => e.id);
-      const [availRes, invRes] = await Promise.all([
-        eventIds.length
-          ? supabase.from('event_availability').select('*').in('season_event_id', eventIds)
-          : Promise.resolve({ data: [], error: null }),
+      const eventIds = eventRows.map((e) => e.id as string);
+      const [avail, invRes] = await Promise.all([
+        this.fetchEventAvailability(supabase, eventIds),
         supabase.from('portal_invites').select('*').in('season_id', ids),
       ]);
-      availabilityRows = (availRes.data ?? []) as Row[];
-      inviteRows = (invRes.data ?? []) as Row[];
+      availabilityRows = avail.rows;
+      availabilityFailed = avail.failed;
+      inviteRows = unwrap(invRes) as Row[];
     }
 
     const eventsBySeason: Record<string, Row[]> = {};
@@ -3086,8 +3477,12 @@ export class SupabaseDataSource implements DataSource {
     const rosterBySeason: Record<string, Row[]> = {};
     for (const r of rosterRows) (rosterBySeason[r.season_id] ??= []).push(r);
     const availByEvent: Record<string, Record<string, string>> = {};
+    // Indexed once rather than a .find() per availability row — that scan was
+    // O(roster × RSVPs), which for a full-roster event on a large team is a
+    // million comparisons on the main thread before anything renders.
+    const rosterById = new Map(rosterRows.map((r) => [r.id, r]));
     for (const a of availabilityRows) {
-      const rosterItem = rosterRows.find((r) => r.id === a.roster_id);
+      const rosterItem = rosterById.get(a.roster_id);
       if (rosterItem) {
         if (rosterItem.athlete_id) {
           (availByEvent[a.season_event_id] ??= {})[rosterItem.athlete_id] = a.response;
@@ -3108,7 +3503,7 @@ export class SupabaseDataSource implements DataSource {
       coach: s.coach ?? undefined,
       teamId: s.team_id ?? undefined,
       events: (eventsBySeason[s.id] ?? []).map((ev) =>
-        this.rowToSeasonEvent(ev, availByEvent[ev.id] ?? {}),
+        this.rowToSeasonEvent(ev, availByEvent[ev.id] ?? {}, availabilityFailed),
       ),
       roster: (rosterBySeason[s.id] ?? []).map((r) => this.rowToSeasonPlayer(r, inviteRows)),
       scheduleShareToken: s.schedule_share_token ?? undefined,
@@ -3252,7 +3647,11 @@ export class SupabaseDataSource implements DataSource {
     unwrap(await supabase.from('seasons').delete().eq('id', id).select().maybeSingle());
   }
 
-  async addSeasonEvent(seasonId: string, form: CreateEventForm): Promise<SeasonEvent> {
+  async addSeasonEvent(
+    seasonId: string,
+    form: CreateEventForm,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<SeasonEvent> {
     const { supabase } = await this.ctx();
     const row = unwrap(
       await supabase
@@ -3262,8 +3661,10 @@ export class SupabaseDataSource implements DataSource {
           kind: EVENT_KIND_TO_DB[form.type] ?? 'game',
           title: form.title,
           event_date: form.date,
-          start_time: form.startTime ?? null,
-          end_time: form.endTime ?? null,
+          // Same empty-string guard as _createTryout — the schema requires
+          // `date`, but both times are optional and submit as ''.
+          start_time: form.startTime || null,
+          end_time: form.endTime || null,
           location: form.location ?? null,
           notes: form.notes ?? null,
         })
@@ -3284,6 +3685,17 @@ export class SupabaseDataSource implements DataSource {
       // gates who receives schedule/reminder emails, so a failure here must
       // surface — don't swallow it, or the event silently ends up with no
       // recipients even though players are attached.
+      //
+      // Chunked and pooled rather than one INSERT for the whole roster: this
+      // hit the exact same wall as the team-roster read (TEAM_ROSTER_PAGE) and
+      // registration placement (REGISTRATION_CHUNK) — PostgREST evaluates the
+      // insert policy per row, so a single statement for a large team's roster
+      // outran the statement timeout, threw, and aborted everything after it
+      // (including the invite emails below) before a single row landed. That's
+      // what produced an event with nobody invited and no visible explanation
+      // beyond a generic "Could not save the event" alert. Only surface an
+      // error now if every chunk failed — a slow chunk for 20 of 1,000 players
+      // must not cost the other 980 their invites.
       const availInserts = season.roster
         .filter(p => selectedPlayerIds.includes(p.id))
         .map(p => ({
@@ -3293,32 +3705,55 @@ export class SupabaseDataSource implements DataSource {
         }));
 
       if (availInserts.length > 0) {
-        unwrap(await supabase.from('event_availability').insert(availInserts));
-      }
-
-      // Emailing on create is best-effort — never fail event creation over it.
-      try {
-        // Find all guardians related to the selected players and send them emails.
-        const emails = Array.from(new Set(
-          season.roster
-            .filter(p => selectedPlayerIds.includes(p.id))
-            .map(p => p.guardianEmail)
-            .filter(Boolean)
-        ));
-
-        for (const email of emails) {
-          if (email) {
-            await this.sendEmail('schedule_update', email, {
-              eventName: form.title,
-              date: form.date,
-              time: form.startTime,
-              location: form.location,
-            });
-          }
+        const chunks: (typeof availInserts)[] = [];
+        for (let i = 0; i < availInserts.length; i += REGISTRATION_CHUNK) {
+          chunks.push(availInserts.slice(i, i + REGISTRATION_CHUNK));
         }
-      } catch (e) {
-        console.error('Failed to send schedule emails', e);
+        let failedRows = 0;
+        await mapPool(chunks, REGISTRATION_CHUNK_CONCURRENCY, async (chunk) => {
+          try {
+            unwrap(await supabase.from('event_availability').insert(chunk));
+          } catch (e) {
+            failedRows += chunk.length;
+            console.error('Failed to insert an event_availability chunk', e);
+          }
+        });
+        if (failedRows === availInserts.length) {
+          throw new Error('Could not invite any players to this event. Please try again.');
+        }
       }
+
+      // Find all guardians related to the selected players and send them emails.
+      // Fanned out through the same bounded pool as the other guardian-email
+      // sends (GUARDIAN_EMAIL_CONCURRENCY): each is a network call to the
+      // send-email edge function, so a large roster sent one at a time was the
+      // dominant cost of creating an event — a 1,000-player team spent minutes
+      // here alone. Emailing is best-effort per guardian, not for the batch as
+      // a whole — one bounce or transient function error must not cost every
+      // other guardian their invite.
+      const emails = Array.from(new Set(
+        season.roster
+          .filter(p => selectedPlayerIds.includes(p.id))
+          .map(p => p.guardianEmail)
+          .filter((e): e is string => !!e)
+      ));
+
+      onProgress?.(0, emails.length);
+      let sent = 0;
+      await mapPool(emails, GUARDIAN_EMAIL_CONCURRENCY, async (email) => {
+        try {
+          await this.sendEmail('schedule_update', email, {
+            eventName: form.title,
+            date: form.date,
+            time: form.startTime,
+            location: form.location,
+          });
+        } catch (e) {
+          console.error('Failed to send schedule email to', email, e);
+        } finally {
+          onProgress?.(++sent, emails.length);
+        }
+      });
     }
 
     return this.rowToSeasonEvent(row, {});
@@ -3494,11 +3929,10 @@ export class SupabaseDataSource implements DataSource {
 
     // Get all roster IDs that are assigned to at least one event in this season
     const eventIds = season.events.map(e => e.id);
-    let availData: { roster_id: string }[] = [];
-    if (eventIds.length > 0) {
-      const { data } = await supabase.from('event_availability').select('roster_id').in('season_event_id', eventIds);
-      availData = data || [];
-    }
+    // Shares the RPC-then-shrinking-pages reader, so a season whose RSVPs only
+    // come back in small windows still resolves its recipients here.
+    const { rows: availRows } = await this.fetchEventAvailability(supabase, eventIds);
+    const availData = availRows as { roster_id: string }[];
 
     const assignedRosterIds = new Set(availData.map((a) => a.roster_id));
 
@@ -3628,7 +4062,20 @@ export class SupabaseDataSource implements DataSource {
 
   async deleteTeamMessage(messageId: string): Promise<void> {
     const { supabase } = await this.userCtx();
-    unwrap(await supabase.from('season_messages').delete().eq('id', messageId));
+    // `.select()` is load-bearing: a DELETE that RLS filters down to zero rows
+    // comes back with no error and no data, so without it a blocked delete is
+    // indistinguishable from a successful one — the caller invalidates, refetches,
+    // and the message is simply still there with nothing shown to the user. Same
+    // silent-no-op trap as the assessor `.delete()` documented in TODO.md 1a.
+    const rows = unwrap(
+      await supabase.from('season_messages').delete().eq('id', messageId).select('id'),
+    ) as Row[] | null;
+    if (!rows || rows.length === 0) {
+      throw new Error(
+        'That message could not be removed. season_messages_delete only allows the message author, ' +
+          'or an owner/admin/coach on the account that owns this season.',
+      );
+    }
   }
 
   async listAthletes(): Promise<Athlete[]> {

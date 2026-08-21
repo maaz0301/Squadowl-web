@@ -198,10 +198,6 @@ export default function DashboardPage() {
   const tryouts = tryoutsQuery.data ?? [];
   const teams = teamsQuery.data ?? [];
   const planTier = user?.planTier ?? 'free';
-  // Teams delegated to this account by a club don't consume its own allowance,
-  // so the nudge counts only owned teams — unlike the visible Teams badge above,
-  // which counts everything the coach can actually see.
-  const ownedTeamCount = teams.filter((t) => !t.managed).length;
 
   const newAssessment = () => {
     if (isAtAssessmentLimit(planTier, tryouts.length)) {
@@ -224,7 +220,6 @@ export default function DashboardPage() {
         }
       />
 
-      <UsageNudgeBanner tier={planTier} metric="teams" count={ownedTeamCount} label="teams" />
       <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="assessments" />
 
       {canUseFeature(planTier, 'enterprise') ? (

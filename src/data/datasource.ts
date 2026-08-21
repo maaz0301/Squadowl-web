@@ -50,11 +50,15 @@ export interface DataSource {
 
   // Teams
   listTeams(): Promise<Team[]>;
+  /** Teams on the caller's own account — what plan team limits are measured against. */
+  countTeams(): Promise<number>;
   createTeam(name: string, season?: string): Promise<Team>;
   deleteTeam(id: string): Promise<void>;
 
   // Tryouts
   listTryouts(includeArchived?: boolean): Promise<Tryout[]>;
+  /** Assessment count for plan limit checks, without assembling every roster and evaluation. */
+  countAssessments(): Promise<number>;
   /** Tryouts the current user is invited to as an assessor (not owned by their account). */
   listAssignedTryouts(): Promise<Tryout[]>;
   acceptAssignedTryout(tryoutId: string): Promise<void>;
@@ -117,7 +121,12 @@ export interface DataSource {
   createSeason(form: CreateSeasonForm): Promise<Season>;
   updateSeason(id: string, updates: Partial<Season>): Promise<Season>;
   deleteSeason(id: string): Promise<void>;
-  addSeasonEvent(seasonId: string, form: CreateEventForm): Promise<SeasonEvent>;
+  /** onProgress reports guardian-email invite fanout: (sent, total). */
+  addSeasonEvent(
+    seasonId: string,
+    form: CreateEventForm,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<SeasonEvent>;
   updateSeasonEvent(seasonId: string, eventId: string, updates: Partial<SeasonEvent>): Promise<SeasonEvent>;
   deleteSeasonEvent(seasonId: string, eventId: string): Promise<void>;
   sendPortalInvite(seasonId: string, playerId: string, email: string): Promise<void>;
@@ -197,6 +206,7 @@ export interface DataSource {
   addTeamRosterPlayers(
     teamId: string,
     entries: { athleteId: string; jersey?: string; pos?: string; sourceTryoutId?: string }[],
+    onProgress?: (done: number, total: number) => void,
   ): Promise<import('./types').TeamRosterPlayer[]>;
   removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void>;
   importScanScores(tryoutId: string, scores: { playerId: string; rubricKey: string; value: number }[]): Promise<void>;
