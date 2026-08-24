@@ -175,7 +175,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
             control={control}
             name="jersey"
             render={({ field, fieldState }) => (
-              <Input label="Jersey # *" inputMode="numeric" {...field} error={fieldState.error?.message} />
+              <Input label="Jersey #" inputMode="numeric" {...field} error={fieldState.error?.message} />
             )}
           />
           <Controller
@@ -183,7 +183,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
             name="pos"
             render={({ field, fieldState }) => (
               <Input
-                label="Position (FWD/DEF/GTL) *"
+                label="Position (FWD/DEF/GTL)"
                 {...field}
                 onChange={(e) => field.onChange(e.target.value.toUpperCase())}
                 error={fieldState.error?.message}
@@ -194,7 +194,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
             control={control}
             name="yearOfBirth"
             render={({ field, fieldState }) => (
-              <YearField label="Year of Birth *" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+              <YearField label="Year of Birth" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
             )}
           />
           <Controller
@@ -208,7 +208,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
             control={control}
             name="guardianEmail"
             render={({ field, fieldState }) => (
-              <Input label="Guardian Email" type="email" {...field} error={fieldState.error?.message} />
+              <Input label="Guardian Email *" type="email" {...field} error={fieldState.error?.message} />
             )}
           />
           <Controller

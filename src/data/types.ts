@@ -401,13 +401,16 @@ export const AddPlayerFormSchema = z.object({
   athleteId: z.string().optional(),
   first: z.string({ message: 'First name required' }).min(1, 'First name required'),
   last: z.string({ message: 'Last name required' }).min(1, 'Last name required'),
-  jersey: z.string({ message: 'Jersey number required' }).min(1, 'Jersey number required'),
-  pos: z.string({ message: 'Position required' }).min(1, 'Position required'),
+  jersey: z.string().optional(),
+  pos: z.string().optional(),
   shoots: z.string().optional(),
-  yearOfBirth: z.string({ message: 'Please select a year of birth.' }).min(1, 'Please select a year of birth.'),
+  yearOfBirth: z.string().optional(),
   positionTryingOutFor: z.string().optional(),
   guardianName: z.string().optional(),
-  guardianEmail: z.string().optional().refine(val => !val || z.string().email().safeParse(val).success, { message: 'Please enter a valid email address' }),
+  guardianEmail: z
+    .string({ message: 'Guardian email is required' })
+    .min(1, 'Guardian email is required')
+    .email('Please enter a valid email address'),
   guardianPhone: z.string().optional().refine(isValidGuardianPhone, { message: 'Phone number must be between 10 and 15 digits' }),
   currentTeam: z.string().optional(),
   currentLevel: z.string().optional(),

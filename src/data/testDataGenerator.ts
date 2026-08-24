@@ -139,6 +139,7 @@ export function generateDummyPlayers(
         yearOfBirth: String(currentYear - age),
         currentTeam: TEST_DATA_TAG,
         currentLevel: pick(LEVELS),
+        guardianEmail: '',
       },
     });
   }
@@ -362,6 +363,7 @@ export function mapAIPlayer(
       currentTeam: TEST_DATA_TAG,
       currentLevel: level,
       aboutChild: typeof raw.bio === 'string' ? raw.bio.slice(0, 200) : undefined,
+      guardianEmail: '',
     },
   };
 }
