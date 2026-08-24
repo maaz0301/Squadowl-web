@@ -209,7 +209,7 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader
-        title={`Hi, ${user?.displayName ?? 'Coach'}`}
+        title="Tryouts"
         right={
           <>
             <Button label="Search" variant="secondary" onClick={() => router.push('/search')} />
