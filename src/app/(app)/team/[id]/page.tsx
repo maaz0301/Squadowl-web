@@ -48,7 +48,7 @@ import {
   useSetAvailabilityMutation,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
-import { useUser } from '@/state/authStore';
+import { useUser, usePermissions } from '@/state/authStore';
 import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { CreateEventFormSchema, EVENT_KINDS, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
@@ -122,6 +122,7 @@ export default function TeamDetailPage() {
   const [attachingId, setAttachingId] = useState<string | null>(null);
   const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
+  const { canManageTeam } = usePermissions();
   const qc = useQueryClient();
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -245,6 +246,15 @@ export default function TeamDetailPage() {
   // pays for the team, so a delegate coach shouldn't hit an upgrade wall
   // managing it.
   const effectiveTier = effectiveTierForTeam(team, user?.planTier ?? 'free');
+
+  // Mirrors the DB write policies (teams_rw, teams_manager_update): a
+  // delegated manager can edit this one team regardless of their own account
+  // role, and everyone else needs owner/admin/coach on the account that owns
+  // it. Without this gate, an account member with a lesser role (e.g. an
+  // assessor who's also a member of the account for another reason) could
+  // still see the Edit button, fill out the form, and hit Save only to be
+  // rejected with a raw "new row violates row-level security policy" error.
+  const canEditTeam = !!team.managed || canManageTeam;
 
   const linkedTryouts = (tryoutsQuery.data ?? []).filter((t) => t.teamId === team.id);
   const unlinkedTryouts = (tryoutsQuery.data ?? []).filter((t) => !t.teamId);
@@ -615,14 +625,16 @@ export default function TeamDetailPage() {
         linkToHub={false}
         className="mb-5"
         right={
-          <button
-            type="button"
-            onClick={startEdit}
-            className="rounded-lg px-3 py-1.5 text-sm font-bold transition-colors hover:brightness-110"
-            style={{ color: colors.ink, backgroundColor: colors.tile }}
-          >
-            Edit
-          </button>
+          canEditTeam ? (
+            <button
+              type="button"
+              onClick={startEdit}
+              className="rounded-lg px-3 py-1.5 text-sm font-bold transition-colors hover:brightness-110"
+              style={{ color: colors.ink, backgroundColor: colors.tile }}
+            >
+              Edit
+            </button>
+          ) : undefined
         }
       />
 
@@ -920,10 +932,12 @@ export default function TeamDetailPage() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          <Card className="flex flex-col items-start gap-2">
-            <SectionLabel>Team</SectionLabel>
-            <Button label="Edit Team Details" variant="secondary" size="sm" onClick={startEdit} />
-          </Card>
+          {canEditTeam ? (
+            <Card className="flex flex-col items-start gap-2">
+              <SectionLabel>Team</SectionLabel>
+              <Button label="Edit Team Details" variant="secondary" size="sm" onClick={startEdit} />
+            </Card>
+          ) : null}
 
           <TeamManagersCard teamId={team.id} teamName={team.name} />
 
