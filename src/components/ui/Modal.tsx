@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/cn';
 import { useMounted } from '@/lib/hooks';
@@ -37,10 +37,20 @@ export function Modal({
   const colors = useThemeColors();
   const mounted = useMounted();
 
+  // Keeps the latest onClose reachable from the effect below without making
+  // it a dependency — callers pass a fresh inline function on every render,
+  // which would otherwise tear down and rebuild the scroll lock (and briefly
+  // release document.body.style.overflow) on every re-render while open, not
+  // just on actual open/close transitions.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
@@ -49,7 +59,7 @@ export function Modal({
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prev;
     };
-  }, [visible, onClose]);
+  }, [visible]);
 
   if (!mounted || !visible) return null;
 
