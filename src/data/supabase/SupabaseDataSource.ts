@@ -122,14 +122,15 @@ const FETCH_PAGE_SIZE = 1000;
  */
 async function fetchAllRows<T>(
   makeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string } | null }>,
+  pageSize: number = FETCH_PAGE_SIZE,
 ): Promise<T[]> {
   const rows: T[] = [];
   let from = 0;
   for (;;) {
-    const page = unwrap(await makeQuery(from, from + FETCH_PAGE_SIZE - 1)) ?? [];
+    const page = unwrap(await makeQuery(from, from + pageSize - 1)) ?? [];
     rows.push(...page);
-    if (page.length < FETCH_PAGE_SIZE) break;
-    from += FETCH_PAGE_SIZE;
+    if (page.length < pageSize) break;
+    from += pageSize;
   }
   return rows;
 }
@@ -164,6 +165,31 @@ const TEAM_ROSTER_PAGE = 200;
  */
 const EVENT_AVAILABILITY_PAGE = 500;
 const EVENT_AVAILABILITY_EVENT_CHUNK = 25;
+
+/**
+ * Rows per request when reading evaluations for assembleTryouts. Same shape
+ * of problem as TEAM_ROSTER_PAGE/EVENT_AVAILABILITY_PAGE: the embedded
+ * `evaluation_scores(rubric_key, value)` join makes PostgREST evaluate the
+ * evaluations/evaluation_scores read policies per row, so a full-size
+ * FETCH_PAGE_SIZE page (1000 evaluations, each pulling in its scores) across
+ * several batched tryouts outruns the statement timeout (57014) well before
+ * it outruns the row cap.
+ */
+const EVALUATIONS_PAGE = 300;
+
+/**
+ * Tryouts per statement when reading evaluations. One, deliberately.
+ *
+ * Shrinking the *page* is not enough on its own: the row-level policy runs on
+ * candidate rows before LIMIT applies, so every page of an
+ * `in('tryout_id', [...])` read pays for the whole batch again, and OFFSET
+ * makes each later page re-scan what it already skipped. Four tryouts at
+ * `offset=1200&limit=300` is what actually hit the 8s timeout. Narrowing the
+ * statement to a single tryout bounds that work no matter how many tryouts the
+ * dashboard lists; the chunks run concurrently, so it costs round trips, not
+ * wall clock. Raise this once `evaluations(tryout_id)` is indexed.
+ */
+const EVALUATIONS_TRYOUT_CHUNK = 1;
 
 const REGISTRATION_CHUNK = 20;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
@@ -602,6 +628,109 @@ export class SupabaseDataSource implements DataSource {
     };
   }
 
+  /**
+   * Every evaluation (with its scores) for a set of tryouts.
+   *
+   * Three shapes, in descending order of how well they survive the statement
+   * timeout, because a deployment may only have the first one available:
+   *
+   * 1. `get_evaluations_for_tryouts` — authorizes once per tryout instead of
+   *    once per row, same as fetchEventAvailability() prefers
+   *    `get_event_availability`.
+   * 2. The read as an embed hanging off `tryouts` (see
+   *    fetchEvaluationsViaTryouts) — the shape that already rescued the
+   *    comparable event_availability read.
+   * 3. The direct read, one tryout per statement.
+   *
+   * Any RPC error falls through, not just a missing function: an RPC that
+   * exists but times out should still get the cheaper plans tried before the
+   * dashboard gives up on the whole read.
+   */
+  private async fetchEvaluationsForTryouts(supabase: SupabaseClient, ids: string[]): Promise<Row[]> {
+    if (ids.length === 0) return [];
+
+    const { data, error } = await supabase.rpc('get_evaluations_for_tryouts', { p_tryout_ids: ids });
+    if (!error) return (data as Row[]) ?? [];
+
+    if (error.code === 'PGRST202' || error.code === '42883') {
+      console.warn('get_evaluations_for_tryouts() not deployed — trying the embedded read.');
+    } else {
+      console.error('get_evaluations_for_tryouts failed — trying the embedded read.', error);
+    }
+
+    const embedded = await this.fetchEvaluationsViaTryouts(supabase, ids);
+    if (embedded.ok) return embedded.rows;
+
+    // Last resort: the direct read, but one tryout per statement and ordered,
+    // so OFFSET paging is both bounded and stable. Without an ORDER BY,
+    // successive .range() pages are free to come back in different row orders,
+    // which silently duplicates some evaluations and drops others.
+    const perTryout = await mapPool(ids, REGISTRATION_CHUNK_CONCURRENCY, (tryoutId) =>
+      fetchAllRows<Row>(
+        (from, to) =>
+          supabase
+            .from('evaluations')
+            .select('*, evaluation_scores(rubric_key, value)')
+            .eq('tryout_id', tryoutId)
+            .order('id', { ascending: true })
+            .range(from, to),
+        EVALUATIONS_PAGE,
+      ),
+    );
+    return perTryout.flat();
+  }
+
+  /**
+   * Evaluations read as an embed on their parent tryout.
+   *
+   * Same statement, different plan — the trick that already fixed the
+   * event_availability read (see fetchAvailabilityViaEvents). Filtering
+   * `evaluations` directly makes `tryout_id` an ordinary user qual, which
+   * Postgres evaluates *after* the table's row-level policy, so the policy
+   * runs against far more of the table than the four tryouts asked for. As an
+   * embed, PostgREST emits a LATERAL keyed on `tryouts.id`, so the FK becomes
+   * a join condition that drives the scan and the policy only sees what
+   * survives it. It also removes OFFSET from the picture entirely: children of
+   * an embed are not paged, so there is no later page that has to re-skip the
+   * earlier ones.
+   *
+   * Returns `ok: false` on any error so the caller falls through to the direct
+   * read rather than this becoming a way to silently report zero evaluations —
+   * which would read as lost assessments to a coach.
+   */
+  private async fetchEvaluationsViaTryouts(
+    supabase: SupabaseClient,
+    ids: string[],
+  ): Promise<{ rows: Row[]; ok: boolean }> {
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += EVALUATIONS_TRYOUT_CHUNK) {
+      chunks.push(ids.slice(i, i + EVALUATIONS_TRYOUT_CHUNK));
+    }
+
+    try {
+      const parentChunks = await mapPool(chunks, REGISTRATION_CHUNK_CONCURRENCY, async (chunk) => {
+        const { data, error } = await supabase
+          .from('tryouts')
+          .select('id, evaluations(*, evaluation_scores(rubric_key, value))')
+          .in('id', chunk);
+        if (error) throw error;
+        return (data as Row[]) ?? [];
+      });
+
+      const rows: Row[] = [];
+      for (const parent of parentChunks.flat()) {
+        // assembleTryouts groups these by tryout_id. The embed already carries
+        // it under `*`, but taking it from the parent keeps the grouping right
+        // regardless of what the child select returns.
+        for (const e of (parent.evaluations as Row[]) ?? []) rows.push({ ...e, tryout_id: parent.id });
+      }
+      return { rows, ok: true };
+    } catch (error) {
+      console.warn('evaluations-via-tryouts read failed — falling back to the direct read.', error);
+      return { rows: [], ok: false };
+    }
+  }
+
   /** Assemble full Tryout objects for a set of tryout rows (batched relational fetch). */
   private async assembleTryouts(tryoutRows: Row[]): Promise<Tryout[]> {
     if (tryoutRows.length === 0) return [];
@@ -625,13 +754,7 @@ export class SupabaseDataSource implements DataSource {
           .range(from, to),
       ),
       fetchAllRows<Row>((from, to) => supabase.from('tryout_assessors').select('*').in('tryout_id', ids).range(from, to)),
-      fetchAllRows<Row>((from, to) =>
-        supabase
-          .from('evaluations')
-          .select('*, evaluation_scores(rubric_key, value)')
-          .in('tryout_id', ids)
-          .range(from, to),
-      ),
+      this.fetchEvaluationsForTryouts(supabase, ids),
       fetchAllRows<Row>((from, to) => supabase.from('registrations').select('*').in('tryout_id', ids).range(from, to)),
     ]);
 
