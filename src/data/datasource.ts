@@ -208,9 +208,24 @@ export interface DataSource {
     entries: { athleteId: string; jersey?: string; pos?: string; sourceTryoutId?: string }[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<import('./types').TeamRosterPlayer[]>;
+  // Same form as the assessment roster's "Add Player" (AddPlayerForm) — picks
+  // from or creates an athlete and places them directly on a team's roster,
+  // for a player who never went through an assessment (no tryout to pull
+  // them from), rather than only being reachable via "Add Players from
+  // Assessments".
+  addManualTeamPlayer(teamId: string, form: AddPlayerForm): Promise<{ athleteId: string }>;
   removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void>;
   importScanScores(tryoutId: string, scores: { playerId: string; rubricKey: string; value: number }[]): Promise<void>;
   getGuardianRosters(): Promise<GuardianRosterAthlete[]>;
+
+  // Extra family contacts a guardian keeps on their own athlete's profile
+  // (see athlete_family_contacts migration for the access model).
+  listFamilyContacts(athleteId: string): Promise<import('./types').FamilyContact[]>;
+  addFamilyContact(
+    athleteId: string,
+    contact: { name: string; relationship?: string; email?: string; phone?: string },
+  ): Promise<import('./types').FamilyContact>;
+  removeFamilyContact(id: string): Promise<void>;
 
   // Testing utilities (association/enterprise): bulk-generate dummy registrations
   // and/or scored roster players, stand up whole dummy teams, and clear either

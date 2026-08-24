@@ -70,7 +70,13 @@ export function useCreateTeamMutation() {
   return useMutation({
     mutationFn: ({ name, season }: { name: string; season?: string }) =>
       withTimeout(getDataSource().createTeam(name, season), 15000),
-    onSuccess: () => {
+    // Seeded synchronously so the team is already in the cache the instant
+    // router.push lands on /team/[id] — that page derives `team` from this
+    // list via `.find()`, and without this the invalidate below is still a
+    // network round trip away, so the page briefly finds nothing and renders
+    // its "Team not found" error before the refetch resolves.
+    onSuccess: (team) => {
+      qc.setQueryData<Team[]>(queryKeys.teams, (old) => (old ? [...old, team] : [team]));
       void qc.invalidateQueries({ queryKey: queryKeys.teams });
     },
   });
@@ -109,6 +115,27 @@ export function useAddTeamRosterPlayersMutation(
   return useMutation({
     mutationFn: (entries: { athleteId: string; jersey?: string; pos?: string; sourceTryoutId?: string }[]) =>
       getDataSource().addTeamRosterPlayers(teamId, entries, onProgress),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+    },
+  });
+}
+
+export function useAddManualTeamPlayerMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (form: AddPlayerForm) => getDataSource().addManualTeamPlayer(teamId, form),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+    },
+  });
+}
+
+export function useUploadTeamPlayerPhotoMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ athleteId, fileUri, fileType }: { athleteId: string; fileUri: string; fileType: string }) =>
+      getDataSource().uploadPlayerPhoto(athleteId, fileUri, fileType),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
     },
@@ -1432,6 +1459,37 @@ export function useGuardianRostersQuery() {
     queryKey: queryKeys.guardianRosters(userId),
     queryFn: () => getDataSource().getGuardianRosters(),
     enabled: !!userId,
+  });
+}
+
+const familyContactsKey = (athleteId: string) => ['athletes', athleteId, 'familyContacts'] as const;
+
+export function useFamilyContactsQuery(athleteId: string | undefined) {
+  return useQuery({
+    queryKey: familyContactsKey(athleteId ?? ''),
+    queryFn: () => getDataSource().listFamilyContacts(athleteId!),
+    enabled: !!athleteId,
+  });
+}
+
+export function useAddFamilyContactMutation(athleteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (contact: { name: string; relationship?: string; email?: string; phone?: string }) =>
+      getDataSource().addFamilyContact(athleteId, contact),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: familyContactsKey(athleteId) });
+    },
+  });
+}
+
+export function useRemoveFamilyContactMutation(athleteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().removeFamilyContact(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: familyContactsKey(athleteId) });
+    },
   });
 }
 

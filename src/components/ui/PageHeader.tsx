@@ -24,8 +24,8 @@ export function PageHeader({ title, subtitle, showBack, backHref, onBack, right 
   };
 
   return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-3 sm:flex-1">
         {showBack ? (
           <button
             type="button"
@@ -47,13 +47,13 @@ export function PageHeader({ title, subtitle, showBack, backHref, onBack, right 
         ) : null}
         <div className="min-w-0">
           <h1
-            className="truncate text-2xl font-bold sm:text-3xl"
+            className="text-2xl font-bold sm:text-3xl"
             style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
           >
             {title}
           </h1>
           {subtitle ? (
-            <p className="mt-0.5 truncate text-sm" style={{ color: colors.inkMuted }}>
+            <p className="mt-0.5" style={{ color: colors.inkMuted }}>
               {subtitle}
             </p>
           ) : null}

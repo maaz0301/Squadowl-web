@@ -35,6 +35,8 @@ import {
   useUpdateTryoutMutation,
   useTeamRosterQuery,
   useAddTeamRosterPlayersMutation,
+  useAddManualTeamPlayerMutation,
+  useUploadTeamPlayerPhotoMutation,
   useRemoveTeamRosterPlayerMutation,
   useSeasonsQuery,
   useSeasonQuery,
@@ -49,12 +51,13 @@ import { queryKeys } from '@/lib/queryClient';
 import { useUser } from '@/state/authStore';
 import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
-import { CreateEventFormSchema, EVENT_KINDS, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
+import { CreateEventFormSchema, EVENT_KINDS, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamManagersCard } from '@/components/TeamManagersCard';
 import { TeamBanner } from '@/components/TeamBanner';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
+import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
 import { getDataSource } from '@/data';
 
 function feeCentsFromInput(feeInput: string): number {
@@ -150,7 +153,38 @@ export default function TeamDetailPage() {
   const rosterQuery = useTeamRosterQuery(id);
   const [addPlayersProgress, setAddPlayersProgress] = useState<{ done: number; total: number } | null>(null);
   const addRosterPlayers = useAddTeamRosterPlayersMutation(id, (done, total) => setAddPlayersProgress({ done, total }));
+  const addManualPlayer = useAddManualTeamPlayerMutation(id);
+  const uploadTeamPlayerPhoto = useUploadTeamPlayerPhotoMutation(id);
   const removeRosterPlayer = useRemoveTeamRosterPlayerMutation(id);
+
+  // A player who never went through an assessment (no tryout roster to pull
+  // them from) has no other way onto the team — this is that direct path.
+  // Same AddPlayerForm the assessment roster uses, just attached to the team
+  // roster instead of a tryout's participants.
+  const [showAddManualPlayer, setShowAddManualPlayer] = useState(false);
+
+  const submitManualPlayer = async (data: AddPlayerFormValues) => {
+    try {
+      const { athleteId } = await addManualPlayer.mutateAsync(data);
+      if (athleteId && data.avatarUrl?.startsWith('blob:')) {
+        try {
+          await uploadTeamPlayerPhoto.mutateAsync({
+            athleteId,
+            fileUri: data.avatarUrl,
+            fileType: 'image/jpeg',
+          });
+        } catch (e) {
+          await alert(
+            'Upload Error',
+            `Failed to upload profile picture: ${e instanceof Error ? e.message : 'Unknown error'}`,
+          );
+        }
+      }
+      setShowAddManualPlayer(false);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not add this player.');
+    }
+  };
 
   // Events live on the season attached to this team, but that's an implementation
   // detail — the team screen is the only place a coach touches them.
@@ -762,15 +796,22 @@ export default function TeamDetailPage() {
         </PlanGate>
       ) : tab === 'players' ? (
         <div>
-          <Button
-            label="Add Players from Assessments"
-            size="sm"
-            className="mb-4"
-            onClick={() => {
-              setPickedAthletes(new Set());
-              setShowAddPlayers(true);
-            }}
-          />
+          <div className="mb-4 flex flex-wrap gap-2">
+            <Button
+              label="Add Players from Assessments"
+              size="sm"
+              onClick={() => {
+                setPickedAthletes(new Set());
+                setShowAddPlayers(true);
+              }}
+            />
+            <Button
+              label="+ Add Player Manually"
+              size="sm"
+              variant="secondary"
+              onClick={() => setShowAddManualPlayer(true)}
+            />
+          </div>
           {teamPlayers.length > 0 ? (
             <Input
               containerClassName="mb-3"
@@ -1134,6 +1175,21 @@ export default function TeamDetailPage() {
             </div>
           </>
         )}
+      </Modal>
+
+      <Modal
+        visible={showAddManualPlayer}
+        title="Add Player Manually"
+        onClose={() => {
+          if (addManualPlayer.isPending || uploadTeamPlayerPhoto.isPending) return;
+          setShowAddManualPlayer(false);
+        }}
+        hideDefaultFooter
+      >
+        <AddPlayerForm
+          loading={addManualPlayer.isPending || uploadTeamPlayerPhoto.isPending}
+          onSubmit={submitManualPlayer}
+        />
       </Modal>
 
       <Modal

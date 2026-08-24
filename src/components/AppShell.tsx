@@ -95,9 +95,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const sidebarInner = (
     <>
       <Link href="/dashboard" className="mb-6 flex items-center gap-2.5 px-1">
-        <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={34} height={34} />
+        <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={44} height={44} />
         <span
-          className="text-lg font-bold tracking-tight"
+          className="text-2xl font-bold tracking-tight"
           style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
         >
           {APP_CONFIG.appName}
@@ -207,9 +207,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               <path d="M3 6h18M3 12h18M3 18h18" stroke={colors.ink} strokeWidth={2} strokeLinecap="round" />
             </svg>
           </button>
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={28} height={28} />
-            <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2">
+            <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={48} height={48} className="shrink-0" />
+            <span
+              className="truncate text-2xl font-bold"
+              style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+            >
               {APP_CONFIG.appName}
             </span>
           </Link>

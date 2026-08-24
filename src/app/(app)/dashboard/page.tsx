@@ -34,7 +34,6 @@ import {
   useArchiveTryoutMutation,
   useDeleteTryoutMutation,
 } from '@/features/queries';
-import { APP_CONFIG } from '@/config/app';
 import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
 
 export default function DashboardPage() {
@@ -210,8 +209,7 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader
-        title={APP_CONFIG.appName}
-        subtitle={`Hi, ${user?.displayName ?? 'Coach'}`}
+        title={`Hi, ${user?.displayName ?? 'Coach'}`}
         right={
           <>
             <Button label="Search" variant="secondary" onClick={() => router.push('/search')} />

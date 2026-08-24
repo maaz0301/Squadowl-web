@@ -18,7 +18,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
  * on the club's account. The club's own staff keep full access either way,
  * which is why this list never affects the inviter's own rights.
  *
- * Gated on `enterprise` (Club tier) to match where the feature was sold.
+ * Gated on `teamManagers` (Coach+ and Club) to match where the feature is sold.
  *
  * This card only covers granting/revoking access from the owning club's
  * side; the delegate sees the team show up (via `list_teams_managed_by_me`,
@@ -66,7 +66,7 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
   };
 
   return (
-    <PlanGate feature="enterprise" title="Team Managers">
+    <PlanGate feature="teamManagers" title="Team Managers">
       <Card className="flex flex-col gap-3">
         <div>
           <h3 className="font-display font-bold text-base" style={{ color: colors.ink }}>

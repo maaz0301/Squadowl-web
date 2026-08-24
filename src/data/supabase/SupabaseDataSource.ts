@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import { getSupabase } from '@/lib/supabase';
+import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
 import type { FeedbackSubmission } from '../extras';
@@ -55,6 +56,7 @@ import type {
   EventKind,
   EventType,
   ExportFormat,
+  FamilyContact,
   Org,
   Player,
   PlayerProfile,
@@ -206,6 +208,55 @@ function toIso(ms: number | null | undefined): string | null {
   return ms != null ? new Date(ms).toISOString() : null;
 }
 
+/**
+ * The real origin this tab is being served from, preferred over
+ * NEXT_PUBLIC_WEB_URL whenever it's a usable http(s) origin. That env var only
+ * exists for the mobile app's embedded webview case (see webOrigin below) —
+ * treating it as the *default* instead of a fallback meant a stale or
+ * mis-set value (e.g. still pointing at localhost) silently overrode the
+ * correct origin for every real web visitor, sending Stripe/email redirects
+ * to a URL only the developer's machine could reach.
+ */
+function actualOrigin(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const { origin } = window.location;
+  return /^https?:\/\//.test(origin) ? origin : APP_CONFIG.webUrl || undefined;
+}
+
+/**
+ * Where Supabase should send the browser after a signup/invite confirmation
+ * link is clicked. Left undefined server-side (no window to read an origin
+ * from) and during SSR — signup/resend only ever run client-side anyway.
+ */
+function emailRedirectTo(): string | undefined {
+  const origin = actualOrigin();
+  return origin ? `${origin}/auth/callback` : undefined;
+}
+
+/**
+ * This browser tab's own origin, sent to the create-checkout-session /
+ * create-portal-session functions so Stripe sends the customer back here
+ * instead of to the mobile app's aastryout:// deep link (see webOrigin.ts
+ * in the functions repo for why that link alone left web users stranded).
+ */
+function webOrigin(): string | undefined {
+  return actualOrigin();
+}
+
+/**
+ * For any 5xx response, the Supabase auth-js SDK builds its error message by
+ * JSON.stringify-ing the raw, not-yet-parsed fetch Response (see
+ * AuthRetryableFetchError in @supabase/auth-js) — which has no enumerable
+ * properties, so it serializes to the literal string "{}" instead of
+ * anything a user could read. Swap that (or any other JSON-shaped string —
+ * the same stringify path applies to other non-Response objects too) for a
+ * real fallback instead of surfacing it as-is.
+ */
+function authErrorMessage(message: string | null | undefined, fallback: string): string {
+  if (!message || /^[{[]/.test(message.trim())) return fallback;
+  return message;
+}
+
 const EVENT_TYPE_TO_DB: Record<EventType, string> = {
   Tryout: 'tryout',
   Assessment: 'assessment',
@@ -284,7 +335,7 @@ export class SupabaseDataSource implements DataSource {
 
   // Higher-privilege roles win when a user holds more than one membership.
   private getRoleWeight(role: string): number {
-    const weights: Record<string, number> = { admin: 3, coach: 2, assessor: 1, guardian: 0 };
+    const weights: Record<string, number> = { owner: 4, admin: 3, coach: 2, assessor: 1, guardian: 0 };
     return weights[role] ?? 0;
   }
 
@@ -731,7 +782,7 @@ export class SupabaseDataSource implements DataSource {
   async login(email: string, password: string): Promise<AuthSession> {
     const supabase = getSupabase();
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error || !data.session) throw new Error(error?.message ?? 'Login failed');
+    if (error || !data.session) throw new Error(authErrorMessage(error?.message, 'Login failed. Please try again.'));
     this.resetAccountCaches();
     this.userId = data.session.user.id;
     const user = await this.loadUserProfile(data.session.user.id);
@@ -743,9 +794,18 @@ export class SupabaseDataSource implements DataSource {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { display_name: displayName, account_type: accountType } },
+      options: {
+        data: { display_name: displayName, account_type: accountType },
+        // Without this, the confirmation link falls back to Supabase's
+        // project-level Site URL and lands with an unconsumed token in the
+        // URL — this app doesn't auto-parse it (see supabase.ts's
+        // detectSessionInUrl: false), so the tab just goes blank. Routing it
+        // at /auth/callback instead gives the app a page whose whole job is
+        // to read that token and actually start the session.
+        emailRedirectTo: emailRedirectTo(),
+      },
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(authErrorMessage(error.message, 'Failed to create your account. Please try again.'));
     let session = data.session;
     if (!session) {
       const { data: signIn, error: e2 } = await supabase.auth.signInWithPassword({ email, password });
@@ -849,7 +909,7 @@ export class SupabaseDataSource implements DataSource {
   async updatePassword(password: string): Promise<void> {
     const { supabase } = await this.ctx();
     const { error } = await supabase.auth.updateUser({ password });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(authErrorMessage(error.message, 'Failed to update your password. Please try again.'));
   }
 
   async resendVerificationEmail(email: string): Promise<void> {
@@ -857,8 +917,9 @@ export class SupabaseDataSource implements DataSource {
     const { error } = await supabase.auth.resend({
       type: 'signup',
       email,
+      options: { emailRedirectTo: emailRedirectTo() },
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(authErrorMessage(error.message, 'Failed to resend the verification email. Please try again.'));
   }
 
   async requestPasswordReset(email: string): Promise<void> {
@@ -874,13 +935,13 @@ export class SupabaseDataSource implements DataSource {
     // though the actual URL depends on the project setup. For Expo, an app scheme like 'aas://reset-password' is often used.
     // If none is provided, it falls back to the site url configured in Supabase.
     const { error } = await supabase.auth.resetPasswordForEmail(email);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(authErrorMessage(error.message, 'Failed to send the reset email. Please try again.'));
   }
 
   async verifyPasswordResetOtp(email: string, token: string): Promise<void> {
     const supabase = getSupabase();
     const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(authErrorMessage(error.message, 'Failed to verify the code. Please try again.'));
     if (data.session) {
       this.resetAccountCaches();
       this.userId = null;
@@ -890,10 +951,10 @@ export class SupabaseDataSource implements DataSource {
   async resetPasswordWithOtp(email: string, token: string, newPassword: string): Promise<void> {
     const supabase = getSupabase();
     const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(authErrorMessage(error.message, 'Failed to verify the code. Please try again.'));
     if (!data.session) throw new Error('Failed to start session after OTP verification');
     const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
-    if (updateError) throw new Error(updateError.message);
+    if (updateError) throw new Error(authErrorMessage(updateError.message, 'Failed to update your password. Please try again.'));
     this.resetAccountCaches();
     this.userId = null;
   }
@@ -1173,6 +1234,36 @@ export class SupabaseDataSource implements DataSource {
       onProgress?.(Math.min(rows.length, i + CHUNK_SIZE), rows.length);
     }
     return this.listTeamRoster(teamId);
+  }
+
+  // Same shape as the assessment roster's "Add Player" (AddPlayerForm) — a
+  // manually-added team player picks from or creates an athlete exactly the
+  // same way, just attached to the team roster instead of tryout_participants.
+  async addManualTeamPlayer(teamId: string, form: AddPlayerForm): Promise<{ athleteId: string }> {
+    return this.withFreshAccount(() => this._addManualTeamPlayer(teamId, form));
+  }
+
+  private async _addManualTeamPlayer(teamId: string, form: AddPlayerForm): Promise<{ athleteId: string }> {
+    const accountId = await this.writableAccountId();
+    let athleteId = form.athleteId;
+    if (typeof athleteId === 'object' && athleteId !== null) {
+      athleteId = String((athleteId as unknown as { id?: string }).id || athleteId);
+    }
+    if (!athleteId) {
+      athleteId = await this.createAthlete(accountId, {
+        first_name: form.first,
+        last_name: form.last,
+        year_of_birth: form.yearOfBirth ? Number(form.yearOfBirth) : null,
+        guardian_name: form.guardianName || null,
+        guardian_email: form.guardianEmail || null,
+        guardian_phone: form.guardianPhone || null,
+        medical_info: form.medicalInfo || null,
+        about: form.aboutChild || null,
+        avatar_url: form.avatarUrl || null,
+      });
+    }
+    await this.addTeamRosterPlayers(teamId, [{ athleteId, jersey: form.jersey, pos: form.pos }]);
+    return { athleteId };
   }
 
   async removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void> {
@@ -4524,7 +4615,7 @@ export class SupabaseDataSource implements DataSource {
   async createCheckoutSession(planTier: string, interval: 'year' | 'month'): Promise<{ url: string }> {
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-      body: { planTier, interval }
+      body: { planTier, interval, origin: webOrigin() }
     });
     if (error) {
       let detail = '';
@@ -4540,7 +4631,9 @@ export class SupabaseDataSource implements DataSource {
 
   async createPortalSession(): Promise<{ url: string }> {
     const { supabase } = await this.ctx();
-    const { data, error } = await supabase.functions.invoke('create-portal-session');
+    const { data, error } = await supabase.functions.invoke('create-portal-session', {
+      body: { origin: webOrigin() },
+    });
     if (error) {
       let detail = '';
       try {
@@ -4556,7 +4649,7 @@ export class SupabaseDataSource implements DataSource {
   async createTeamLicenseCheckoutSession(quantity: number): Promise<{ url: string }> {
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-      body: { addOn: 'team_licenses', quantity: Math.max(1, Math.round(quantity)), interval: 'year' },
+      body: { addOn: 'team_licenses', quantity: Math.max(1, Math.round(quantity)), interval: 'year', origin: webOrigin() },
     });
     if (error) {
       let detail = '';
@@ -5061,6 +5154,56 @@ export class SupabaseDataSource implements DataSource {
       tryouts: tryoutsList,
       seasons: seasonsList,
     } as import('../types').GuardianRosterAthlete;
+  }
+
+  private rowToFamilyContact(r: Row): FamilyContact {
+    return {
+      id: r.id,
+      athleteId: r.athlete_id,
+      name: r.name,
+      relationship: r.relationship ?? undefined,
+      email: r.email ?? undefined,
+      phone: r.phone ?? undefined,
+    };
+  }
+
+  async listFamilyContacts(athleteId: string): Promise<FamilyContact[]> {
+    const { supabase } = await this.ctx();
+    const rows = unwrap(
+      await supabase
+        .from('athlete_family_contacts')
+        .select()
+        .eq('athlete_id', athleteId)
+        .order('created_at', { ascending: true }),
+    ) as Row[] | null;
+    return (rows ?? []).map((r) => this.rowToFamilyContact(r));
+  }
+
+  async addFamilyContact(
+    athleteId: string,
+    contact: { name: string; relationship?: string; email?: string; phone?: string },
+  ): Promise<FamilyContact> {
+    const { supabase, userId } = await this.ctx();
+    const row = unwrap(
+      await supabase
+        .from('athlete_family_contacts')
+        .insert({
+          athlete_id: athleteId,
+          name: contact.name,
+          relationship: contact.relationship || null,
+          email: contact.email || null,
+          phone: contact.phone || null,
+          created_by: userId,
+        })
+        .select()
+        .single(),
+    ) as Row;
+    return this.rowToFamilyContact(row);
+  }
+
+  async removeFamilyContact(id: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    unwrap(await supabase.from('athlete_family_contacts').delete().eq('id', id));
   }
 
   // One statement, authorized per tryout/season instead of per leaf row — the nested

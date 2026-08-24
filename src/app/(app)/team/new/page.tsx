@@ -16,7 +16,7 @@ import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { getDataSource } from '@/data';
 import { queryKeys } from '@/lib/queryClient';
 import type { DummyTeamOptions } from '@/data/testDataGenerator';
-import type { Team } from '@/data/types';
+import { TEAM_MANAGER_ROLES, type Team, type TeamManagerRole } from '@/data/types';
 import {
   useClearDummyTeamsMutation,
   useCreateSeasonMutation,
@@ -56,7 +56,10 @@ export default function NewTeamPage() {
   const [brandColor, setBrandColor] = useState<string | null>(null);
   const [collectsFees, setCollectsFees] = useState(false);
   const [feeInput, setFeeInput] = useState('');
+  const [managerEmail, setManagerEmail] = useState('');
+  const [managerRole, setManagerRole] = useState<TeamManagerRole>('manager');
   const [connecting, setConnecting] = useState(false);
+  const [checkingLimit, setCheckingLimit] = useState(false);
   const updateTeam = useUpdateTeamMutation();
   const qc = useQueryClient();
   const restoreSession = useAuthStore((s) => s.restoreSession);
@@ -64,8 +67,15 @@ export default function NewTeamPage() {
 
   // Every write the submit fans out to. Drives both the button's spinner and
   // the form lock, so they can never disagree about whether a save is running.
+  // checkingLimit covers the submit-time count refetch below — without it the
+  // button gives no feedback while that's in flight, and a slow or failed
+  // refetch reads as a dead button.
   const saving =
-    createTeam.isPending || createSeason.isPending || uploadLogo.isPending || updateTeam.isPending;
+    checkingLimit ||
+    createTeam.isPending ||
+    createSeason.isPending ||
+    uploadLogo.isPending ||
+    updateTeam.isPending;
 
   const onLogoPicked = (file: File | undefined) => {
     if (!file) return;
@@ -74,6 +84,7 @@ export default function NewTeamPage() {
 
   const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
   const canCollectFees = canUseFeature(user?.planTier ?? 'free', 'payments');
+  const canManageTeamCoaches = canUseFeature(user?.planTier ?? 'free', 'teamManagers');
 
   const connectPayouts = async () => {
     try {
@@ -104,13 +115,30 @@ export default function NewTeamPage() {
   const onSubmit = handleSubmit(async (data) => {
     // Delegated teams belong to the club that pays for them, not to this plan;
     // countTeams() only counts this account's own. Awaited here because the
-    // form no longer waits for the count before rendering.
-    const count = teamCount.data ?? (await teamCount.refetch()).data ?? 0;
+    // form no longer waits for the count before rendering. Caught explicitly:
+    // an uncaught rejection here (react-hook-form doesn't catch onValid errors)
+    // used to leave the button looking dead — no spinner, no error, no retry.
+    let count: number;
+    try {
+      setCheckingLimit(true);
+      count = teamCount.data ?? (await teamCount.refetch()).data ?? 0;
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not check your team limit. Please try again.');
+      return;
+    } finally {
+      setCheckingLimit(false);
+    }
     if (isAtTeamLimit(user?.planTier ?? 'free', count, user?.extraTeamLicenses ?? 0)) {
       setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'teams', 'teams', user?.extraTeamLicenses ?? 0));
       return;
     }
-    const team = await createTeam.mutateAsync({ name: data.name, season: data.season });
+    let team: Team;
+    try {
+      team = await createTeam.mutateAsync({ name: data.name, season: data.season });
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Failed to create team.');
+      return;
+    }
 
     // createTeam only takes name/season, so the season, the logo and the
     // branding are all follow-up writes — but none of them depends on any of
@@ -154,6 +182,16 @@ export default function NewTeamPage() {
             .mutateAsync({ id: team.id, updates })
             .catch((e) =>
               alert('Branding Error', `The team was created, but saving its settings failed: ${describe(e)}`),
+            )
+        : null,
+      // Coach+/Club only: let the same "creating a team" flow hand it straight
+      // to another coach instead of making them find the new team afterward
+      // just to invite someone to it.
+      canManageTeamCoaches && managerEmail.trim()
+        ? getDataSource()
+            .inviteTeamManager(team.id, managerEmail.trim(), managerRole)
+            .catch((e) =>
+              alert('Invite Error', `The team was created, but inviting ${managerEmail.trim()} failed: ${describe(e)}`),
             )
         : null,
     ]);
@@ -253,6 +291,35 @@ export default function NewTeamPage() {
             />
 
             <TeamColorPicker value={brandColor} onChange={setBrandColor} label="Team colour (optional)" />
+
+            {canManageTeamCoaches ? (
+              <div className="flex flex-col gap-2">
+                <SectionLabel>Invite a coach or manager (optional)</SectionLabel>
+                <p className="text-xs" style={{ color: colors.inkMuted }}>
+                  Give them this team&apos;s roster, schedule, and chat as soon as it&apos;s created — nothing
+                  else on your account. If they don&apos;t have a TryoutHQ account yet, one is created and
+                  their sign-in details are emailed to them.
+                </p>
+                <Input
+                  label="Email address"
+                  value={managerEmail}
+                  onChange={(e) => setManagerEmail(e.target.value)}
+                  type="email"
+                  autoCapitalize="none"
+                  placeholder="coach@example.com"
+                />
+                <div className="flex gap-2">
+                  {TEAM_MANAGER_ROLES.map((r) => (
+                    <Chip
+                      key={r}
+                      label={r === 'coach' ? 'Coach' : 'Manager'}
+                      active={managerRole === r}
+                      onClick={() => setManagerRole(r)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {canCollectFees ? (
               <>

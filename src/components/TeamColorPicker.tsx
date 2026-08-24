@@ -58,7 +58,7 @@ export function TeamColorPicker({ value, onChange, label = 'Team colour', classN
           backgroundColor: color ?? colors.tile,
           borderWidth: selected ? 3 : 1,
           borderStyle: 'solid',
-          borderColor: selected ? colors.primary : colors.border,
+          borderColor: selected ? colors.ink : colors.border,
         }}
       >
         {color === null ? (

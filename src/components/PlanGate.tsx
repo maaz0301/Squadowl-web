@@ -31,6 +31,7 @@ const PLAN_REQUIRED: Partial<Record<Feature, PlanTier>> = {
   seasonHub: 'coach',
   guardianPortal: 'coach',
   enterprise: 'club',
+  teamManagers: 'coach_plus',
   qrRegistration: 'free',
   payments: 'coach',
 };

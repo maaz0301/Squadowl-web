@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-import { Button, Card, PageHeader } from '@/components/ui';
+import { Button, Card, PageHeader, useAlert } from '@/components/ui';
 import {
   useCreateTeamMutation,
   useCreateTryoutMutation,
@@ -76,8 +76,21 @@ export default function WizardPage() {
   const setCurrentTryout = useSessionStore((s) => s.setCurrentTryout);
 
   const current = STEPS[step];
+  const { alert } = useAlert();
 
+  // Every mutation below used to run bare: a failure (network blip, RLS,
+  // timeout) became a silent unhandled rejection — the button's loading state
+  // cleared on its own and nothing else told the user their team/assessment
+  // was never created. Wrapping the whole flow surfaces that failure instead.
   const handleAction = async () => {
+    try {
+      await performAction();
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+    }
+  };
+
+  const performAction = async () => {
     if (step === 0) {
       const team = await createTeam.mutateAsync({ name: 'My Team', season: '2025-26' });
       setCreatedTeamId(team.id);

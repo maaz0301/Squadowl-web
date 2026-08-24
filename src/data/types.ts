@@ -121,6 +121,20 @@ export const AthleteSchema = z.object({
 
 export type Athlete = z.infer<typeof AthleteSchema>;
 
+// Extra family members on an athlete's profile beyond the one primary
+// guardian on the athlete row itself — a second parent, a grandparent, an
+// emergency contact. Managed by the guardian from their own portal.
+export const FamilyContactSchema = z.object({
+  id: z.string(),
+  athleteId: z.string(),
+  name: z.string(),
+  relationship: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+});
+
+export type FamilyContact = z.infer<typeof FamilyContactSchema>;
+
 export const PlayerSchema = z.object({
   id: z.string(),
   athleteId: z.string().optional(),
