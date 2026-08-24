@@ -63,6 +63,7 @@ function NewAssessmentForm() {
   const assessmentCount = useAssessmentCountQuery();
   const user = useUser();
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Rubrics and assessors used to only be reachable on the settings screen
   // after creation — a second step for something coaches expect to finish in
@@ -189,55 +190,60 @@ function NewAssessmentForm() {
   const teamId = watch('teamId');
 
   const onSubmit = handleSubmit(async (data) => {
-    // The form renders before this has landed, so on a cold load the check
-    // waits for it here rather than reading a not-yet-loaded 0 and waving the
-    // user past their plan limit.
-    const count = assessmentCount.data ?? (await assessmentCount.refetch()).data ?? 0;
-    if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
-      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'assessments'));
-      return;
-    }
-    let tryout;
+    setSubmitting(true);
     try {
-      tryout = await createTryout.mutateAsync(data);
-    } catch (e) {
-      await alert('Error', e instanceof Error ? e.message : 'Could not create the assessment.');
-      return;
-    }
-    setCurrentTryout(tryout.id);
-
-    if (pendingAssessors.length || pendingRubrics.length) {
-      try {
-        const updated = await updateTryout.mutateAsync({
-          id: tryout.id,
-          updates: {
-            ...(pendingAssessors.length ? { assessors: pendingAssessors } : {}),
-            ...(pendingRubrics.length
-              ? { settings: { ...tryout.settings, customRubrics: pendingRubrics } }
-              : {}),
-          },
-        });
-        // Best-effort: the assessment and its assessor list are already saved,
-        // so a failed invite email shouldn't block the coach from moving on —
-        // they can still resend from the settings screen.
-        for (const a of updated.assessors) {
-          if (!a.email) continue;
-          try {
-            await getDataSource().sendEmail('tryout_invite', a.email, { role: 'assessor' });
-          } catch (err) {
-            console.error('Error sending assessor invite email', err);
-          }
-        }
-        toast('Assessment created', 'success');
-      } catch (e) {
-        await alert(
-          'Partial Save',
-          `The assessment was created, but saving its rubrics/assessors failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        );
+      // The form renders before this has landed, so on a cold load the check
+      // waits for it here rather than reading a not-yet-loaded 0 and waving the
+      // user past their plan limit.
+      const count = assessmentCount.data ?? (await assessmentCount.refetch()).data ?? 0;
+      if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
+        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'assessments'));
+        return;
       }
-    }
+      let tryout;
+      try {
+        tryout = await createTryout.mutateAsync(data);
+      } catch (e) {
+        await alert('Error', e instanceof Error ? e.message : 'Could not create the assessment.');
+        return;
+      }
+      setCurrentTryout(tryout.id);
 
-    router.replace(`/assessment/${tryout.id}/settings`);
+      if (pendingAssessors.length || pendingRubrics.length) {
+        try {
+          const updated = await updateTryout.mutateAsync({
+            id: tryout.id,
+            updates: {
+              ...(pendingAssessors.length ? { assessors: pendingAssessors } : {}),
+              ...(pendingRubrics.length
+                ? { settings: { ...tryout.settings, customRubrics: pendingRubrics } }
+                : {}),
+            },
+          });
+          // Best-effort: the assessment and its assessor list are already saved,
+          // so a failed invite email shouldn't block the coach from moving on —
+          // they can still resend from the settings screen.
+          for (const a of updated.assessors) {
+            if (!a.email) continue;
+            try {
+              await getDataSource().sendEmail('tryout_invite', a.email, { role: 'assessor' });
+            } catch (err) {
+              console.error('Error sending assessor invite email', err);
+            }
+          }
+          toast('Assessment created', 'success');
+        } catch (e) {
+          await alert(
+            'Partial Save',
+            `The assessment was created, but saving its rubrics/assessors failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
+          );
+        }
+      }
+
+      router.replace(`/assessment/${tryout.id}/settings`);
+    } finally {
+      setSubmitting(false);
+    }
   });
 
   // Neither query gates the form: the name, sport, date and location fields
@@ -266,7 +272,7 @@ function NewAssessmentForm() {
 
       <Card>
         <form onSubmit={onSubmit} className="flex flex-col gap-5">
-          <FormLock busy={createTryout.isPending} className="flex flex-col gap-5">
+          <FormLock busy={submitting} className="flex flex-col gap-5">
             <Controller
               control={control}
               name="name"
@@ -391,7 +397,7 @@ function NewAssessmentForm() {
 
           </FormLock>
 
-          <Button type="submit" label="Create Assessment" loading={createTryout.isPending} size="lg" />
+          <Button type="submit" label="Create Assessment" loading={submitting} size="lg" />
         </form>
       </Card>
 
