@@ -118,7 +118,7 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
             autoCapitalize="none"
             placeholder="coach@example.com"
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {TEAM_MANAGER_ROLES.map((r) => (
               <Chip key={r} label={ROLE_LABEL[r]} active={role === r} onClick={() => setRole(r)} />
             ))}

@@ -35,7 +35,7 @@ export default function SeasonsPage() {
           onAction={() => router.push('/season/new')}
         />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {seasons.map((s) => {
             const upcoming = s.events.filter((e) => e.date >= new Date().toISOString().split('T')[0]).length;
             return (

@@ -11,12 +11,13 @@ import {
   Button,
   Card,
   EmptyState,
+  CardGridSkeleton,
   ErrorState,
-  LoadingState,
   Modal,
   PageHeader,
   SectionLabel,
   Spinner,
+  useAlert,
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
@@ -26,8 +27,8 @@ import { useUser, usePermissions } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
 import {
   useTeamsQuery,
-  useTryoutsQuery,
-  useAssignedTryoutsQuery,
+  useTryoutSummariesQuery,
+  useAssignedTryoutSummariesQuery,
   useGuardianRostersQuery,
   useAcceptAssignmentMutation,
   useRejectAssignmentMutation,
@@ -35,10 +36,12 @@ import {
   useDeleteTryoutMutation,
 } from '@/features/queries';
 import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
+import { prefetchTryout } from '@/features/prefetch';
 
 export default function DashboardPage() {
   const colors = useThemeColors();
   const router = useRouter();
+  const { alert: showAlert, toast } = useAlert();
   const user = useUser();
   const setCurrentTryout = useSessionStore((s) => s.setCurrentTryout);
   const setActiveAssessor = useSessionStore((s) => s.setActiveAssessor);
@@ -57,16 +60,21 @@ export default function DashboardPage() {
   // pending state has propagated.
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const { isGuardian } = usePermissions();
+
+  // Summaries, not full tryouts: these cards show a name, a sport, a date and a
+  // headcount, and the full read drags every roster, evaluation, score and
+  // registration in the account along with it. See useTryoutSummariesQuery.
   const teamsQuery = useTeamsQuery();
-  const tryoutsQuery = useTryoutsQuery(false);
-  const assignedQuery = useAssignedTryoutsQuery();
-  const guardianQuery = useGuardianRostersQuery();
+  const tryoutsQuery = useTryoutSummariesQuery(false);
+  const assignedQuery = useAssignedTryoutSummariesQuery(!isGuardian);
+  // Guardians and coaches share this route but not this data — firing the
+  // guardian read for a coach was a round trip whose result is never rendered.
+  const guardianQuery = useGuardianRostersQuery(isGuardian);
   const acceptAssignment = useAcceptAssignmentMutation();
   const rejectAssignment = useRejectAssignmentMutation();
   const archiveTryout = useArchiveTryoutMutation();
   const deleteTryout = useDeleteTryoutMutation();
-
-  const { isGuardian } = usePermissions();
 
   const openAssigned = (id: string) => {
     setCurrentTryout(id);
@@ -110,7 +118,14 @@ export default function DashboardPage() {
   };
 
   if (isGuardian) {
-    if (guardianQuery.isLoading) return <LoadingState message="Loading portal..." />;
+    if (guardianQuery.isLoading) {
+      return (
+        <>
+          <PageHeader title="My Athletes" subtitle={`Hi, ${user?.displayName ?? 'Guardian'}`} />
+          <CardGridSkeleton count={2} lines={3} columns="sm:grid-cols-2" />
+        </>
+      );
+    }
     if (guardianQuery.isError) {
       return (
         <ErrorState
@@ -130,7 +145,7 @@ export default function DashboardPage() {
             message="Once a coach links your athlete to a tryout or season, they'll appear here."
           />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {athletes.map((ath) => (
               <Link key={ath.id} href={`/guardian/${ath.id}`}>
                 <Card interactive className="h-full">
@@ -180,20 +195,22 @@ export default function DashboardPage() {
     );
   }
 
-  if (teamsQuery.isLoading || tryoutsQuery.isLoading) return <LoadingState message="Loading dashboard..." />;
-  if (teamsQuery.isError || tryoutsQuery.isError) {
-    const errorMsg = teamsQuery.error?.message || tryoutsQuery.error?.message || 'Unknown error';
+  // Only the assessment list is worth blocking on. The teams list feeds one
+  // count badge, so waiting for it held the whole screen hostage to the slower
+  // of two independent requests; it now fills in where it lands.
+  if (tryoutsQuery.isError) {
     return (
       <ErrorState
-        message={`Could not load dashboard data: ${errorMsg}`}
+        message={`Could not load dashboard data: ${tryoutsQuery.error?.message || 'Unknown error'}`}
         onRetry={() => {
-          teamsQuery.refetch();
           tryoutsQuery.refetch();
+          teamsQuery.refetch();
         }}
       />
     );
   }
 
+  const loadingTryouts = tryoutsQuery.isLoading;
   const tryouts = tryoutsQuery.data ?? [];
   const teams = teamsQuery.data ?? [];
   const planTier = user?.planTier ?? 'free';
@@ -218,7 +235,9 @@ export default function DashboardPage() {
         }
       />
 
-      <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="assessments" />
+      {loadingTryouts ? null : (
+        <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="assessments" />
+      )}
 
       {canUseFeature(planTier, 'enterprise') ? (
         <Link href="/enterprise" className="mb-4 block">
@@ -238,11 +257,13 @@ export default function DashboardPage() {
       ) : null}
 
       {/* Overview & jump points */}
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card accent className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
             <Icon name="assessments" size={18} color={colors.primary} />
-            <Badge label={`${tryouts.length}`} variant="brand" />
+            {/* An em dash rather than 0 while the count is in flight — a real
+                zero and an unknown count are different things to a coach. */}
+            <Badge label={loadingTryouts ? '—' : `${tryouts.length}`} variant="brand" />
           </div>
           <span className="mt-1 text-sm font-bold" style={{ color: colors.ink }}>
             Evaluations
@@ -256,7 +277,7 @@ export default function DashboardPage() {
           <Card interactive className="flex h-full flex-col gap-1">
             <div className="flex items-center justify-between">
               <Icon name="teams" size={18} color={colors.primary} />
-              <Badge label={`${teams.length}`} />
+              <Badge label={teamsQuery.isLoading ? '—' : `${teams.length}`} />
             </div>
             <span className="mt-1 text-sm font-bold" style={{ color: colors.ink }}>
               Teams
@@ -314,7 +335,7 @@ export default function DashboardPage() {
                           {t.name}
                         </span>
                         <span className="block text-sm" style={{ color: colors.inkMuted }}>
-                          {t.sport} · {t.roster?.length ?? 0} players
+                          {t.sport} · {t.playerCount} players
                         </span>
                       </span>
                       <Badge label="Score" variant="brand" />
@@ -361,7 +382,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {tryouts.length === 0 ? (
+      {loadingTryouts ? (
+        <CardGridSkeleton count={4} lines={2} columns="sm:grid-cols-2" />
+      ) : tryouts.length === 0 ? (
         <EmptyState
           title="No assessments yet"
           message="Create your first tryout or evaluation to begin scoring players."
@@ -369,7 +392,7 @@ export default function DashboardPage() {
           onAction={newAssessment}
         />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {tryouts.map((item) => {
             const selected = combineIds.includes(item.id);
             const isBusy = busyId === item.id;
@@ -380,6 +403,11 @@ export default function DashboardPage() {
                 accent={selected || combineMode}
                 className="flex h-full items-start justify-between gap-3"
                 style={isBusy ? { opacity: 0.5 } : undefined}
+                // The roster screen this opens needs the full assessment, which
+                // the summary list deliberately doesn't carry. Starting that read
+                // on hover/touch usually covers the whole gap before the tap.
+                onMouseEnter={() => prefetchTryout(item.id)}
+                onTouchStart={() => prefetchTryout(item.id)}
                 onClick={() => {
                   if (isBusy) return;
                   openTryout(item.id);
@@ -403,7 +431,7 @@ export default function DashboardPage() {
                 </span>
                 <span className="flex flex-col items-end gap-2">
                   <span className="flex items-center gap-2">
-                    <Badge label={`${item.roster?.length ?? 0} players`} />
+                    <Badge label={`${item.playerCount} players`} />
                     {isBusy ? (
                       <Spinner size={16} color={colors.danger} />
                     ) : (
@@ -444,7 +472,17 @@ export default function DashboardPage() {
             onClick={() => {
               if (actionTryout) {
                 setBusyId(actionTryout.id);
-                archiveTryout.mutate(actionTryout.id, { onSettled: () => setBusyId(null) });
+                const { id, name } = actionTryout;
+                // The mutation drops the card from the cached list itself once
+                // the server confirms, so there is nothing to remove here — but
+                // a rejected write used to fail silently, leaving the card in
+                // place with no explanation.
+                archiveTryout.mutate(id, {
+                  onSettled: () => setBusyId(null),
+                  onSuccess: () => toast(`"${name}" archived`, 'success'),
+                  onError: (e) =>
+                    showAlert('Error', e instanceof Error ? e.message : 'Could not archive this assessment.'),
+                });
               }
               setActionTryout(null);
             }}
@@ -455,7 +493,13 @@ export default function DashboardPage() {
             onClick={() => {
               if (actionTryout) {
                 setBusyId(actionTryout.id);
-                deleteTryout.mutate(actionTryout.id, { onSettled: () => setBusyId(null) });
+                const { id, name } = actionTryout;
+                deleteTryout.mutate(id, {
+                  onSettled: () => setBusyId(null),
+                  onSuccess: () => toast(`"${name}" deleted`, 'success'),
+                  onError: (e) =>
+                    showAlert('Error', e instanceof Error ? e.message : 'Could not delete this assessment.'),
+                });
               }
               setActionTryout(null);
             }}

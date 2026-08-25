@@ -68,7 +68,14 @@ function AuthCallback() {
   if (!error) return <LoadingState />;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center" style={{ backgroundColor: colors.bg }}>
+    <div
+      className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center"
+      style={{
+        backgroundColor: colors.bg,
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}
+    >
       <h1 className="text-xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
         Verification failed
       </h1>

@@ -12,6 +12,7 @@ import {
   Badge,
   Button,
   Card,
+  CardGridSkeleton,
   Chip,
   DateField,
   ErrorState,
@@ -94,11 +95,20 @@ function PlayerDetailRow({ label, value, colors }: { label: string; value?: stri
   );
 }
 
-function StatTile({ label, value, colors }: { label: string; value: number; colors: AppTheme['colors'] }) {
+function StatTile({
+  label,
+  value,
+  colors,
+}: {
+  label: string;
+  /** undefined while the count is still loading — rendered as an em dash. */
+  value: number | undefined;
+  colors: AppTheme['colors'];
+}) {
   return (
     <div className="flex-1 rounded-xl p-3" style={{ backgroundColor: colors.tile }}>
       <p className="text-xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-        {value}
+        {value ?? '—'}
       </p>
       <p className="mt-0.5 text-xs" style={{ color: colors.inkMuted }}>
         {label}
@@ -215,7 +225,13 @@ export default function TeamDetailPage() {
   const eventType = eventForm.watch('type');
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
 
-  if (teamsQuery.isLoading || tryoutsQuery.isLoading) return <LoadingState message="Loading team..." />;
+  // Deliberately not gated on tryoutsQuery. The full assessment read (rosters,
+  // evaluations, scores, registrations for the whole account) only feeds the
+  // Assessments tab and the add-players candidate picker, but waiting for it
+  // held back the team's name, schedule and roster too — the slowest request on
+  // the screen decided when any of it appeared. Each dependent piece now shows
+  // its own placeholder while it lands.
+  if (teamsQuery.isLoading) return <LoadingState message="Loading team..." />;
   if (teamsQuery.isError || tryoutsQuery.isError) {
     return (
       <>
@@ -256,6 +272,7 @@ export default function TeamDetailPage() {
   // rejected with a raw "new row violates row-level security policy" error.
   const canEditTeam = !!team.managed || canManageTeam;
 
+  const tryoutsLoading = tryoutsQuery.isLoading;
   const linkedTryouts = (tryoutsQuery.data ?? []).filter((t) => t.teamId === team.id);
   const unlinkedTryouts = (tryoutsQuery.data ?? []).filter((t) => !t.teamId);
   const canCollectFees = canUseFeature(effectiveTier, 'payments');
@@ -641,14 +658,14 @@ export default function TeamDetailPage() {
       <div className="mb-5 flex gap-2">
         <StatTile label="Players" value={teamPlayers.length} colors={colors} />
         <StatTile label="Upcoming" value={upcomingEvents.length} colors={colors} />
-        <StatTile label="Assessments" value={linkedTryouts.length} colors={colors} />
+        <StatTile label="Assessments" value={tryoutsLoading ? undefined : linkedTryouts.length} colors={colors} />
       </div>
 
       <Tabs
         tabs={[
           { key: 'schedule', label: 'Schedule', badge: upcomingEvents.length },
           { key: 'players', label: 'Players', badge: teamPlayers.length },
-          { key: 'assessments', label: 'Assessments', badge: linkedTryouts.length },
+          { key: 'assessments', label: 'Assessments', badge: tryoutsLoading ? undefined : linkedTryouts.length },
           { key: 'chat', label: 'Chat' },
           { key: 'settings', label: 'Settings' },
         ]}
@@ -680,7 +697,7 @@ export default function TeamDetailPage() {
               </span>
             </Card>
           ) : (
-            <div className="grid gap-3 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {scheduleEvents.map((ev) => {
                 const rsvp = rsvpSummary(ev);
                 const expanded = openRsvpEventId === ev.id;
@@ -853,7 +870,7 @@ export default function TeamDetailPage() {
               <Button label="Clear search" variant="ghost" size="sm" onClick={() => setPlayerSearch('')} />
             </Card>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {filteredTeamPlayers.map((p) => (
                 <Card key={p.id} className="flex items-center gap-3">
                   <button
@@ -898,7 +915,9 @@ export default function TeamDetailPage() {
               onClick={() => setShowAttachModal(true)}
             />
           </div>
-          {linkedTryouts.length === 0 ? (
+          {tryoutsLoading ? (
+            <CardGridSkeleton count={2} lines={1} columns="sm:grid-cols-2" />
+          ) : linkedTryouts.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
                 No assessments linked
@@ -908,7 +927,7 @@ export default function TeamDetailPage() {
               </span>
             </Card>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {linkedTryouts.map((t) => (
                 <Card
                   key={t.id}
@@ -931,7 +950,7 @@ export default function TeamDetailPage() {
           )}
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {canEditTeam ? (
             <Card className="flex flex-col items-start gap-2">
               <SectionLabel>Team</SectionLabel>
@@ -985,7 +1004,7 @@ export default function TeamDetailPage() {
             <>
               <div className="flex flex-col gap-2">
                 <SectionLabel>Are you collecting fees?</SectionLabel>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Chip label="No" active={!collectsFees} onClick={() => setCollectsFees(false)} />
                   <Chip label="Yes" active={collectsFees} onClick={() => setCollectsFees(true)} />
                 </div>
@@ -1014,7 +1033,9 @@ export default function TeamDetailPage() {
       </Modal>
 
       <Modal visible={showAttachModal} title="Attach Assessment" onClose={() => setShowAttachModal(false)}>
-        {unlinkedTryouts.length === 0 ? (
+        {tryoutsLoading ? (
+          <LoadingState message="Loading assessments..." />
+        ) : unlinkedTryouts.length === 0 ? (
           <p className="p-3" style={{ color: colors.inkMuted }}>
             No assessments available to link.
           </p>
@@ -1094,6 +1115,8 @@ export default function TeamDetailPage() {
                 : 'Adding players...'
             }
           />
+        ) : tryoutsLoading ? (
+          <LoadingState message="Loading players..." />
         ) : candidates.length === 0 ? (
           <p className="py-3 text-sm" style={{ color: colors.inkMuted }}>
             No assessments have players yet — add players to an assessment roster first.

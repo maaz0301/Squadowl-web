@@ -54,8 +54,11 @@ export function useFieldStyle(error?: string) {
   } as const;
 }
 
+// text-base (16px) on phones, 15px from sm up. Anything under 16px makes iOS
+// Safari zoom the page in on focus and never zoom back out; the Tailwind class
+// outranks the global input rule, so the breakpoint has to live here.
 const CONTROL_CLASS =
-  'w-full rounded-xl border px-4 py-3 text-[15px] min-h-[48px] outline-none transition-colors focus:border-[color:var(--c-primary)]';
+  'w-full rounded-xl border px-4 py-3 text-base sm:text-[15px] min-h-[48px] outline-none transition-colors focus:border-[color:var(--c-primary)]';
 
 interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label?: string;
@@ -127,7 +130,7 @@ export function Input({
             type="button"
             onClick={() => setShow((v) => !v)}
             aria-label={show ? 'Hide password' : 'Show password'}
-            className="absolute right-3 flex items-center justify-center p-1"
+            className="absolute right-1 flex h-11 w-11 items-center justify-center rounded-lg"
           >
             <EyeIcon visible={show} color={colors.inkMuted} />
           </button>
@@ -239,7 +242,10 @@ export function Checkbox({
   const colors = useThemeColors();
   return (
     <label
-      className={cn('flex items-center gap-2.5 cursor-pointer select-none', disabled && 'opacity-50 pointer-events-none')}
+      className={cn(
+        'flex min-h-[44px] items-center gap-2.5 cursor-pointer select-none',
+        disabled && 'opacity-50 pointer-events-none',
+      )}
     >
       <span
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] border text-[12px] font-bold text-white transition-colors"
@@ -278,23 +284,34 @@ export function Switch({
 }) {
   const colors = useThemeColors();
   return (
-    <label className={cn('flex items-center gap-3 cursor-pointer select-none', disabled && 'opacity-50 pointer-events-none')}>
+    <label
+      className={cn(
+        'flex min-h-[44px] items-center gap-3 cursor-pointer select-none',
+        disabled && 'opacity-50 pointer-events-none',
+      )}
+    >
       <button
         type="button"
         role="switch"
         aria-checked={checked}
         disabled={disabled}
         onClick={() => onChange(!checked)}
-        className="relative h-6 w-11 shrink-0 rounded-full border transition-colors"
-        style={{
-          backgroundColor: checked ? colors.primary : colors.tile,
-          borderColor: checked ? colors.primary : colors.border,
-        }}
+        // The track is only 24px tall; the padding lifts the tap target to 44px
+        // and the matching negative margin keeps the row laid out as before.
+        className="-my-2.5 shrink-0 py-2.5"
       >
         <span
-          className="absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white transition-[left]"
-          style={{ left: checked ? 22 : 2 }}
-        />
+          className="relative block h-6 w-11 rounded-full border transition-colors"
+          style={{
+            backgroundColor: checked ? colors.primary : colors.tile,
+            borderColor: checked ? colors.primary : colors.border,
+          }}
+        >
+          <span
+            className="absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white transition-[left]"
+            style={{ left: checked ? 22 : 2 }}
+          />
+        </span>
       </button>
       {label ? (
         <span className="text-[15px]" style={{ color: colors.ink }}>

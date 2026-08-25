@@ -162,7 +162,7 @@ export default function UpgradePage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {PLAN_DEFINITIONS.map((item) => {
           const isCurrent = user?.planTier === item.tier;
           const targetRank = TIER_RANKS[item.tier] ?? 0;

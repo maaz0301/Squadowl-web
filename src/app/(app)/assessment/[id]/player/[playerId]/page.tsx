@@ -255,7 +255,7 @@ export default function PlayerHubPage() {
         }
       />
 
-      <div className="grid min-w-0 gap-5 lg:grid-cols-[280px_1fr]">
+      <div className="grid grid-cols-1 min-w-0 gap-5 lg:grid-cols-[280px_1fr]">
         <div className="flex min-w-0 flex-col gap-5">
           <Card className="flex flex-col items-center gap-2 py-6">
             <Avatar first={player.first} last={player.last} pos={player.pos} size={88} uri={player.avatarUrl} />
