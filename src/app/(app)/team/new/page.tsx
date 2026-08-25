@@ -308,7 +308,7 @@ export default function NewTeamPage() {
                   autoCapitalize="none"
                   placeholder="coach@example.com"
                 />
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {TEAM_MANAGER_ROLES.map((r) => (
                     <Chip
                       key={r}
@@ -325,7 +325,7 @@ export default function NewTeamPage() {
               <>
                 <div className="flex flex-col gap-2">
                   <SectionLabel>Are you collecting fees?</SectionLabel>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Chip label="No" active={!collectsFees} onClick={() => setCollectsFees(false)} />
                     <Chip label="Yes" active={collectsFees} onClick={() => setCollectsFees(true)} />
                   </div>

@@ -93,9 +93,13 @@ export default function SignupPage() {
 
       <Button type="submit" label="Create Account" loading={loading} fullWidth size="lg" />
 
-      <div className="flex justify-center gap-1.5 text-sm">
+      <div className="flex flex-wrap items-center justify-center gap-x-1.5 text-sm">
         <span style={{ color: colors.inkMuted }}>Already have an account?</span>
-        <Link href="/login" className="font-bold" style={{ color: colors.primary }}>
+        <Link
+          href="/login"
+          className="inline-flex min-h-[44px] items-center px-2 font-bold"
+          style={{ color: colors.primary }}
+        >
           Sign in
         </Link>
       </div>

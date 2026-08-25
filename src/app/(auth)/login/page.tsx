@@ -72,15 +72,23 @@ function LoginForm() {
 
       <Button type="submit" label="Sign In" loading={loading} fullWidth size="lg" />
 
-      <div className="flex justify-center py-1">
-        <Link href="/forgot-password" className="text-sm font-bold" style={{ color: colors.primary }}>
+      <div className="flex justify-center">
+        <Link
+          href="/forgot-password"
+          className="inline-flex min-h-[44px] items-center px-2 text-sm font-bold"
+          style={{ color: colors.primary }}
+        >
           Forgot Password?
         </Link>
       </div>
 
-      <div className="flex justify-center gap-1.5 text-sm">
+      <div className="flex flex-wrap items-center justify-center gap-x-1.5 text-sm">
         <span style={{ color: colors.inkMuted }}>Don&apos;t have an account?</span>
-        <Link href="/signup" className="font-bold" style={{ color: colors.primary }}>
+        <Link
+          href="/signup"
+          className="inline-flex min-h-[44px] items-center px-2 font-bold"
+          style={{ color: colors.primary }}
+        >
           Create account
         </Link>
       </div>

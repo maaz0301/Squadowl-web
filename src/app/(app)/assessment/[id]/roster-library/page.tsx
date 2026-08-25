@@ -90,7 +90,7 @@ export default function RosterLibraryPage() {
       {library.length === 0 ? (
         <EmptyState title="Library empty" message="Add players to other assessments first." />
       ) : (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {library.map((item) => {
             const isSelected = selected.has(item.key);
             return (

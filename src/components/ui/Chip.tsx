@@ -35,8 +35,10 @@ export function Chip({ label, active, highlight, disabled, onClick, className }:
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'inline-flex min-h-[36px] items-center rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors',
-        !disabled && onClick && 'hover:brightness-125',
+        // 40px tall: these are the session pickers coaches tap one-handed at
+        // the rink, so they need a real target rather than a label-sized one.
+        'inline-flex min-h-[40px] shrink-0 items-center rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-[filter,transform] duration-150',
+        !disabled && onClick && 'hover:brightness-125 active:scale-[0.97]',
         disabled && 'opacity-30 pointer-events-none',
         className,
       )}

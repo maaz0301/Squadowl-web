@@ -17,6 +17,13 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
+      // Well past staleTime on purpose. staleTime decides when to refetch;
+      // gcTime decides how long the answer survives having no subscriber. At
+      // the 5-minute default, wandering off to a team page and back after a
+      // few minutes dropped the dashboard's cached list, so the screen fell
+      // all the way back to a blocking spinner instead of painting the old
+      // list and refreshing it underneath.
+      gcTime: 30 * 60_000,
       retry: 1,
       refetchOnWindowFocus: false,
     },
@@ -31,6 +38,7 @@ export const queryKeys = {
   profile: ['profile'] as const,
   teams: ['teams'] as const,
   teamCount: ['teams', 'count'] as const,
+  teamRoster: (teamId: string) => ['teams', teamId, 'roster'] as const,
   teamManagers: (teamId?: string) => (teamId ? (['team', teamId, 'managers'] as const) : (['team', 'managers'] as const)),
   teamBuilderResults: (tryoutId: string) => ['tryout', tryoutId, 'teamBuilderResults'] as const,
   teamMessages: (seasonId: string) => ['season', seasonId, 'messages'] as const,
@@ -40,8 +48,17 @@ export const queryKeys = {
   athleteShare: (shareId: string) => ['athleteShare', shareId] as const,
   shareComments: (shareId: string) => ['shareComments', shareId] as const,
   tryouts: (archived?: boolean) => ['tryouts', { archived }] as const,
+  /**
+   * The light list-screen read (listTryoutSummaries). Keyed as a *superset* of
+   * `tryouts(archived)` on purpose: react-query matches object segments
+   * partially, so every existing `invalidateQueries({ queryKey: tryouts(x) })`
+   * refreshes the summaries too and no write path had to learn a second key.
+   */
+  tryoutSummaries: (archived?: boolean) => ['tryouts', { archived, view: 'summary' }] as const,
   assessmentCount: ['tryouts', 'count'] as const,
   assignedTryouts: ['tryouts', 'assigned'] as const,
+  /** Same superset trick as tryoutSummaries, against `assignedTryouts`. */
+  assignedTryoutSummaries: ['tryouts', 'assigned', { view: 'summary' }] as const,
   tryout: (id: string) => ['tryout', id] as const,
   registrations: (tryoutId: string) => ['registrations', tryoutId] as const,
   results: (tryoutId: string) => ['results', tryoutId] as const,

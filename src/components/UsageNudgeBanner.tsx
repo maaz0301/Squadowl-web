@@ -54,19 +54,22 @@ export function UsageNudgeBanner({ tier, metric, count, label }: Props) {
 
   return (
     <Card
-      className="mb-3 flex items-center gap-3"
+      className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2"
       // Being full is a harder state than approaching full, so it reads red.
       style={{ borderLeftWidth: 3, borderLeftColor: atLimit ? colors.danger : colors.warning }}
     >
-      <span className="flex-1 text-sm" style={{ color: colors.ink }}>
+      {/* min-w keeps the message from shrinking to a one-word column: once the
+          text has less than ~10rem the actions wrap to their own line instead,
+          staying side by side rather than stacking. */}
+      <span className="min-w-[10rem] flex-1 text-sm" style={{ color: colors.ink }}>
         {message}
       </span>
-      <div className="flex flex-col items-end gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-3">
         {ctaLabel ? <Button label={ctaLabel} size="sm" onClick={() => router.push('/upgrade')} /> : null}
         <button
           type="button"
           onClick={() => setDismissed(true)}
-          className="text-center text-xs"
+          className="min-h-[40px] px-1 text-xs"
           style={{ color: colors.inkMuted }}
         >
           Dismiss

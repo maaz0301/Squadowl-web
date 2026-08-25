@@ -26,7 +26,7 @@ export default function SeasonHubPage() {
     .slice(0, 3);
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,320px)_1fr] lg:items-start">
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,320px)_1fr] lg:items-start">
       <Card accent className="flex flex-col gap-2">
         <span className="text-xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
           {season.teamName}

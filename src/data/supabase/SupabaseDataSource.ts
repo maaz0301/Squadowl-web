@@ -74,6 +74,7 @@ import type {
   TeamMessage,
   TeamRosterPlayer,
   Tryout,
+  TryoutSummary,
   UserProfile,
 } from '../types';
 
@@ -1591,7 +1592,14 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // ─── Tryouts ──────────────────────────────────────────────────────────────────
-  async listTryouts(includeArchived = false): Promise<Tryout[]> {
+  /**
+   * Every tryout row the caller can see, from all three sources, de-duplicated.
+   *
+   * The three reads go out together rather than one after another: they are
+   * independent, and awaiting them in series put three full round trips in
+   * front of the dashboard before any child data was even requested.
+   */
+  private async fetchVisibleTryoutRows(includeArchived: boolean): Promise<Row[]> {
     const { supabase, accountId } = await this.ctx();
     let q = supabase
       .from('tryouts')
@@ -1600,37 +1608,100 @@ export class SupabaseDataSource implements DataSource {
       .is('deleted_at', null)
       .order('created_at', { ascending: false });
     if (!includeArchived) q = q.eq('archived', false);
-    const rows = unwrap(await q) as Row[];
 
     // Assessments linked to a team delegated to this user (CLUB mode) live on
     // the club's account, so the account_id filter above can't see them — same
     // reasoning as listTeams()'s managed-teams merge. Pre-migration instances
     // have no such function; own tryouts are still correct without it.
-    const { data: managedRows, error: managedErr } = await supabase.rpc('list_tryouts_for_managed_teams');
-    if (managedErr) {
-      console.log('list_tryouts_for_managed_teams unavailable:', managedErr.message);
-      return this.assembleTryouts(rows);
-    }
-
-    // Mirror image of the above: a manager creating a *new* assessment for a
-    // team always inserts it under their own account (createTryout always
+    //
+    // The second RPC is the mirror image: a manager creating a *new* assessment
+    // for a team always inserts it under their own account (createTryout always
     // does), so the club owner needs this to see it too — without it, a team
     // the club owns could have assessments on it the club's own staff never
     // see listed, only the delegate who happened to create them.
-    const { data: ownedTeamRows, error: ownedErr } = await supabase.rpc('list_tryouts_on_my_owned_teams');
-    if (ownedErr) {
-      console.log('list_tryouts_on_my_owned_teams unavailable:', ownedErr.message);
+    const [ownRes, managedRes, ownedTeamRes] = await Promise.all([
+      q,
+      supabase.rpc('list_tryouts_for_managed_teams'),
+      supabase.rpc('list_tryouts_on_my_owned_teams'),
+    ]);
+
+    const rows = unwrap(ownRes) as Row[];
+    if (managedRes.error) console.log('list_tryouts_for_managed_teams unavailable:', managedRes.error.message);
+    if (ownedTeamRes.error) console.log('list_tryouts_on_my_owned_teams unavailable:', ownedTeamRes.error.message);
+
+    const seen = new Set(rows.map((t) => t.id as string));
+    const extra: Row[] = [];
+    for (const source of [managedRes.data, ownedTeamRes.data]) {
+      for (const t of (source ?? []) as Row[]) {
+        if (seen.has(t.id)) continue;
+        if (t.deleted_at || (!includeArchived && t.archived)) continue;
+        seen.add(t.id);
+        extra.push(t);
+      }
     }
+    return [...rows, ...extra];
+  }
 
-    const ownIds = new Set(rows.map((t) => t.id));
-    const managed = ((managedRows ?? []) as Row[]).filter(
-      (t) => !ownIds.has(t.id) && !t.deleted_at && (includeArchived || !t.archived),
-    );
-    const onOwnedTeams = ((ownedTeamRows ?? []) as Row[]).filter(
-      (t) => !ownIds.has(t.id) && !managed.some((m) => m.id === t.id) && !t.deleted_at && (includeArchived || !t.archived),
-    );
+  async listTryouts(includeArchived = false): Promise<Tryout[]> {
+    return this.assembleTryouts(await this.fetchVisibleTryoutRows(includeArchived));
+  }
 
-    return this.assembleTryouts([...rows, ...managed, ...onOwnedTeams]);
+  /**
+   * The list screens' read — see TryoutSummary.
+   *
+   * assembleTryouts() pulls every participant (joined to its athlete), every
+   * evaluation (joined to its scores) and every registration in the account to
+   * produce cards that show a name, a sport, a date and a headcount. Here the
+   * only child read is a single column off tryout_participants, counted in JS,
+   * so the payload stops scaling with how much scoring an account has done.
+   */
+  async listTryoutSummaries(includeArchived = false): Promise<TryoutSummary[]> {
+    return this.summariseTryouts(await this.fetchVisibleTryoutRows(includeArchived));
+  }
+
+  private async summariseTryouts(tryoutRows: Row[]): Promise<TryoutSummary[]> {
+    if (tryoutRows.length === 0) return [];
+    const supabase = getSupabase();
+    const ids = tryoutRows.map((t) => t.id as string);
+
+    const [pRows, aRows] = await Promise.all([
+      // Same removed_at filter as assembleTryouts — soft-deleted participants
+      // are off the active roster, so they must not be counted on the card.
+      fetchAllRows<Row>((from, to) =>
+        supabase
+          .from('tryout_participants')
+          .select('tryout_id')
+          .in('tryout_id', ids)
+          .is('removed_at', null)
+          .range(from, to),
+      ),
+      fetchAllRows<Row>((from, to) =>
+        supabase.from('tryout_assessors').select('*').in('tryout_id', ids).range(from, to),
+      ),
+    ]);
+
+    const countByTryout: Record<string, number> = {};
+    for (const p of pRows) countByTryout[p.tryout_id] = (countByTryout[p.tryout_id] ?? 0) + 1;
+    const assessorsByTryout: Record<string, Assessor[]> = {};
+    for (const a of aRows) (assessorsByTryout[a.tryout_id] ??= []).push(this.rowToAssessor(a));
+
+    return tryoutRows.map((t) => ({
+      id: t.id,
+      name: t.name,
+      teamId: t.team_id ?? undefined,
+      seasonId: t.season_id ?? undefined,
+      createdAt: toMs(t.created_at),
+      updatedAt: toMs(t.updated_at),
+      eventType: EVENT_TYPE_FROM_DB[t.event_type] ?? 'Tryout',
+      tryoutDate: t.tryout_date ?? undefined,
+      startTime: t.start_time ?? undefined,
+      rink: t.location ?? undefined,
+      sport: t.sport,
+      sportOther: t.sport_other ?? undefined,
+      assessors: assessorsByTryout[t.id] ?? [],
+      playerCount: countByTryout[t.id] ?? 0,
+      archived: !!t.archived,
+    }));
   }
 
   /**
@@ -1671,6 +1742,10 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async listAssignedTryouts(): Promise<Tryout[]> {
+    return this.assembleTryouts(await this.fetchAssignedTryoutRows());
+  }
+
+  private async fetchAssignedTryoutRows(): Promise<Row[]> {
     const { supabase, userId, accountId } = await this.ctx();
     const links = unwrap(
       await supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId).neq('status', 'declined'),
@@ -1698,8 +1773,16 @@ export class SupabaseDataSource implements DataSource {
       ...((managedRes.data ?? []) as Row[]).map((t) => t.id as string),
       ...((ownedTeamRes.data ?? []) as Row[]).map((t) => t.id as string),
     ]);
-    const assigned = rows.filter((t) => !ownIds.has(t.id as string));
-    return this.assembleTryouts(assigned);
+    return rows.filter((t) => !ownIds.has(t.id as string));
+  }
+
+  /**
+   * listAssignedTryouts() in the light shape — see listTryoutSummaries(). The
+   * dashboard's "Assigned to me" list only needs the name, sport, headcount and
+   * the caller's own assessor row (to know whether the invite is still pending).
+   */
+  async listAssignedTryoutSummaries(): Promise<TryoutSummary[]> {
+    return this.summariseTryouts(await this.fetchAssignedTryoutRows());
   }
 
   async acceptAssignedTryout(tryoutId: string): Promise<void> {

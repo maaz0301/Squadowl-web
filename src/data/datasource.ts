@@ -27,6 +27,7 @@ import type {
   Team,
   TeamBuilderResult,
   Tryout,
+  TryoutSummary,
   UserProfile,
 } from './types';
 import type { TeamBuilderConfig, TeamBuilderState } from './teamBuilder';
@@ -57,10 +58,19 @@ export interface DataSource {
 
   // Tryouts
   listTryouts(includeArchived?: boolean): Promise<Tryout[]>;
+  /**
+   * Card-shaped tryouts for the list screens — see TryoutSummary. Prefer this
+   * over listTryouts() anywhere the screen only draws names, dates and roster
+   * counts; it skips the participant, athlete, evaluation, score and
+   * registration reads entirely.
+   */
+  listTryoutSummaries(includeArchived?: boolean): Promise<TryoutSummary[]>;
   /** Assessment count for plan limit checks, without assembling every roster and evaluation. */
   countAssessments(): Promise<number>;
   /** Tryouts the current user is invited to as an assessor (not owned by their account). */
   listAssignedTryouts(): Promise<Tryout[]>;
+  /** listAssignedTryouts() in the light shape the dashboard's "Assigned to me" list needs. */
+  listAssignedTryoutSummaries(): Promise<TryoutSummary[]>;
   acceptAssignedTryout(tryoutId: string): Promise<void>;
   rejectAssignedTryout(tryoutId: string): Promise<void>;
   getTryout(id: string): Promise<Tryout | null>;

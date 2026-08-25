@@ -247,6 +247,39 @@ export const TryoutSchema = z.object({
 
 export type Tryout = z.infer<typeof TryoutSchema>;
 
+/**
+ * What the list screens actually render for a tryout: the card fields plus a
+ * roster headcount.
+ *
+ * The full `Tryout` carries every participant, athlete, assessor, evaluation,
+ * evaluation score and registration attached to it. The dashboard and the
+ * archived list only ever show a name, a sport, a date and "N players", so
+ * assembling the full object to draw those cards meant the slowest query in
+ * the app sat in front of the first screen a coach sees after signing in.
+ * `listTryoutSummaries()` fills this shape instead — the tryout rows plus one
+ * narrow count query — and the heavy read stays where the data is genuinely
+ * needed (a single assessment, search, combine, exports).
+ */
+export interface TryoutSummary {
+  id: string;
+  name: string;
+  teamId?: string;
+  seasonId?: string;
+  createdAt: number;
+  updatedAt: number;
+  eventType: EventType;
+  tryoutDate?: string;
+  startTime?: string;
+  rink?: string;
+  sport: Sport;
+  sportOther?: string;
+  /** Small enough to come along for free, and the assigned list needs it. */
+  assessors: Assessor[];
+  /** Active roster size — soft-removed participants excluded, as elsewhere. */
+  playerCount: number;
+  archived: boolean;
+}
+
 export const TeamSchema = z.object({
   id: z.string(),
   name: z.string(),
