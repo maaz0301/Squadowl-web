@@ -63,6 +63,8 @@ export const queryKeys = {
   registrations: (tryoutId: string) => ['registrations', tryoutId] as const,
   results: (tryoutId: string) => ['results', tryoutId] as const,
   seasons: ['seasons'] as const,
+  /** Same superset trick as tryoutSummaries, against `seasons`. */
+  seasonSummaries: ['seasons', { view: 'summary' }] as const,
   season: (id: string) => ['season', id] as const,
   org: ['org'] as const,
   orgMembers: (userId?: string) => userId ? ['org', 'members', userId] as const : ['org', 'members'] as const,

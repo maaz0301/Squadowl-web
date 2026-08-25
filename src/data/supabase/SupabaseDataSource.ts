@@ -68,6 +68,7 @@ import type {
   Season,
   SeasonEvent,
   SeasonPlayer,
+  SeasonSummary,
   Sport,
   Team,
   TeamBuilderResult,
@@ -3842,6 +3843,60 @@ export class SupabaseDataSource implements DataSource {
     );
 
     return this.assembleSeasons([...rows, ...managed, ...onOwnedTeams], true);
+  }
+
+  /**
+   * The Teams list's read — see SeasonSummary. Same three row sources as
+   * listSeasons(), but instead of assembleSeasons() pulling every event, every
+   * roster entry (each joined to its full athlete row), RSVP availability and
+   * portal invite in the account, this only counts rows off two single-column
+   * queries. The card only ever shows "N players · M events".
+   */
+  async listSeasonSummaries(): Promise<SeasonSummary[]> {
+    const { supabase, accountId } = await this.ctx();
+    const rows = unwrap(
+      await supabase.from('seasons').select('id, team_id').eq('account_id', accountId).eq('archived', false),
+    ) as Row[];
+
+    const [managedRes, ownedTeamRes] = await Promise.all([
+      supabase.rpc('list_seasons_for_managed_teams'),
+      supabase.rpc('list_seasons_on_my_owned_teams'),
+    ]);
+    if (managedRes.error) console.log('list_seasons_for_managed_teams unavailable:', managedRes.error.message);
+    if (ownedTeamRes.error) console.log('list_seasons_on_my_owned_teams unavailable:', ownedTeamRes.error.message);
+
+    const ownIds = new Set(rows.map((s) => s.id as string));
+    const extra: Row[] = [];
+    for (const source of [managedRes.data, ownedTeamRes.data]) {
+      for (const s of (source ?? []) as Row[]) {
+        if (ownIds.has(s.id) || extra.some((e) => e.id === s.id)) continue;
+        extra.push(s);
+      }
+    }
+    const allRows = [...rows, ...extra];
+    if (allRows.length === 0) return [];
+
+    const ids = allRows.map((s) => s.id as string);
+    const [eventRows, rosterRows] = await Promise.all([
+      fetchAllRows<Row>((from, to) =>
+        supabase.from('season_events').select('season_id').in('season_id', ids).range(from, to),
+      ),
+      fetchAllRows<Row>((from, to) =>
+        supabase.from('season_roster').select('season_id').in('season_id', ids).range(from, to),
+      ),
+    ]);
+
+    const eventCountBySeason: Record<string, number> = {};
+    for (const e of eventRows) eventCountBySeason[e.season_id] = (eventCountBySeason[e.season_id] ?? 0) + 1;
+    const playerCountBySeason: Record<string, number> = {};
+    for (const r of rosterRows) playerCountBySeason[r.season_id] = (playerCountBySeason[r.season_id] ?? 0) + 1;
+
+    return allRows.map((s) => ({
+      id: s.id as string,
+      teamId: (s.team_id as string | null) ?? undefined,
+      playerCount: playerCountBySeason[s.id as string] ?? 0,
+      eventCount: eventCountBySeason[s.id as string] ?? 0,
+    }));
   }
 
   async getSeason(id: string): Promise<Season | null> {

@@ -219,10 +219,11 @@ export function useRejectAssignmentMutation() {
 }
 
 // ---- Tryouts ----
-export function useTryoutsQuery(includeArchived = false) {
+export function useTryoutsQuery(includeArchived = false, enabled = true) {
   return useQuery({
     queryKey: queryKeys.tryouts(includeArchived),
     queryFn: () => getDataSource().listTryouts(includeArchived),
+    enabled,
   });
 }
 
@@ -899,6 +900,19 @@ export function useSeasonsQuery() {
   return useQuery({
     queryKey: queryKeys.seasons,
     queryFn: () => getDataSource().listSeasons(),
+  });
+}
+
+/**
+ * The Teams list's read — player and event counts only, without every
+ * roster entry's joined athlete row, RSVP availability or portal invite. See
+ * `listSeasonSummaries()`; use `useSeasonsQuery` only where a screen genuinely
+ * works with the full season (schedule, roster, RSVPs).
+ */
+export function useSeasonSummariesQuery() {
+  return useQuery({
+    queryKey: queryKeys.seasonSummaries,
+    queryFn: () => getDataSource().listSeasonSummaries(),
   });
 }
 
