@@ -22,6 +22,7 @@ import type {
   ScoreForm,
   Season,
   SeasonEvent,
+  SeasonSummary,
   Athlete,
   AthleteHistory,
   Team,
@@ -127,6 +128,8 @@ export interface DataSource {
 
   // Phase 3: Seasons
   listSeasons(): Promise<Season[]>;
+  /** The Teams list's read — see SeasonSummary. */
+  listSeasonSummaries(): Promise<SeasonSummary[]>;
   getSeason(id: string): Promise<Season | null>;
   createSeason(form: CreateSeasonForm): Promise<Season>;
   updateSeason(id: string, updates: Partial<Season>): Promise<Season>;

@@ -20,7 +20,7 @@ import {
 import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
-import { useSeasonsQuery, useTeamsQuery, useDeleteTeamMutation } from '@/features/queries';
+import { useSeasonSummariesQuery, useTeamsQuery, useDeleteTeamMutation } from '@/features/queries';
 import { useUser } from '@/state/authStore';
 import { isAtTeamLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -32,7 +32,7 @@ export default function TeamsPage() {
   const { alert, confirm } = useAlert();
   const user = useUser();
   const teamsQuery = useTeamsQuery();
-  const seasonsQuery = useSeasonsQuery();
+  const seasonsQuery = useSeasonSummariesQuery();
   const deleteTeam = useDeleteTeamMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
@@ -162,7 +162,7 @@ export default function TeamsPage() {
                   ) : null}
                   {season ? (
                     <span className="mt-2">
-                      <Badge label={`${season.roster.length} players · ${season.events.length} events`} />
+                      <Badge label={`${season.playerCount} players · ${season.eventCount} events`} />
                     </span>
                   ) : null}
                 </Card>

@@ -31,6 +31,7 @@ import {
 import {
   useTeamsQuery,
   useTryoutsQuery,
+  useTryoutSummariesQuery,
   useUpdateTeamMutation,
   useDeleteTeamMutation,
   useUpdateTryoutMutation,
@@ -125,7 +126,7 @@ export default function TeamDetailPage() {
   const searchParams = useSearchParams();
   const { alert, confirm } = useAlert();
   const teamsQuery = useTeamsQuery();
-  const tryoutsQuery = useTryoutsQuery(false);
+  const tryoutSummariesQuery = useTryoutSummariesQuery(false);
   const updateTeam = useUpdateTeamMutation();
   const deleteTeam = useDeleteTeamMutation();
   const updateTryout = useUpdateTryoutMutation();
@@ -148,6 +149,14 @@ export default function TeamDetailPage() {
   const [candidateTryoutFilter, setCandidateTryoutFilter] = useState<string | null>(null);
   const [playerSearch, setPlayerSearch] = useState('');
   const [viewPlayerId, setViewPlayerId] = useState<string | null>(null);
+  // Full assessment reads (every roster entry joined to its athlete, every
+  // evaluation, score and registration for the whole account) are the
+  // heaviest query in the app — see listTryouts(). This page's badges, tab
+  // counts, Assessments tab and Attach modal only need names/counts and run
+  // off the light tryoutSummariesQuery above; only the add-players candidate
+  // picker and an open player-detail modal need full athlete fields, so the
+  // full read is deferred until one of those is actually open.
+  const tryoutsQuery = useTryoutsQuery(false, showAddPlayers || !!viewPlayerId);
   const [enrollingAssessments, setEnrollingAssessments] = useState(false);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [showAddEvent, setShowAddEvent] = useState(false);
@@ -266,9 +275,9 @@ export default function TeamDetailPage() {
   // rejected with a raw "new row violates row-level security policy" error.
   const canEditTeam = !!team.managed || canManageTeam;
 
-  const tryoutsLoading = tryoutsQuery.isLoading;
-  const linkedTryouts = (tryoutsQuery.data ?? []).filter((t) => t.teamId === team.id);
-  const unlinkedTryouts = (tryoutsQuery.data ?? []).filter((t) => !t.teamId);
+  const tryoutsLoading = tryoutSummariesQuery.isLoading;
+  const linkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => t.teamId === team.id);
+  const unlinkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => !t.teamId);
   const canCollectFees = canUseFeature(effectiveTier, 'payments');
 
   const teamPlayers = rosterQuery.data ?? [];
@@ -911,12 +920,12 @@ export default function TeamDetailPage() {
           </div>
           {tryoutsLoading ? (
             <CardGridSkeleton count={2} lines={1} columns="sm:grid-cols-2" />
-          ) : tryoutsQuery.isError ? (
+          ) : tryoutSummariesQuery.isError ? (
             <Card className="flex flex-col items-center gap-2 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
                 Could not load assessments
               </span>
-              <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutsQuery.refetch()} />
+              <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutSummariesQuery.refetch()} />
             </Card>
           ) : linkedTryouts.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
@@ -941,7 +950,7 @@ export default function TeamDetailPage() {
                       {t.name}
                     </span>
                     <span className="mt-0.5 block text-xs" style={{ color: colors.inkMuted }}>
-                      {t.sport} · {t.eventType} · {t.roster?.length ?? 0} players
+                      {t.sport} · {t.eventType} · {t.playerCount} players
                     </span>
                   </span>
                   <Badge label="Open" variant="brand" />
@@ -1036,10 +1045,10 @@ export default function TeamDetailPage() {
       <Modal visible={showAttachModal} title="Attach Assessment" onClose={() => setShowAttachModal(false)}>
         {tryoutsLoading ? (
           <LoadingState message="Loading assessments..." />
-        ) : tryoutsQuery.isError ? (
+        ) : tryoutSummariesQuery.isError ? (
           <div className="flex flex-col items-center gap-2 p-3 text-center">
             <p style={{ color: colors.inkMuted }}>Could not load assessments.</p>
-            <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutsQuery.refetch()} />
+            <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutSummariesQuery.refetch()} />
           </div>
         ) : unlinkedTryouts.length === 0 ? (
           <p className="p-3" style={{ color: colors.inkMuted }}>
@@ -1070,7 +1079,7 @@ export default function TeamDetailPage() {
                   {t.name}
                 </span>
                 <span className="mt-1 block text-xs" style={{ color: colors.inkMuted }}>
-                  {t.sport} · {t.roster.length} players
+                  {t.sport} · {t.playerCount} players
                 </span>
               </span>
               {attachingId === t.id ? <Spinner size={18} /> : null}
@@ -1121,7 +1130,7 @@ export default function TeamDetailPage() {
                 : 'Adding players...'
             }
           />
-        ) : tryoutsLoading ? (
+        ) : tryoutsQuery.isLoading ? (
           <LoadingState message="Loading players..." />
         ) : tryoutsQuery.isError ? (
           <div className="flex flex-col items-center gap-2 py-3 text-center text-sm">

@@ -585,6 +585,21 @@ export const SeasonSchema = z.object({
 
 export type Season = z.infer<typeof SeasonSchema>;
 
+/**
+ * What the Teams list actually renders for a season: a player count and an
+ * event count badge. The full `Season` carries every roster entry (each
+ * joined to its full athlete row), every event, RSVP availability and portal
+ * invite in the account — assembling that just to draw "12 players · 3
+ * events" on a team card was the same anti-pattern `TryoutSummary` fixed for
+ * tryouts. `listSeasonSummaries()` fills this shape instead.
+ */
+export interface SeasonSummary {
+  id: string;
+  teamId?: string;
+  playerCount: number;
+  eventCount: number;
+}
+
 export const CreateSeasonFormSchema = z.object({
   name: z.string().min(2, 'Season name must be at least 2 characters'),
   teamName: z.string().min(2, 'Team name must be at least 2 characters'),
