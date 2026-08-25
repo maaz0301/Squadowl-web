@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
+import { lockBodyScroll } from '@/lib/scrollLock';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
@@ -49,11 +50,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (e.key === 'Escape') setDrawerOpen(false);
     };
     document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const releaseScroll = lockBodyScroll();
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
+      releaseScroll();
     };
   }, [drawerOpen]);
 

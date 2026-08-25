@@ -4,6 +4,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/cn';
 import { useMounted } from '@/lib/hooks';
+import { lockBodyScroll } from '@/lib/scrollLock';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button } from './Button';
 
@@ -53,11 +54,10 @@ export function Modal({
       if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const releaseScroll = lockBodyScroll();
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
+      releaseScroll();
     };
   }, [visible]);
 
