@@ -11,6 +11,7 @@ import {
 } from '@/features/queries';
 import { TEAM_MANAGER_ROLES, type TeamManagerRole } from '@/data/types';
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 
 /**
  * CLUB mode delegation: hand this one team to another coach or manager by
@@ -37,6 +38,7 @@ interface Props {
 
 export function TeamManagersCard({ teamId, teamName }: Props) {
   const colors = useThemeColors();
+  const tier = useEffectivePlanTier(teamId);
   const { data: managers = [], isLoading } = useTeamManagersQuery(teamId);
   const invite = useInviteTeamManagerMutation(teamId);
   const remove = useRemoveTeamManagerMutation(teamId);
@@ -66,7 +68,7 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
   };
 
   return (
-    <PlanGate feature="teamManagers" title="Team Managers">
+    <PlanGate feature="teamManagers" title="Team Managers" tierOverride={tier}>
       <Card className="flex flex-col gap-3">
         <div>
           <h3 className="font-display font-bold text-base" style={{ color: colors.ink }}>

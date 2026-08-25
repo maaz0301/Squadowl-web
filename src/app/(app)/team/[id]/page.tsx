@@ -232,17 +232,11 @@ export default function TeamDetailPage() {
   // the screen decided when any of it appeared. Each dependent piece now shows
   // its own placeholder while it lands.
   if (teamsQuery.isLoading) return <LoadingState message="Loading team..." />;
-  if (teamsQuery.isError || tryoutsQuery.isError) {
+  if (teamsQuery.isError) {
     return (
       <>
         <PageHeader title="Team" showBack backHref="/teams" />
-        <ErrorState
-          message="Could not load team."
-          onRetry={() => {
-            teamsQuery.refetch();
-            tryoutsQuery.refetch();
-          }}
-        />
+        <ErrorState message="Could not load team." onRetry={() => teamsQuery.refetch()} />
       </>
     );
   }
@@ -917,6 +911,13 @@ export default function TeamDetailPage() {
           </div>
           {tryoutsLoading ? (
             <CardGridSkeleton count={2} lines={1} columns="sm:grid-cols-2" />
+          ) : tryoutsQuery.isError ? (
+            <Card className="flex flex-col items-center gap-2 py-8 text-center">
+              <span className="font-bold" style={{ color: colors.ink }}>
+                Could not load assessments
+              </span>
+              <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutsQuery.refetch()} />
+            </Card>
           ) : linkedTryouts.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
@@ -1035,6 +1036,11 @@ export default function TeamDetailPage() {
       <Modal visible={showAttachModal} title="Attach Assessment" onClose={() => setShowAttachModal(false)}>
         {tryoutsLoading ? (
           <LoadingState message="Loading assessments..." />
+        ) : tryoutsQuery.isError ? (
+          <div className="flex flex-col items-center gap-2 p-3 text-center">
+            <p style={{ color: colors.inkMuted }}>Could not load assessments.</p>
+            <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutsQuery.refetch()} />
+          </div>
         ) : unlinkedTryouts.length === 0 ? (
           <p className="p-3" style={{ color: colors.inkMuted }}>
             No assessments available to link.
@@ -1117,6 +1123,11 @@ export default function TeamDetailPage() {
           />
         ) : tryoutsLoading ? (
           <LoadingState message="Loading players..." />
+        ) : tryoutsQuery.isError ? (
+          <div className="flex flex-col items-center gap-2 py-3 text-center text-sm">
+            <p style={{ color: colors.inkMuted }}>Could not load players from assessments.</p>
+            <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutsQuery.refetch()} />
+          </div>
         ) : candidates.length === 0 ? (
           <p className="py-3 text-sm" style={{ color: colors.inkMuted }}>
             No assessments have players yet — add players to an assessment roster first.
@@ -1386,6 +1397,23 @@ export default function TeamDetailPage() {
           </p>
         ) : (
           <div className="flex flex-col gap-4">
+            {!viewingFullPlayer && (tryoutsQuery.isLoading || tryoutsQuery.isError) ? (
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                {tryoutsQuery.isLoading
+                  ? 'Loading guardian, jersey colour, and medical details…'
+                  : 'Some details could not be loaded.'}{' '}
+                {tryoutsQuery.isError ? (
+                  <button
+                    type="button"
+                    className="underline"
+                    style={{ color: colors.primary }}
+                    onClick={() => tryoutsQuery.refetch()}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </p>
+            ) : null}
             <div className="flex flex-col items-center gap-2 py-2">
               <Avatar
                 first={viewingRosterEntry.first}
