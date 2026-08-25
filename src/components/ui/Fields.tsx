@@ -22,6 +22,60 @@ const todayKey = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
+/**
+ * The native picker plus a placeholder of our own. An empty date or time input
+ * paints nothing at all on iOS Safari — there is no "mm/dd/yyyy" hint like the
+ * one Chrome gives Android — so on iPhone these read as blank boxes under their
+ * labels. globals.css hides the browser's own hint while the field is empty and
+ * unfocused, leaving this the only placeholder on either platform; focusing
+ * brings the native segments back for keyboard entry.
+ */
+function PickerInput({
+  type,
+  placeholder,
+  value,
+  min,
+  disabled,
+  onChange,
+  error,
+}: {
+  type: 'date' | 'time';
+  placeholder: string;
+  value?: string;
+  min?: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  error?: string;
+}) {
+  const colors = useThemeColors();
+  const fieldStyle = useFieldStyle(error);
+  const isEmpty = !value;
+
+  return (
+    <div className="relative">
+      <input
+        type={type}
+        value={value ?? ''}
+        min={min}
+        disabled={disabled}
+        data-empty={isEmpty ? '' : undefined}
+        onChange={(e) => onChange(e.target.value)}
+        className={`${CONTROL} peer`}
+        style={fieldStyle}
+      />
+      {isEmpty ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-base peer-focus:hidden sm:text-[15px]"
+          style={{ color: colors.placeholder }}
+        >
+          {placeholder}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 interface DateFieldProps {
   label?: string;
   value?: string; // YYYY-MM-DD
@@ -35,18 +89,17 @@ interface DateFieldProps {
 
 /** Native date picker — same YYYY-MM-DD contract as the app's calendar sheet. */
 export function DateField({ label, value, onChange, error, disablePast, minDate, disabled }: DateFieldProps) {
-  const fieldStyle = useFieldStyle(error);
   const min = minDate ?? (disablePast ? todayKey() : undefined);
   return (
     <FieldShell label={label} error={error}>
-      <input
+      <PickerInput
         type="date"
-        value={value ?? ''}
+        placeholder="Select date"
+        value={value}
         min={min}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className={CONTROL}
-        style={fieldStyle}
+        onChange={onChange}
+        error={error}
       />
     </FieldShell>
   );
@@ -64,8 +117,6 @@ interface TimeFieldProps {
 
 /** Native time picker — stores 24h "HH:MM" exactly like the app's clock sheet. */
 export function TimeField({ label, value, onChange, error, disablePast, dateValue, disabled }: TimeFieldProps) {
-  const fieldStyle = useFieldStyle(error);
-
   // Only clamp when the chosen date is today; a future date allows any time.
   const min = useMemo(() => {
     if (!disablePast) return undefined;
@@ -76,14 +127,14 @@ export function TimeField({ label, value, onChange, error, disablePast, dateValu
 
   return (
     <FieldShell label={label} error={error}>
-      <input
+      <PickerInput
         type="time"
-        value={value ?? ''}
+        placeholder="Select time"
+        value={value}
         min={min}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className={CONTROL}
-        style={fieldStyle}
+        onChange={onChange}
+        error={error}
       />
     </FieldShell>
   );
