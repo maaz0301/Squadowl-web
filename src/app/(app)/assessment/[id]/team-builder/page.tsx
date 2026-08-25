@@ -239,7 +239,7 @@ export default function TeamBuilderPage() {
       />
 
       <PlanGate feature="teamBuilder" title="Team Builder (Club+)">
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,380px)_1fr] lg:items-start">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,380px)_1fr] lg:items-start">
           <div className="flex flex-col gap-5">
           <Card accent className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2">

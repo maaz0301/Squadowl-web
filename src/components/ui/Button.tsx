@@ -18,10 +18,8 @@ interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'typ
   type?: 'button' | 'submit' | 'reset';
 }
 
-// Heights are tap targets first: 44px is the iOS/Android minimum, and `sm`
-// sits just under it only because it is used inside dense rows.
 const sizeClass: Record<ButtonSize, string> = {
-  sm: 'px-3 py-1.5 text-sm min-h-[40px]',
+  sm: 'px-3 py-1.5 text-sm min-h-[36px]',
   md: 'px-4 py-2.5 text-[15px] min-h-[44px]',
   lg: 'px-5 py-3 text-base min-h-[52px]',
 };

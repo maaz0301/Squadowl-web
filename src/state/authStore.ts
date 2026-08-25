@@ -4,7 +4,6 @@ import type { AuthSession, UserProfile } from '@/data/types';
 import { getDataSource } from '@/data';
 import { zustandStorage } from '@/lib/storage';
 import { queryClient } from '@/lib/queryClient';
-import { warmAfterAuth } from '@/features/prefetch';
 import { useSessionStore } from './sessionStore';
 
 interface AuthState {
@@ -32,12 +31,6 @@ export const useAuthStore = create<AuthState>()(
       setSession: (session) => {
         queryClient.clear();
         set({ session });
-        // Signing in routes straight to /dashboard, and the cache was just
-        // emptied. Starting the landing screen's reads here runs them against
-        // the router transition and the page's JS chunk rather than after
-        // both, which is most of the wait a coach used to sit through on the
-        // first screen after signing up.
-        warmAfterAuth(session?.user);
       },
       setHydrated: (v) => set({ isHydrated: v }),
       login: async (email, password) => {
@@ -77,10 +70,6 @@ export const useAuthStore = create<AuthState>()(
             queryClient.clear();
           }
           set({ session, isHydrated: true });
-          // Boot path, same reasoning as setSession(): on a cold load the
-          // cache starts empty, and this fires while the screen behind
-          // AuthGate is still being mounted rather than after it.
-          warmAfterAuth(session?.user);
         } catch (e) {
           console.error('Failed to restore session:', e);
           set({ session: null, isHydrated: true });

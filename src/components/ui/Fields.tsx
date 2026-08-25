@@ -10,11 +10,8 @@ import { COUNTRY_CODES } from './countryCodes';
 // only which entry in it matches a given value.
 const COUNTRY_CODES_BY_LENGTH = [...COUNTRY_CODES].sort((a, b) => b.code.length - a.code.length);
 
-// text-base (16px) on phones, 15px from sm up. Anything under 16px makes iOS
-// Safari zoom the page in on focus and never zoom back out; the Tailwind class
-// outranks the global input rule, so the breakpoint has to live here.
 const CONTROL =
-  'w-full rounded-xl border px-4 py-3 text-base sm:text-[15px] min-h-[48px] outline-none transition-colors focus:border-[color:var(--c-primary)]';
+  'w-full rounded-xl border px-4 py-3 text-[15px] min-h-[48px] outline-none transition-colors focus:border-[color:var(--c-primary)]';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const todayKey = () => {
@@ -158,46 +155,19 @@ export function PhoneField({ label, value = '', onChange, error, placeholder = '
   return (
     <FieldShell label={label} error={error}>
       <div className="flex gap-2">
-        {/* A native select paints the selected option's full text, and
-            "+1 · United States" has never fitted the narrow control — it was
-            clipped mid-word and collided with the browser's own arrow. The
-            select keeps every country name for the picker (native wheel on
-            iOS, native list on Android) but renders its own text transparent;
-            the span below draws just the dial code, which is all the closed
-            state needs to show. Options get an explicit colour because some
-            browsers inherit the transparent one into the open list. */}
-        <div className="relative shrink-0">
-          <select
-            value={parsed.code}
-            onChange={(e) => onChange(`${e.target.value} ${parsed.number}`)}
-            className="min-h-[48px] w-[92px] cursor-pointer appearance-none rounded-xl border pl-3 pr-7 text-base outline-none focus:border-[color:var(--c-primary)] sm:text-[15px]"
-            style={{ ...fieldStyle, color: 'transparent' }}
-            aria-label="Country code"
-          >
-            {COUNTRY_CODES.map((c) => (
-              <option key={c.name} value={c.code} style={{ color: colors.ink, backgroundColor: colors.field }}>
-                {c.code} · {c.name.replace(/\s*\(\+\d+\)$/, '')}
-              </option>
-            ))}
-          </select>
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base font-semibold sm:text-[15px]"
-            style={{ color: colors.ink }}
-          >
-            {parsed.code}
-          </span>
-          <svg
-            aria-hidden
-            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
-            width={14}
-            height={14}
-            viewBox="0 0 24 24"
-            fill="none"
-          >
-            <path d="M6 9l6 6 6-6" stroke={colors.inkMuted} strokeWidth={2.5} strokeLinecap="round" />
-          </svg>
-        </div>
+        <select
+          value={parsed.code}
+          onChange={(e) => onChange(`${e.target.value} ${parsed.number}`)}
+          className="min-h-[48px] w-[110px] shrink-0 cursor-pointer rounded-xl border px-3 text-[15px] outline-none focus:border-[color:var(--c-primary)]"
+          style={fieldStyle}
+          aria-label="Country code"
+        >
+          {COUNTRY_CODES.map((c) => (
+            <option key={c.name} value={c.code}>
+              {c.code} · {c.name.replace(/\s*\(\+\d+\)$/, '')}
+            </option>
+          ))}
+        </select>
         <input
           type="tel"
           placeholder={placeholder}

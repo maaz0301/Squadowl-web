@@ -221,7 +221,7 @@ export default function SeasonSchedulePage() {
       {season.events.length === 0 ? (
         <EmptyState title="No events" message="Add your first event." />
       ) : (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 lg:grid-cols-2">
           {[...season.events]
             .sort((a, b) => a.date.localeCompare(b.date))
             .map((item) => (

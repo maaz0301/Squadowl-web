@@ -6,7 +6,7 @@ export { Chip } from './Chip';
 export { Tabs, type TabItem } from './Tabs';
 export { Avatar } from './Avatar';
 export { Modal, ModalFooter } from './Modal';
-export { EmptyState, ErrorState, LoadingState, Skeleton, CardGridSkeleton } from './States';
+export { EmptyState, ErrorState, LoadingState } from './States';
 export { PageHeader } from './PageHeader';
 export { ThemeToggle } from './ThemeToggle';
 export { ScorePad, ScoreButton } from './ScorePad';

@@ -4,51 +4,29 @@ import type { ReactNode } from 'react';
 import Image from 'next/image';
 import { GuestGate } from '@/components/AuthGate';
 import { ThemeToggle } from '@/components/ui';
-import { useTheme } from '@/theme/ThemeProvider';
+import { useThemeColors } from '@/theme/ThemeProvider';
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
-  const { colors, isDark } = useTheme();
+  const colors = useThemeColors();
   return (
     <GuestGate>
       <div
-        className="relative flex min-h-dvh items-center justify-center px-4"
+        className="relative flex min-h-screen items-center justify-center px-4 py-10"
         style={{
           backgroundColor: colors.bg,
           backgroundImage:
             'radial-gradient(circle at 15% 15%, rgba(255,107,43,0.16), transparent 45%), radial-gradient(circle at 85% 80%, rgba(56,189,248,0.10), transparent 45%)',
-          paddingTop: 'calc(2.5rem + env(safe-area-inset-top, 0px))',
-          paddingBottom: 'calc(2.5rem + env(safe-area-inset-bottom, 0px))',
         }}
       >
-        <div
-          className="absolute"
-          style={{
-            top: 'calc(1.25rem + env(safe-area-inset-top, 0px))',
-            right: 'calc(1.25rem + env(safe-area-inset-right, 0px))',
-          }}
-        >
+        <div className="absolute right-5 top-5">
           <ThemeToggle />
         </div>
 
         <div className="w-full max-w-[420px]">
           <div className="mb-7 flex flex-col items-center gap-3">
-            {/* The lockup PNG bakes in white type, which all but disappears on
-                the light theme's near-white background. Dark keeps the original
-                treatment — straight on the page, no plate; light gets a dark
-                plate behind it purely so the wordmark stays legible. */}
-            <div
-              style={{
-                width: 'min(260px, 70vw)',
-                ...(isDark
-                  ? null
-                  : {
-                      backgroundColor: '#080c16',
-                      padding: '18px 22px',
-                      borderRadius: 24,
-                      boxShadow: '0 14px 40px rgba(8,12,24,0.18)',
-                    }),
-              }}
-            >
+            {/* No plate or shadow behind the lockup — it sits straight on the
+                page background. */}
+            <div style={{ width: 'min(260px, 70vw)' }}>
               <Image
                 src="/images/tryouthq_logo_v2.png"
                 alt="TryoutHQ"

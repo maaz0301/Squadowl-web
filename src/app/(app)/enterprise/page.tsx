@@ -209,7 +209,7 @@ export default function EnterprisePage() {
                   <Stat label="Registrations" value={`${metrics.regsTotal}`} hint={`${metrics.regsPending} pending`} />
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   <Card className="flex flex-col gap-3">
                     <h3 className="font-bold text-base" style={{ color: colors.ink }}>Scoring Progress</h3>
                     <ShareBar

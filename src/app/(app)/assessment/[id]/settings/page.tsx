@@ -19,7 +19,7 @@ import {
 } from '@/components/ui';
 import {
   useTryoutQuery,
-  useAssessmentCountQuery,
+  useTryoutsQuery,
   useUpdateTryoutMutation,
   useArchiveTryoutMutation,
   useDeleteTryoutMutation,
@@ -44,10 +44,7 @@ export default function SettingsPage() {
   const user = useUser();
   const welcomedRef = useRef(false);
   const tryoutQuery = useTryoutQuery(id);
-  // Just the number, for the copy-assessment plan check. This used to be
-  // useTryoutsQuery(false) — every roster, evaluation, score and registration
-  // in the account fetched on arrival so one `.length` could be read off it.
-  const assessmentCount = useAssessmentCountQuery();
+  const tryoutsQuery = useTryoutsQuery(false);
   const updateTryout = useUpdateTryoutMutation();
   const archiveTryout = useArchiveTryoutMutation();
   const deleteTryout = useDeleteTryoutMutation();
@@ -214,7 +211,7 @@ export default function SettingsPage() {
   };
 
   const handleCopy = async () => {
-    const count = assessmentCount.data ?? 0;
+    const count = tryoutsQuery.data?.length ?? 0;
     if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
       setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'assessments'));
       return;
@@ -242,7 +239,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+    <div className="grid gap-5 lg:grid-cols-2">
       <Card accent className="flex flex-col items-start gap-2">
         <span className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
           {tryout.name}
@@ -282,18 +279,15 @@ export default function SettingsPage() {
         {tryout.assessors.map((a, i) => (
           <div
             key={`${a.name}-${a.email}-${i}`}
-            // Stacked on phones: side by side, the two action buttons never fit
-            // beside a full email address, and the address (one unbreakable
-            // token) ran straight under them.
-            className="flex flex-col items-stretch gap-3 border-b py-2 sm:flex-row sm:items-start sm:justify-between"
+            className="flex flex-wrap items-start justify-between gap-3 border-b py-2"
             style={{ borderColor: colors.border }}
           >
             <div className="min-w-0 flex-1">
-              <p className="text-base font-bold break-words" style={{ color: colors.ink }}>
+              <p className="text-base font-bold" style={{ color: colors.ink }}>
                 {a.name}
               </p>
               {a.email ? (
-                <p className="mt-0.5 text-sm break-all" style={{ color: colors.inkMuted }}>
+                <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
                   {a.email}
                 </p>
               ) : null}
@@ -306,9 +300,8 @@ export default function SettingsPage() {
             </div>
 
             {a.role !== 'lead' ? (
-              <div className="flex shrink-0 gap-2">
+              <div className="flex gap-2">
                 <Button
-                  className="flex-1 sm:flex-none"
                   label={a.status === 'pending' ? 'Send Invite' : 'Send Reminder'}
                   size="sm"
                   variant="secondary"
@@ -317,7 +310,6 @@ export default function SettingsPage() {
                   onClick={() => notifyAssessor(i, a)}
                 />
                 <Button
-                  className="flex-1 sm:flex-none"
                   label="Remove"
                   size="sm"
                   variant="ghost"
@@ -341,7 +333,7 @@ export default function SettingsPage() {
 
       <Card className="flex flex-col items-start gap-2">
         <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+        <div className="flex flex-wrap gap-2">
           <Button
             label="Archive Assessment"
             variant="danger"

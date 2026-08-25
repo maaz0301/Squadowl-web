@@ -67,12 +67,8 @@ export default function ForgotPasswordPage() {
 
       <Button type="submit" label="Send Reset Code" loading={loading} fullWidth size="lg" />
 
-      <div className="flex justify-center">
-        <Link
-          href="/login"
-          className="inline-flex min-h-[44px] items-center px-2 text-sm font-bold"
-          style={{ color: colors.primary }}
-        >
+      <div className="flex justify-center pt-1">
+        <Link href="/login" className="text-sm font-bold" style={{ color: colors.primary }}>
           Back to Login
         </Link>
       </div>

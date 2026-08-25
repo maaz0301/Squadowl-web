@@ -196,7 +196,7 @@ export default function ProfilePage() {
       </Card>
 
       {!isGuardian ? (
-        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
           <Card className="flex flex-col gap-2">
             <SectionLabel>Plan Limits</SectionLabel>
             <p style={{ color: colors.inkMuted }}>

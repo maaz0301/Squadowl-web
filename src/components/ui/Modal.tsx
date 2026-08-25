@@ -76,10 +76,7 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         className={cn(
-          // dvh, not vh: on mobile Safari/Chrome vh measures the tallest
-          // viewport (URL bar hidden), so a 92vh sheet anchored to the bottom
-          // pushed its own header off-screen while the bar was showing.
-          'flex max-h-[92dvh] w-full flex-col rounded-t-3xl border sm:rounded-2xl',
+          'flex max-h-[92vh] w-full flex-col rounded-t-3xl border sm:rounded-2xl',
           widths[size],
         )}
         style={{
@@ -103,33 +100,17 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none transition-colors hover:brightness-125"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-xl leading-none transition-colors hover:brightness-125"
             style={{ backgroundColor: colors.tile, color: colors.inkMuted }}
           >
             ×
           </button>
         </div>
 
-        <div
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4"
-          style={
-            hideDefaultFooter && !footer
-              ? { paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }
-              : undefined
-          }
-        >
-          {children}
-        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
 
         {footer ?? (hideDefaultFooter ? null : (
-          <div
-            className="border-t px-5 py-4"
-            style={{
-              borderColor: colors.border,
-              // Clears the iPhone home indicator when the sheet is bottom-anchored.
-              paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
-            }}
-          >
+          <div className="border-t px-5 py-4" style={{ borderColor: colors.border }}>
             <Button label="Close" variant="secondary" fullWidth onClick={onClose} />
           </div>
         ))}
@@ -143,13 +124,7 @@ export function Modal({
 export function ModalFooter({ children }: { children: ReactNode }) {
   const colors = useThemeColors();
   return (
-    <div
-      className="flex flex-wrap justify-end gap-2 border-t px-5 py-4"
-      style={{
-        borderColor: colors.border,
-        paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
-      }}
-    >
+    <div className="flex flex-wrap justify-end gap-2 border-t px-5 py-4" style={{ borderColor: colors.border }}>
       {children}
     </div>
   );

@@ -71,9 +71,7 @@ export default function AssessmentLayout({
           All assessments
         </Link>
         <h1
-          // Two lines on a phone, one ellipsised line from sm up: a 320px screen
-          // cut names like "U15 AAA Fall Tryout 2026" down to nothing useful.
-          className="line-clamp-2 text-2xl font-bold sm:truncate sm:text-3xl"
+          className="truncate text-2xl font-bold sm:text-3xl"
           style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
         >
           {tryoutQuery.data?.name ?? 'Loading…'}
@@ -87,10 +85,8 @@ export default function AssessmentLayout({
         ) : null}
       </div>
 
-      {/* edge-bleed runs the strip to the screen edge so a half-visible tab
-          reads as "scroll me" instead of as a clipped layout. */}
       <nav
-        className="no-scrollbar edge-bleed mb-6 flex snap-x snap-proximity gap-1 overflow-x-auto border-b"
+        className="no-scrollbar mb-6 flex gap-1 overflow-x-auto border-b"
         style={{ borderColor: colors.border }}
       >
         {visibleTabs.map((tab) => {
@@ -99,7 +95,7 @@ export default function AssessmentLayout({
             <Link
               key={tab.slug}
               href={`/assessment/${id}/${tab.slug}${suffix}`}
-              className="flex shrink-0 snap-start items-center gap-2 border-b-2 px-3.5 py-3 text-sm font-bold transition-colors"
+              className="flex shrink-0 items-center gap-2 border-b-2 px-3.5 py-2.5 text-sm font-bold transition-colors"
               style={{
                 borderColor: active ? colors.primary : 'transparent',
                 color: active ? colors.primary : colors.inkMuted,

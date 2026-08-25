@@ -73,7 +73,7 @@ export default function SeasonRosterPage() {
           onAction={season.teamId ? handleImport : () => setShowAdd(true)}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           {season.roster.map((item) => (
             <Link key={item.id} href={`/season/${id}/player/${item.id}`}>
               <Card interactive className="flex items-center justify-between gap-3">

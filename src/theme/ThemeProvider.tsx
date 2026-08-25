@@ -59,20 +59,6 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
     for (const [key, val] of Object.entries(value.colors)) {
       root.style.setProperty(`--c-${key}`, val);
     }
-
-    // The static theme-color tags in <head> are keyed to prefers-color-scheme,
-    // so they go stale the moment someone overrides the OS with the in-app
-    // toggle. This one carries no media attribute, which makes it the winner,
-    // and keeps Android's browser chrome (and the iOS home-screen status bar)
-    // matching the header it sits above.
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"][data-app-theme]');
-    if (!meta) {
-      meta = document.createElement('meta');
-      meta.name = 'theme-color';
-      meta.dataset.appTheme = '';
-      document.head.appendChild(meta);
-    }
-    meta.content = value.colors.bgSecondary;
   }, [mode, value.colors]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

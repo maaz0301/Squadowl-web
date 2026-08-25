@@ -14,27 +14,6 @@
   --c-border: rgba(255, 255, 255, 0.09);
   --c-primary: #ff6b2b;
   --c-overlay: rgba(8, 12, 24, 0.72);
-
-  /* Tells the browser to render its own widgets — date/time pickers, select
-     popups, autofill, spinners — in the matching scheme. Without it iOS and
-     Android draw dark-on-dark text inside native date/time fields, which reads
-     as an empty box. Declared here (not only from the provider's effect) so it
-     is right on the very first paint, before hydration. */
-  color-scheme: dark;
-}
-
-:root[data-theme='light'] {
-  --c-bg: #f0f4fa;
-  --c-bgSecondary: #f9fcff;
-  --c-card: #ffffff;
-  --c-tile: #e8f0fd;
-  --c-field: #f5f8fe;
-  --c-ink: #0d1629;
-  --c-inkMuted: #4a5f82;
-  --c-border: rgba(10, 30, 61, 0.12);
-  --c-overlay: rgba(8, 12, 24, 0.52);
-  --c-placeholder: #94a3b8;
-  color-scheme: light;
 }
 
 @theme inline {
@@ -51,20 +30,12 @@ body {
   height: 100%;
 }
 
-html {
-  /* Stops Android Chrome and iOS Safari from inflating text on rotate. */
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-}
-
 body {
   margin: 0;
   background: var(--c-bg);
   color: var(--c-ink);
   font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  /* No grey flash box on tap — the app draws its own pressed states. */
-  -webkit-tap-highlight-color: transparent;
 }
 
 button {
@@ -83,57 +54,14 @@ select {
   font: inherit;
 }
 
-/* iOS Safari zooms the whole page when a focused control's text is under 16px,
-   and never zooms back out. Phones get 16px; the 15px scale returns at sm+. */
-@media (max-width: 639px) {
-  input,
-  textarea,
-  select {
-    font-size: 16px;
-  }
-}
-
 input::placeholder,
 textarea::placeholder {
   color: var(--c-placeholder, #3d5170);
 }
 
-/* Native date/time controls: iOS centres the value and hides the picker glyph
-   against a dark field, so both are pinned to match the text inputs beside them. */
-input[type='date'],
-input[type='time'],
-input[type='datetime-local'] {
-  text-align: left;
-}
-
-input[type='date']::-webkit-date-and-time-value,
-input[type='time']::-webkit-date-and-time-value,
-input[type='datetime-local']::-webkit-date-and-time-value {
-  text-align: left;
-}
-
-input[type='date']::-webkit-calendar-picker-indicator,
-input[type='time']::-webkit-calendar-picker-indicator,
-input[type='datetime-local']::-webkit-calendar-picker-indicator {
-  cursor: pointer;
-  opacity: 0.65;
-}
-
-input[type='date']::-webkit-calendar-picker-indicator:hover,
-input[type='time']::-webkit-calendar-picker-indicator:hover,
-input[type='datetime-local']::-webkit-calendar-picker-indicator:hover {
-  opacity: 1;
-}
-
 a {
   color: inherit;
   text-decoration: none;
-}
-
-/* Keyboard users get a visible ring everywhere; pointer users never see it. */
-:focus-visible {
-  outline: 2px solid var(--c-primary);
-  outline-offset: 2px;
 }
 
 /* Scrollbars follow the theme instead of the OS default. */
@@ -171,44 +99,6 @@ a {
   scrollbar-width: none;
 }
 
-/* --- Safe areas -----------------------------------------------------------
-   iPhone notch/Dynamic Island, the home indicator, and Android gesture bars.
-   These only resolve to a non-zero value where the OS reports an inset, so
-   they are inert on desktop and on hardware without cutouts. */
-.pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
-}
-
-.pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-.px-safe {
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
-}
-
-/* Adds the inset on top of padding a utility class already set. */
-.pb-safe-plus-4 {
-  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-}
-
-.pb-safe-plus-6 {
-  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
-}
-
-/* Horizontal strips (tab bars, chip rows) run to the screen edge on phones so
-   the cut-off item reads as "scrollable" rather than as a layout mistake. */
-.edge-bleed {
-  /* 0px fallback so the class is an inert no-op if it ever lands outside the
-     .app-main subtree that publishes --page-gutter. */
-  margin-left: calc(-1 * var(--page-gutter, 0px));
-  margin-right: calc(-1 * var(--page-gutter, 0px));
-  padding-left: var(--page-gutter, 0px);
-  padding-right: var(--page-gutter, 0px);
-  scroll-padding-left: var(--page-gutter, 0px);
-}
-
 @keyframes aas-spin {
   to {
     transform: rotate(360deg);
@@ -232,69 +122,5 @@ a {
   to {
     opacity: 1;
     transform: none;
-  }
-}
-
-/* Skeleton shimmer. A travelling highlight rather than a pulsing opacity: it
-   reads as "content on its way" instead of "this element is disabled", and it
-   keeps the placeholder at a steady contrast against the page. */
-@keyframes aas-shimmer {
-  from {
-    background-position: 200% 0;
-  }
-  to {
-    background-position: -200% 0;
-  }
-}
-
-@keyframes aas-slide-in-left {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-/* Sticky top bar: frosted where the browser supports it, flat where it does not,
-   so the fallback is never a see-through unblurred bar. */
-.app-topbar {
-  background-color: var(--c-bgSecondary);
-}
-
-@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .app-topbar {
-    background-color: color-mix(in srgb, var(--c-bgSecondary) 80%, transparent);
-    -webkit-backdrop-filter: saturate(1.7) blur(16px);
-    backdrop-filter: saturate(1.7) blur(16px);
-  }
-}
-
-/* Mirrors <main>'s px-4 / sm:px-6 / lg:px-8 so .edge-bleed children can pull
-   themselves back out to the screen edge by exactly one gutter. */
-.app-main {
-  --page-gutter: 1rem;
-}
-
-@media (min-width: 640px) {
-  .app-main {
-    --page-gutter: 1.5rem;
-  }
-}
-
-@media (min-width: 1024px) {
-  .app-main {
-    --page-gutter: 2rem;
   }
 }

@@ -71,14 +71,7 @@ export default function PublicRegistrationPage() {
 
   if (isSuccess) {
     return (
-      <div
-        className="flex min-h-dvh items-center justify-center px-4"
-        style={{
-          backgroundColor: colors.bg,
-          paddingTop: 'calc(2.5rem + env(safe-area-inset-top, 0px))',
-          paddingBottom: 'calc(2.5rem + env(safe-area-inset-bottom, 0px))',
-        }}
-      >
+      <div className="flex min-h-screen items-center justify-center px-4 py-10" style={{ backgroundColor: colors.bg }}>
         <div className="w-full max-w-[520px] text-center">
           <h1 className="text-2xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             You&apos;re registered!
@@ -93,21 +86,8 @@ export default function PublicRegistrationPage() {
   }
 
   return (
-    <div
-      className="relative min-h-dvh px-4"
-      style={{
-        backgroundColor: colors.bg,
-        paddingTop: 'calc(2.5rem + env(safe-area-inset-top, 0px))',
-        paddingBottom: 'calc(2.5rem + env(safe-area-inset-bottom, 0px))',
-      }}
-    >
-      <div
-        className="absolute"
-        style={{
-          top: 'calc(1.25rem + env(safe-area-inset-top, 0px))',
-          right: 'calc(1.25rem + env(safe-area-inset-right, 0px))',
-        }}
-      >
+    <div className="min-h-screen px-4 py-10" style={{ backgroundColor: colors.bg }}>
+      <div className="absolute right-5 top-5">
         <ThemeToggle />
       </div>
       <div className="mx-auto w-full max-w-[560px]">

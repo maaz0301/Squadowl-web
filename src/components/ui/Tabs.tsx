@@ -19,7 +19,7 @@ interface TabsProps {
 export function Tabs({ tabs, activeKey, onChange, className }: TabsProps) {
   const colors = useThemeColors();
   return (
-    <div className={cn('no-scrollbar flex snap-x snap-proximity gap-1.5 overflow-x-auto py-1', className)}>
+    <div className={cn('no-scrollbar flex gap-1.5 overflow-x-auto py-1', className)}>
       {tabs.map((tab) => {
         const active = tab.key === activeKey;
         return (
@@ -27,7 +27,7 @@ export function Tabs({ tabs, activeKey, onChange, className }: TabsProps) {
             key={tab.key}
             type="button"
             onClick={() => onChange(tab.key)}
-            className="inline-flex min-h-[44px] shrink-0 snap-start items-center gap-2 rounded-full px-4 py-2 text-sm font-bold transition-colors active:scale-[0.97]"
+            className="inline-flex min-h-[40px] shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-bold transition-colors"
             style={{
               backgroundColor: active ? colors.primary : colors.tile,
               color: active ? '#fff' : colors.inkMuted,

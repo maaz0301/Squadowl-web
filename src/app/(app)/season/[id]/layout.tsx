@@ -49,9 +49,7 @@ export default function SeasonLayout({
           All seasons
         </Link>
         <h1
-          // Two lines on a phone, one ellipsised line from sm up: a 320px screen
-          // cut names like "U15 AAA Fall Tryout 2026" down to nothing useful.
-          className="line-clamp-2 text-2xl font-bold sm:truncate sm:text-3xl"
+          className="truncate text-2xl font-bold sm:text-3xl"
           style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
         >
           {seasonQuery.data?.name ?? 'Loading…'}
@@ -64,19 +62,14 @@ export default function SeasonLayout({
         ) : null}
       </div>
 
-      {/* Matches the assessment tab strip: bleeds to the screen edge on phones
-          so the next tab peeks in rather than being clipped by the gutter. */}
-      <nav
-        className="no-scrollbar edge-bleed mb-6 flex snap-x snap-proximity gap-1 overflow-x-auto border-b"
-        style={{ borderColor: colors.border }}
-      >
+      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto border-b" style={{ borderColor: colors.border }}>
         {TABS.map((tab) => {
           const active = segment === tab.slug || (tab.slug === '' && segment === '');
           return (
             <Link
               key={tab.slug || 'hub'}
               href={`/season/${id}${tab.slug ? `/${tab.slug}` : ''}`}
-              className="shrink-0 snap-start border-b-2 px-3.5 py-3 text-sm font-bold transition-colors"
+              className="shrink-0 border-b-2 px-3.5 py-2.5 text-sm font-bold transition-colors"
               style={{
                 borderColor: active ? colors.primary : 'transparent',
                 color: active ? colors.primary : colors.inkMuted,

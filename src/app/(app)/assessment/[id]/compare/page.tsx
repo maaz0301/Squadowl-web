@@ -41,7 +41,7 @@ export default function ComparePage() {
     <>
       <PageHeader title="Compare Players" subtitle="Select 2–4 athletes" showBack backHref={href('results')} />
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="flex flex-col gap-2">
           {tryout.roster.map((item) => {
             const isSelected = selected.includes(item.id);

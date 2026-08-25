@@ -34,7 +34,7 @@ export function RegistrationForm({ loading, full, onSubmit }: Props) {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4 pb-2">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Controller
           control={control}
           name="firstName"

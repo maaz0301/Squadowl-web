@@ -53,7 +53,7 @@ export default function SeasonAttendancePage() {
       {stats.length === 0 ? (
         <EmptyState title="No roster" message="Add players to track attendance." />
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           {stats.map((item) => (
             <Card key={item.player.id} className="flex items-center justify-between gap-3">
               <span className="min-w-0">

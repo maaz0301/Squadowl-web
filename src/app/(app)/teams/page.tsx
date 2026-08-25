@@ -10,9 +10,9 @@ import {
   Badge,
   Button,
   Card,
-  CardGridSkeleton,
   EmptyState,
   ErrorState,
+  LoadingState,
   PageHeader,
   Spinner,
   useAlert,
@@ -24,7 +24,6 @@ import { useSeasonsQuery, useTeamsQuery, useDeleteTeamMutation } from '@/feature
 import { useUser } from '@/state/authStore';
 import { isAtTeamLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
-import { prefetchTeamDetail } from '@/features/prefetch';
 
 export default function TeamsPage() {
   const colors = useThemeColors();
@@ -37,14 +36,7 @@ export default function TeamsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
 
-  if (teamsQuery.isLoading) {
-    return (
-      <>
-        <PageHeader title="Teams" subtitle="Rosters, schedules and season events" />
-        <CardGridSkeleton count={3} lines={2} />
-      </>
-    );
-  }
+  if (teamsQuery.isLoading) return <LoadingState message="Loading teams..." />;
   if (teamsQuery.isError) {
     return <ErrorState message="Could not load teams." onRetry={() => teamsQuery.refetch()} />;
   }
@@ -105,7 +97,7 @@ export default function TeamsPage() {
           onAction={newTeam}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {teams.map((team) => {
             const season = seasons.find((s) => s.teamId === team.id);
             const isBusy = busyId === team.id;
@@ -113,8 +105,6 @@ export default function TeamsPage() {
               <Link
                 key={team.id}
                 href={`/team/${team.id}`}
-                onMouseEnter={() => prefetchTeamDetail(team.id)}
-                onTouchStart={() => prefetchTeamDetail(team.id)}
                 onClick={(e) => {
                   if (isBusy) e.preventDefault();
                 }}

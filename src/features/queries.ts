@@ -97,9 +97,7 @@ export function useUploadTeamLogoMutation() {
 }
 
 // ---- Team roster ----
-// Lives on queryKeys so the prefetch layer can warm it without importing this
-// module (which would close a cycle back through the auth store).
-const teamRosterKey = queryKeys.teamRoster;
+const teamRosterKey = (teamId: string) => ['teams', teamId, 'roster'] as const;
 
 export function useTeamRosterQuery(teamId: string | undefined) {
   return useQuery({
@@ -226,19 +224,6 @@ export function useTryoutsQuery(includeArchived = false) {
   });
 }
 
-/**
- * The list screens' tryout read — names, dates and roster counts, without the
- * rosters, evaluations, scores and registrations behind them. See
- * `listTryoutSummaries()`; use `useTryoutsQuery` only where a screen genuinely
- * works with the full objects (search, combine, exports, a single assessment).
- */
-export function useTryoutSummariesQuery(includeArchived = false) {
-  return useQuery({
-    queryKey: queryKeys.tryoutSummaries(includeArchived),
-    queryFn: () => getDataSource().listTryoutSummaries(includeArchived),
-  });
-}
-
 /** Just the number of assessments, for plan-limit checks — see countAssessments(). */
 export function useAssessmentCountQuery() {
   return useQuery({
@@ -251,15 +236,6 @@ export function useAssignedTryoutsQuery() {
   return useQuery({
     queryKey: queryKeys.assignedTryouts,
     queryFn: () => getDataSource().listAssignedTryouts(),
-  });
-}
-
-/** Light counterpart of useAssignedTryoutsQuery — see useTryoutSummariesQuery. */
-export function useAssignedTryoutSummariesQuery(enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.assignedTryoutSummaries,
-    queryFn: () => getDataSource().listAssignedTryoutSummaries(),
-    enabled,
   });
 }
 
@@ -332,58 +308,13 @@ export function useUpdateTryoutMutation() {
   });
 }
 
-/**
- * Applies `update` to every cached tryout *list* under a key prefix, leaving
- * non-list entries under the same prefix (the ['tryouts','count'] number)
- * alone. Returning null from `update` drops the row.
- *
- * These run in `onSuccess`, after the server has confirmed the write — never
- * optimistically. A delete that fails must leave the row on screen, so the
- * screen keeps showing exactly what the backend still has.
- *
- * The point of touching the cache at all is that `invalidateQueries` only
- * *marks* a list stale: the row stays on screen for the whole refetch, which
- * on these lists is the slowest request in the app. Editing the cached array
- * is synchronous, so the card disappears on the same frame the delete lands,
- * and the invalidate that follows just reconciles anything else that moved.
- */
-function patchCachedTryoutLists<T extends { id: string }>(
-  qc: QueryClient,
-  prefix: readonly unknown[],
-  id: string,
-  update: (row: T) => T | null,
-): void {
-  qc.setQueriesData({ queryKey: prefix }, (old: unknown) => {
-    if (!Array.isArray(old)) return old;
-    const rows = old as T[];
-    if (!rows.some((r) => r?.id === id)) return old;
-    return rows.flatMap((r) => {
-      if (r?.id !== id) return [r];
-      const next = update(r);
-      return next ? [next] : [];
-    });
-  });
-}
-
-/** Both the full-tryout lists and the summary lists, archived and active. */
-const ALL_TRYOUT_LISTS = ['tryouts'] as const;
-
 export function useArchiveTryoutMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => getDataSource().archiveTryout(id),
-    onSuccess: (_result, id) => {
-      // Flip the flag wherever the row is cached, so the archived list (which
-      // fetches with includeArchived and filters on the flag) shows it right
-      // away too...
-      patchCachedTryoutLists<{ id: string; archived?: boolean }>(qc, ALL_TRYOUT_LISTS, id, (t) => ({
-        ...t,
-        archived: true,
-      }));
-      // ...then drop it from the lists that by definition only hold active
-      // assessments, which is what the dashboard renders from.
-      patchCachedTryoutLists(qc, queryKeys.tryouts(false), id, () => null);
-      void qc.invalidateQueries({ queryKey: ALL_TRYOUT_LISTS });
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
     },
   });
 }
@@ -392,17 +323,9 @@ export function useDeleteTryoutMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => getDataSource().deleteTryout(id),
-    onSuccess: (_result, id) => {
-      patchCachedTryoutLists(qc, ALL_TRYOUT_LISTS, id, () => null);
-      // The plan-limit count is a number under the same prefix, so it needs
-      // its own nudge rather than a list edit.
-      qc.setQueryData<number>(queryKeys.assessmentCount, (n) =>
-        typeof n === 'number' ? Math.max(0, n - 1) : n,
-      );
-      // Nothing can navigate to it any more; keeping the detail entry around
-      // would only hand a stale tryout to a bookmarked /assessment/[id] URL.
-      qc.removeQueries({ queryKey: queryKeys.tryout(id) });
-      void qc.invalidateQueries({ queryKey: ALL_TRYOUT_LISTS });
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
     },
   });
 }
@@ -1530,16 +1453,12 @@ export function useLinkGuardianMutation() {
   });
 }
 
-/**
- * `enabled` so the coach-facing dashboard, which shares a component with the
- * guardian portal, doesn't fire a guardian-only read it will never render.
- */
-export function useGuardianRostersQuery(enabled = true) {
+export function useGuardianRostersQuery() {
   const userId = useAuthStore((s) => s.session?.user?.id);
   return useQuery({
     queryKey: queryKeys.guardianRosters(userId),
     queryFn: () => getDataSource().getGuardianRosters(),
-    enabled: enabled && !!userId,
+    enabled: !!userId,
   });
 }
 
@@ -1670,15 +1589,8 @@ export function useRestoreTryoutMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => getDataSource().restoreTryout(id),
-    onSuccess: (_result, id) => {
-      // Mirror of the archive path: clearing the flag drops it out of the
-      // archived screen's filter immediately, and the invalidate below brings
-      // it back onto the dashboard's active list.
-      patchCachedTryoutLists<{ id: string; archived?: boolean }>(qc, ALL_TRYOUT_LISTS, id, (t) => ({
-        ...t,
-        archived: false,
-      }));
-      void qc.invalidateQueries({ queryKey: ALL_TRYOUT_LISTS });
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tryouts'] });
     },
   });
 }
@@ -1753,18 +1665,11 @@ export function useDeleteTeamMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => getDataSource().deleteTeam(id),
-    // onSuccess, not onMutate: a delete the server rejects has to leave the
-    // team on screen for the caller's error alert to make sense.
-    onSuccess: (_result, id) => {
-      qc.setQueryData<Team[]>(queryKeys.teams, (old) => old?.filter((t) => t.id !== id));
-      qc.setQueryData<number>(queryKeys.teamCount, (n) =>
-        typeof n === 'number' ? Math.max(0, n - 1) : n,
-      );
-      qc.removeQueries({ queryKey: queryKeys.teamRoster(id) });
-      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.teams });
       // Deleting a team detaches its assessments and retires its season.
-      void qc.invalidateQueries({ queryKey: ALL_TRYOUT_LISTS });
-      void qc.invalidateQueries({ queryKey: queryKeys.seasons });
+      qc.invalidateQueries({ queryKey: ['tryouts'] });
+      qc.invalidateQueries({ queryKey: queryKeys.seasons });
     },
   });
 }
