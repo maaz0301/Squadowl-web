@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Spinner } from './Button';
 
@@ -61,6 +61,86 @@ export function ErrorState({
         {message}
       </p>
       {onRetry ? <Button label="Try Again" variant="secondary" onClick={onRetry} /> : null}
+    </div>
+  );
+}
+
+/**
+ * A single placeholder block.
+ *
+ * Sized by the caller so a skeleton can trace the shape of the thing it stands
+ * in for — the point is that the layout doesn't jump when real content lands.
+ * The travelling highlight is built from the theme's own tile/border colours so
+ * it stays legible in both themes without a second palette.
+ */
+export function Skeleton({
+  width = '100%',
+  height = 14,
+  radius = 8,
+  className,
+  style,
+}: {
+  width?: number | string;
+  height?: number | string;
+  radius?: number;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const colors = useThemeColors();
+  return (
+    <span
+      aria-hidden
+      className={className}
+      style={{
+        display: 'block',
+        width,
+        height,
+        borderRadius: radius,
+        backgroundColor: colors.tile,
+        backgroundImage: `linear-gradient(90deg, transparent 0%, ${colors.border} 50%, transparent 100%)`,
+        backgroundSize: '200% 100%',
+        animation: 'aas-shimmer 1.4s ease-in-out infinite',
+        ...style,
+      }}
+    />
+  );
+}
+
+/**
+ * The card-grid screens' loading state — dashboard, teams, archived.
+ *
+ * Preferred over LoadingState for a list that is *about* to appear: a centred
+ * spinner throws the page away and replaces it with an empty half-screen, so
+ * every arrival is a full re-layout and the wait reads as longer than it is.
+ * This keeps the page's real shape on screen and swaps placeholder text for
+ * real text in place.
+ */
+export function CardGridSkeleton({
+  count = 6,
+  lines = 2,
+  columns = 'sm:grid-cols-2 lg:grid-cols-3',
+}: {
+  count?: number;
+  /** Body lines under the title, matching the density of the real card. */
+  lines?: number;
+  /** Tailwind column classes, so each screen can mirror its own grid. */
+  columns?: string;
+}) {
+  const colors = useThemeColors();
+  return (
+    <div className={`grid grid-cols-1 gap-3 ${columns}`} role="status" aria-label="Loading">
+      {Array.from({ length: count }, (_, i) => (
+        <div
+          key={i}
+          className="flex flex-col gap-2.5 rounded-2xl border p-4"
+          style={{ backgroundColor: colors.card, borderColor: colors.border }}
+        >
+          <Skeleton width="62%" height={18} />
+          {Array.from({ length: lines }, (_, j) => (
+            <Skeleton key={j} width={j === lines - 1 ? '40%' : '78%'} height={12} />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

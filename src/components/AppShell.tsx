@@ -3,12 +3,13 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
+import { prefetchRoute } from '@/features/prefetch';
 import { canUseFeature } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 
@@ -38,6 +39,23 @@ export function AppShell({ children }: { children: ReactNode }) {
     setDrawerPathname(pathname);
     setDrawerOpen(false);
   }
+
+  // While the drawer is up it owns the screen: the page behind it must not
+  // scroll (iOS in particular happily scrolls the body under a fixed overlay),
+  // and Escape should close it like any other dialog.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [drawerOpen]);
 
   const planTier = user?.planTier ?? 'free';
 
@@ -77,9 +95,18 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const NavLink = ({ item }: { item: NavItem }) => {
     const active = isActive(item);
+    // Hover, keyboard focus and the touch that precedes a tap are all a few
+    // hundred milliseconds of warning before the click. Next already prefetches
+    // the route's code on hover; this starts the screen's *data* on the same
+    // signal, so by the time the page mounts the query is usually already in
+    // flight or answered. Repeat signals are free — a warm cache short-circuits.
+    const warm = () => prefetchRoute(item.href);
     return (
       <Link
         href={item.href}
+        onMouseEnter={warm}
+        onFocus={warm}
+        onTouchStart={warm}
         className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors"
         style={{
           backgroundColor: active ? 'rgba(255,107,43,0.12)' : 'transparent',
@@ -92,17 +119,32 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   };
 
-  const sidebarInner = (
+  const renderSidebar = (onDismiss?: () => void) => (
     <>
-      <Link href="/dashboard" className="mb-6 flex items-center gap-2.5 px-1">
-        <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={44} height={44} />
-        <span
-          className="text-2xl font-bold tracking-tight"
-          style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-        >
-          {APP_CONFIG.appName}
-        </span>
-      </Link>
+      <div className="mb-6 flex items-center gap-2">
+        <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2.5 px-1">
+          <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={44} height={44} className="shrink-0" />
+          <span
+            className="truncate text-2xl font-bold tracking-tight"
+            style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+          >
+            {APP_CONFIG.appName}
+          </span>
+        </Link>
+        {onDismiss ? (
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={onDismiss}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-transform active:scale-95"
+            style={{ backgroundColor: colors.tile }}
+          >
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+              <path d="M6 6l12 12M18 6L6 18" stroke={colors.ink} strokeWidth={2} strokeLinecap="round" />
+            </svg>
+          </button>
+        ) : null}
+      </div>
 
       <nav className="flex flex-col gap-1">
         {primary.map((item) => (
@@ -147,18 +189,25 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </span>
         </Link>
-        <button
-          type="button"
-          onClick={async () => {
-            await logout();
-            router.push('/login');
-          }}
-          className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors hover:brightness-125"
-          style={{ color: colors.inkMuted }}
-        >
-          <Icon name="logout" size={19} color={colors.inkMuted} />
-          Sign out
-        </button>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              await logout();
+              router.push('/login');
+            }}
+            className="flex min-h-[44px] flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors hover:brightness-125"
+            style={{ color: colors.inkMuted }}
+          >
+            <Icon name="logout" size={19} color={colors.inkMuted} />
+            Sign out
+          </button>
+          {/* Lives here rather than floating over the sidebar, where it used to
+              sit on top of the Sign out row at narrow desktop heights. */}
+          <span className="hidden lg:block">
+            <ThemeToggle />
+          </span>
+        </div>
       </div>
     </>
   );
@@ -167,40 +216,62 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh" style={{ backgroundColor: colors.bg }}>
       {/* Desktop sidebar */}
       <aside
-        className="sticky top-0 hidden h-dvh w-[248px] shrink-0 flex-col border-r p-4 lg:flex"
-        style={{ backgroundColor: colors.bgSecondary, borderColor: colors.border }}
+        className="sticky top-0 hidden h-dvh w-[248px] shrink-0 flex-col overflow-y-auto border-r p-4 lg:flex"
+        style={{
+          backgroundColor: colors.bgSecondary,
+          borderColor: colors.border,
+          paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
+        }}
       >
-        {sidebarInner}
+        {renderSidebar()}
       </aside>
 
       {/* Mobile drawer */}
       {drawerOpen ? (
         <div
           className="fixed inset-0 z-40 lg:hidden"
-          style={{ backgroundColor: colors.overlay }}
+          style={{ backgroundColor: colors.overlay, animation: 'aas-fade-in 0.15s ease-out' }}
           onClick={() => setDrawerOpen(false)}
         >
           <aside
-            className="flex h-full w-[268px] flex-col border-r p-4"
-            style={{ backgroundColor: colors.bgSecondary, borderColor: colors.border }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation"
+            className="flex h-full w-[min(84vw,288px)] flex-col overflow-y-auto overscroll-contain border-r p-4"
+            style={{
+              backgroundColor: colors.bgSecondary,
+              borderColor: colors.border,
+              animation: 'aas-slide-in-left 0.22s cubic-bezier(0.32, 0.72, 0, 1)',
+              paddingTop: 'calc(1rem + env(safe-area-inset-top, 0px))',
+              paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
+              paddingLeft: 'calc(1rem + env(safe-area-inset-left, 0px))',
+            }}
             onClick={(e) => e.stopPropagation()}
           >
-            {sidebarInner}
+            {renderSidebar(() => setDrawerOpen(false))}
           </aside>
         </div>
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile top bar */}
+        {/* Mobile top bar. Padding carries the notch inset on top of its own
+            spacing so the row never sits under the status bar or a cutout. */}
         <header
-          className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b px-4 py-3 lg:hidden"
-          style={{ backgroundColor: colors.bgSecondary, borderColor: colors.border }}
+          className="app-topbar sticky top-0 z-30 flex items-center gap-2 border-b lg:hidden"
+          style={{
+            borderColor: colors.border,
+            paddingTop: 'calc(0.625rem + env(safe-area-inset-top, 0px))',
+            paddingBottom: '0.625rem',
+            paddingLeft: 'calc(0.75rem + env(safe-area-inset-left, 0px))',
+            paddingRight: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
+          }}
         >
           <button
             type="button"
             aria-label="Open navigation"
+            aria-expanded={drawerOpen}
             onClick={() => setDrawerOpen(true)}
-            className="flex h-10 w-10 items-center justify-center rounded-xl"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl active:scale-95 transition-transform"
             style={{ backgroundColor: colors.tile }}
           >
             <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
@@ -208,9 +279,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             </svg>
           </button>
           <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2">
-            <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={48} height={48} className="shrink-0" />
+            <Image
+              src="/images/tryouthq_t_logo_v2.png"
+              alt=""
+              width={36}
+              height={36}
+              className="h-9 w-9 shrink-0"
+            />
             <span
-              className="truncate text-2xl font-bold"
+              className="truncate text-xl font-bold tracking-tight"
               style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
             >
               {APP_CONFIG.appName}
@@ -219,12 +296,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           <ThemeToggle />
         </header>
 
-        <main className={cn('w-full flex-1 px-4 py-6 sm:px-6 lg:px-8')}>{children}</main>
-      </div>
-
-      {/* Desktop theme toggle floats out of the way of page content. */}
-      <div className="fixed bottom-5 left-5 z-20 hidden lg:block">
-        <ThemeToggle />
+        {/* .app-main publishes --page-gutter per breakpoint so .edge-bleed
+            strips can cancel exactly this element's horizontal padding. */}
+        <main
+          className={cn('app-main w-full flex-1 px-4 py-6 sm:px-6 lg:px-8')}
+          style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

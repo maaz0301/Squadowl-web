@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter, Space_Grotesk } from 'next/font/google';
 import './globals.css';
 import { Providers } from '@/components/Providers';
@@ -9,6 +9,22 @@ const spaceGrotesk = Space_Grotesk({ variable: '--font-space-grotesk', subsets: 
 export const metadata: Metadata = {
   title: 'TryoutHQ',
   description: 'Run athlete tryouts and assessments — rosters, rinkside scoring, results and team building.',
+  // Home-screen installs on iOS get the app name and their own status bar.
+  appleWebApp: { capable: true, title: 'TryoutHQ', statusBarStyle: 'black-translucent' },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  // Lets the page paint into the notch/home-indicator areas; the shell then
+  // pays those insets back with the .pt-safe/.pb-safe utilities. Without it
+  // env(safe-area-inset-*) is always 0 on iOS.
+  viewportFit: 'cover',
+  // No maximumScale/userScalable here on purpose — pinch-zoom stays available.
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f9fcff' },
+    { media: '(prefers-color-scheme: dark)', color: '#070d1a' },
+  ],
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

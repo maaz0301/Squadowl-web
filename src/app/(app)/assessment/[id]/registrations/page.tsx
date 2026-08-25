@@ -35,7 +35,7 @@ import {
   useRegistrationsQuery,
   useSubmitRegistrationMutation,
   useTryoutQuery,
-  useTryoutsQuery,
+  useTryoutSummariesQuery,
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { useUser } from '@/state/authStore';
@@ -53,7 +53,9 @@ export default function RegistrationsPage() {
   const tryoutQuery = useTryoutQuery(id);
   const regsQuery = useRegistrationsQuery(id!);
   const ensureCloud = useEnsureCloudSessionMutation();
-  const allTryouts = useTryoutsQuery();
+  // Only the destination's roster size is read off this — summaries carry the
+  // headcount without pulling every roster and evaluation in the account.
+  const allTryouts = useTryoutSummariesQuery();
   const dismissReg = useDismissRegistrationMutation(id!);
   const submitReg = useSubmitRegistrationMutation(id!);
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
@@ -134,7 +136,7 @@ export default function RegistrationsPage() {
     // which may not be the destination. A team roster isn't capped this way.
     if (destination.kind === 'assessment') {
       const target = (allTryouts.data ?? []).find((t) => t.id === destination.id);
-      const existing = target?.roster.length ?? 0;
+      const existing = target?.playerCount ?? 0;
       if (isAtPlayerLimit(user?.planTier ?? 'free', existing + ids.length - 1)) {
         setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
         return;
@@ -294,7 +296,7 @@ export default function RegistrationsPage() {
           message="Share the QR code with athletes and guardians to register."
         />
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {filtered.map((item) => (
             <Card key={item.id} className="flex flex-col gap-2">
               {/* Only the identity block opens the profile — the action buttons

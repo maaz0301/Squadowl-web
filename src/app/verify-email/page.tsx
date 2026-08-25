@@ -68,7 +68,14 @@ export default function VerifyEmailPage() {
   if (!ready || !session) return <LoadingState />;
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-10" style={{ backgroundColor: colors.bg }}>
+    <div
+      className="flex min-h-dvh items-center justify-center px-4"
+      style={{
+        backgroundColor: colors.bg,
+        paddingTop: 'calc(2.5rem + env(safe-area-inset-top, 0px))',
+        paddingBottom: 'calc(2.5rem + env(safe-area-inset-bottom, 0px))',
+      }}
+    >
       <div className="absolute right-5 top-5">
         <ThemeToggle />
       </div>
