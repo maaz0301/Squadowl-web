@@ -237,8 +237,12 @@ export default function SettingsPage() {
       destructive: true,
     });
     if (!ok) return;
-    await deleteTryout.mutateAsync(tryout.id);
-    router.replace('/dashboard');
+    try {
+      await deleteTryout.mutateAsync(tryout.id);
+      router.replace('/dashboard');
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not delete this assessment.');
+    }
   };
 
   return (
