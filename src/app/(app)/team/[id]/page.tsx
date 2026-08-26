@@ -452,8 +452,22 @@ export default function TeamDetailPage() {
 
   // Availability is stored per invited season-roster player; the coach sees a
   // Yes/Maybe/No tally that expands into the actual names.
+  //
+  // Narrowed to the team's current players. The season roster this event's RSVP
+  // rows hang off is a superset of team membership — seeded from every tryout
+  // participant, never pruned when someone leaves the team — so tallying it raw
+  // showed more names here than the "Players" tile on this same screen counts.
+  // New events are invited off `team_roster` (see syncSeasonRosterFromTeam),
+  // but events created before that still carry the wider list, so the filter
+  // stays on the read too. Skipped until the roster has actually loaded —
+  // an in-flight read is not an empty team, and filtering against it would
+  // briefly claim nobody was invited.
   const rsvpSummary = (ev: SeasonEvent) => {
-    const byId = new Map((teamSeason?.roster ?? []).map((p) => [p.id, p]));
+    const seasonRoster = teamSeason?.roster ?? [];
+    const invited = rosterQuery.isSuccess
+      ? seasonRoster.filter((p) => p.athleteId && onRoster.has(p.athleteId))
+      : seasonRoster;
+    const byId = new Map(invited.map((p) => [p.id, p]));
     const counts: Record<Rsvp, number> = { yes: 0, maybe: 0, no: 0, pending: 0 };
     const rows = Object.entries(ev.availability ?? {})
       .filter(([playerId]) => byId.has(playerId))

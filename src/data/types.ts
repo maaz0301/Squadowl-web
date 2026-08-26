@@ -586,17 +586,21 @@ export const SeasonSchema = z.object({
 export type Season = z.infer<typeof SeasonSchema>;
 
 /**
- * What the Teams list actually renders for a season: a player count and an
- * event count badge. The full `Season` carries every roster entry (each
- * joined to its full athlete row), every event, RSVP availability and portal
- * invite in the account — assembling that just to draw "12 players · 3
- * events" on a team card was the same anti-pattern `TryoutSummary` fixed for
- * tryouts. `listSeasonSummaries()` fills this shape instead.
+ * What the Teams list actually renders for a season: an event count. The full
+ * `Season` carries every roster entry (each joined to its full athlete row),
+ * every event, RSVP availability and portal invite in the account —
+ * assembling that just to draw "3 events" on a team card was the same
+ * anti-pattern `TryoutSummary` fixed for tryouts. `listSeasonSummaries()`
+ * fills this shape instead.
+ *
+ * Deliberately no player count. The card's headcount is team membership, which
+ * lives in `team_roster` and is read by `countTeamPlayers()`; a season roster
+ * is a different set that only grows, and reading it here is what made the
+ * card's number wrong.
  */
 export interface SeasonSummary {
   id: string;
   teamId?: string;
-  playerCount: number;
   eventCount: number;
 }
 

@@ -1,19 +1,34 @@
-import { QueryClient, QueryCache } from '@tanstack/react-query';
+import { QueryClient, QueryCache, MutationCache } from '@tanstack/react-query';
+import { isAuthExpiredError } from './authErrors';
+
+/**
+ * A dead session surfaces as a failed read or write like any other error, so
+ * both caches funnel it here: tear the session down and flag it as expired,
+ * which sends AuthGate to /login and gets the user told why rather than
+ * silently bounced.
+ *
+ * This used to test `error.message === 'Not authenticated'`, which nothing
+ * throws — the string is `'User not authenticated'` (resolveUserId), so an
+ * exact match never fired and an expired session just rendered as a broken
+ * screen. isAuthExpiredError() matches on the Auth API's error *code* first.
+ */
+function handleAuthError(error: unknown) {
+  if (!isAuthExpiredError(error)) return;
+  // Dynamic import rather than a static one: authStore imports queryClient
+  // (to clear the cache on logout), so a top-level import here would be
+  // circular. Deferring the resolution until the callback actually fires
+  // sidesteps the module-load-time cycle.
+  import('../state/authStore')
+    .then(({ useAuthStore }) => useAuthStore.getState().expireSession())
+    .catch((e) => console.error('Failed to sign out after an expired session:', e));
+}
 
 export const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    onError: (error) => {
-      if (error.message === 'Not authenticated' || error.message.includes('Auth session missing')) {
-        // Dynamic import rather than a static one: authStore imports queryClient
-        // (to clear the cache on logout), so a top-level import here would be
-        // circular. Deferring the resolution until the callback actually fires
-        // sidesteps the module-load-time cycle.
-        import('../state/authStore')
-          .then(({ useAuthStore }) => useAuthStore.getState().logout())
-          .catch((e) => console.error('Failed to auto-logout on auth failure:', e));
-      }
-    },
-  }),
+  queryCache: new QueryCache({ onError: handleAuthError }),
+  // Mutations had no auth handling at all: a session that died between page
+  // load and "Save" left the user staring at a failed write with no hint that
+  // signing in again was the fix.
+  mutationCache: new MutationCache({ onError: handleAuthError }),
   defaultOptions: {
     queries: {
       staleTime: 30_000,
@@ -39,6 +54,14 @@ export const queryKeys = {
   teams: ['teams'] as const,
   teamCount: ['teams', 'count'] as const,
   teamRoster: (teamId: string) => ['teams', teamId, 'roster'] as const,
+  /**
+   * Per-team headcounts for the Teams list. Covers every team at once, so
+   * unlike `teamRoster` it can't live under a single team's prefix — the
+   * roster writes refresh it through invalidateTeamRoster() instead. Still
+   * under ['teams'], so the team create/delete invalidations reach it.
+   */
+  teamPlayerCounts: (teamIds?: string[]) =>
+    teamIds ? (['teams', 'playerCounts', teamIds] as const) : (['teams', 'playerCounts'] as const),
   teamManagers: (teamId?: string) => (teamId ? (['team', teamId, 'managers'] as const) : (['team', 'managers'] as const)),
   teamBuilderResults: (tryoutId: string) => ['tryout', tryoutId, 'teamBuilderResults'] as const,
   teamMessages: (seasonId: string) => ['season', seasonId, 'messages'] as const,

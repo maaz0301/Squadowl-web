@@ -216,6 +216,8 @@ export interface DataSource {
 
   // Team roster: a team's own players, selectable from any assessment's roster.
   listTeamRoster(teamId: string): Promise<import('./types').TeamRosterPlayer[]>;
+  /** Players per team for the Teams list cards — see countTeamPlayers(). */
+  countTeamPlayers(teamIds: string[]): Promise<Record<string, number>>;
   addTeamRosterPlayers(
     teamId: string,
     entries: { athleteId: string; jersey?: string; pos?: string; sourceTryoutId?: string }[],

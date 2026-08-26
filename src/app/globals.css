@@ -130,16 +130,6 @@ input[type='datetime-local']::-webkit-datetime-edit {
   padding: 0;
 }
 
-/* An empty one paints nothing at all on iOS and "mm/dd/yyyy" on Chrome.
-   DateField and TimeField draw their own placeholder so both platforms read the
-   same, so the browser's own hint stays hidden until the field is focused and
-   its segments become editable. */
-input[type='date'][data-empty]:not(:focus),
-input[type='time'][data-empty]:not(:focus),
-input[type='datetime-local'][data-empty]:not(:focus) {
-  color: transparent;
-}
-
 input[type='date']::-webkit-calendar-picker-indicator,
 input[type='time']::-webkit-calendar-picker-indicator,
 input[type='datetime-local']::-webkit-calendar-picker-indicator {

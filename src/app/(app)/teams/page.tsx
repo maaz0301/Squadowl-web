@@ -20,7 +20,12 @@ import {
 import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
-import { useSeasonSummariesQuery, useTeamsQuery, useDeleteTeamMutation } from '@/features/queries';
+import {
+  useSeasonSummariesQuery,
+  useTeamPlayerCountsQuery,
+  useTeamsQuery,
+  useDeleteTeamMutation,
+} from '@/features/queries';
 import { useUser } from '@/state/authStore';
 import { isAtTeamLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -33,6 +38,11 @@ export default function TeamsPage() {
   const user = useUser();
   const teamsQuery = useTeamsQuery();
   const seasonsQuery = useSeasonSummariesQuery();
+  // Headcounts come from the team roster, not the season roster — a season's
+  // roster is only topped up when an event is scheduled, so it undercounts a
+  // team that has added players since (and overcounts one that has dropped
+  // them). See countTeamPlayers().
+  const playerCountsQuery = useTeamPlayerCountsQuery((teamsQuery.data ?? []).map((t) => t.id));
   const deleteTeam = useDeleteTeamMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
@@ -51,6 +61,7 @@ export default function TeamsPage() {
 
   const teams = teamsQuery.data ?? [];
   const seasons = seasonsQuery.data ?? [];
+  const playerCounts = playerCountsQuery.data;
 
   const newTeam = () => {
     // Delegated teams belong to the club that pays for them, not to this plan.
@@ -160,9 +171,11 @@ export default function TeamsPage() {
                       {team.season}
                     </span>
                   ) : null}
-                  {season ? (
+                  {playerCounts && seasonsQuery.isSuccess ? (
                     <span className="mt-2">
-                      <Badge label={`${season.playerCount} players · ${season.eventCount} events`} />
+                      <Badge
+                        label={`${playerCounts[team.id] ?? 0} players · ${season?.eventCount ?? 0} events`}
+                      />
                     </span>
                   ) : null}
                 </Card>

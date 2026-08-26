@@ -23,16 +23,15 @@ const todayKey = () => {
 };
 
 /**
- * The native picker plus a placeholder of our own. An empty date or time input
- * paints nothing at all on iOS Safari — there is no "mm/dd/yyyy" hint like the
- * one Chrome gives Android — so on iPhone these read as blank boxes under their
- * labels. globals.css hides the browser's own hint while the field is empty and
- * unfocused, leaving this the only placeholder on either platform; focusing
- * brings the native segments back for keyboard entry.
+ * The native picker, nothing drawn over it. An empty field shows whatever the
+ * browser's own hint is ("mm/dd/yyyy" / "--:-- --" on Chrome, nothing at all on
+ * iOS Safari) — these used to carry a "Select date"/"Select time" placeholder of
+ * their own inside the box, which read as a second label under the field's real
+ * one, so it was removed along with the globals.css rule that hid the native
+ * hint to make room for it.
  */
 function PickerInput({
   type,
-  placeholder,
   value,
   min,
   disabled,
@@ -40,39 +39,24 @@ function PickerInput({
   error,
 }: {
   type: 'date' | 'time';
-  placeholder: string;
   value?: string;
   min?: string;
   disabled?: boolean;
   onChange: (value: string) => void;
   error?: string;
 }) {
-  const colors = useThemeColors();
   const fieldStyle = useFieldStyle(error);
-  const isEmpty = !value;
 
   return (
-    <div className="relative">
-      <input
-        type={type}
-        value={value ?? ''}
-        min={min}
-        disabled={disabled}
-        data-empty={isEmpty ? '' : undefined}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${CONTROL} peer`}
-        style={fieldStyle}
-      />
-      {isEmpty ? (
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-base peer-focus:hidden sm:text-[15px]"
-          style={{ color: colors.placeholder }}
-        >
-          {placeholder}
-        </span>
-      ) : null}
-    </div>
+    <input
+      type={type}
+      value={value ?? ''}
+      min={min}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className={CONTROL}
+      style={fieldStyle}
+    />
   );
 }
 
@@ -94,7 +78,6 @@ export function DateField({ label, value, onChange, error, disablePast, minDate,
     <FieldShell label={label} error={error}>
       <PickerInput
         type="date"
-        placeholder="Select date"
         value={value}
         min={min}
         disabled={disabled}
@@ -129,7 +112,6 @@ export function TimeField({ label, value, onChange, error, disablePast, dateValu
     <FieldShell label={label} error={error}>
       <PickerInput
         type="time"
-        placeholder="Select time"
         value={value}
         min={min}
         disabled={disabled}
