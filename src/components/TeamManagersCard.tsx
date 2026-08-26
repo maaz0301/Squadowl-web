@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
-import { Badge, Button, Card, Chip, Input } from '@/components/ui';
+import { Badge, Button, Card, Chip, Input, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import {
   useInviteTeamManagerMutation,
@@ -12,6 +13,7 @@ import {
 import { TEAM_MANAGER_ROLES, type TeamManagerRole } from '@/data/types';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
+import { useUser } from '@/state/authStore';
 
 /**
  * CLUB mode delegation: hand this one team to another coach or manager by
@@ -38,6 +40,9 @@ interface Props {
 
 export function TeamManagersCard({ teamId, teamName }: Props) {
   const colors = useThemeColors();
+  const router = useRouter();
+  const user = useUser();
+  const { alert, confirm, toast } = useAlert();
   const tier = useEffectivePlanTier(teamId);
   const { data: managers = [], isLoading } = useTeamManagersQuery(teamId);
   const invite = useInviteTeamManagerMutation(teamId);
@@ -52,19 +57,41 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
     try {
       await invite.mutateAsync({ email: trimmed, role });
       setEmail('');
-      alert(
-        `Access granted\n\n${trimmed} can now manage ${teamName}. They'll see it on their dashboard the next time they open the app.`,
+      await alert(
+        'Access Granted',
+        `${trimmed} can now manage ${teamName}. They'll see it on their dashboard the next time they open the app.`,
       );
     } catch (e) {
-      alert(`Could not grant access\n\n${(e as Error)?.message || 'Something went wrong.'}`);
+      await alert('Could Not Grant Access', (e as Error)?.message || 'Something went wrong.');
     }
   };
 
-  const handleRemove = (id: string, who: string) => {
-    if (!confirm(`Remove ${who} from ${teamName}?`)) return;
-    remove.mutate(id, {
-      onError: (e) => alert(`Could not remove\n\n${(e as Error)?.message || 'Something went wrong.'}`),
+  const handleRemove = async (id: string, who: string, managerUserId?: string, managerEmail?: string) => {
+    const isSelf =
+      (managerUserId && user?.id && managerUserId === user.id) ||
+      (managerEmail && user?.email && managerEmail.toLowerCase() === user.email.toLowerCase());
+
+    const ok = await confirm({
+      title: isSelf ? 'Remove Manager Access' : 'Remove Manager',
+      message: isSelf
+        ? `Are you sure you want to remove your manager access to "${teamName}"? You will no longer be able to view or manage this team.`
+        : `Are you sure you want to remove ${who} from "${teamName}"?`,
+      confirmLabel: 'Remove',
+      destructive: true,
     });
+    if (!ok) return;
+
+    try {
+      await remove.mutateAsync(id);
+      if (isSelf) {
+        toast(`Removed your access to "${teamName}".`, 'info');
+        router.replace('/teams');
+      } else {
+        toast(`Removed ${who} from team managers.`, 'success');
+      }
+    } catch (e) {
+      await alert('Could Not Remove', (e as Error)?.message || 'Something went wrong.');
+    }
   };
 
   return (
@@ -104,7 +131,7 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
                   variant="ghost"
                   size="sm"
                   loading={remove.isPending && remove.variables === m.id}
-                  onClick={() => handleRemove(m.id, m.name || m.email)}
+                  onClick={() => handleRemove(m.id, m.name || m.email, m.userId, m.email)}
                 />
               </div>
             ))}
