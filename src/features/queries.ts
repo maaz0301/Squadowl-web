@@ -14,6 +14,7 @@ import type {
   ScoreForm,
   Season,
   SeasonEvent,
+  SeasonPlayer,
   Team,
   Tryout,
   UserProfile,
@@ -101,6 +102,34 @@ export function useUploadTeamLogoMutation() {
 // module (which would close a cycle back through the auth store).
 const teamRosterKey = queryKeys.teamRoster;
 
+/**
+ * Every team-roster write refreshes two reads: that team's roster, and the
+ * Teams list's headcount for it. They can't share a key — the headcount read
+ * covers every team at once, so it can't sit under one team's prefix — so
+ * they're invalidated together here rather than leaving each write to
+ * remember both.
+ */
+function invalidateTeamRoster(qc: QueryClient, teamId: string) {
+  void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+  void qc.invalidateQueries({ queryKey: queryKeys.teamPlayerCounts() });
+}
+
+/**
+ * Players per team for the Teams list cards — see countTeamPlayers(). Separate
+ * from useTeamRosterQuery because the list needs a number for every team and
+ * none of the rows behind it.
+ */
+export function useTeamPlayerCountsQuery(teamIds: string[]) {
+  // Sorted so the key is stable across list re-orders rather than refetching
+  // the same counts under a new key.
+  const ids = [...teamIds].sort();
+  return useQuery({
+    queryKey: queryKeys.teamPlayerCounts(ids),
+    queryFn: () => getDataSource().countTeamPlayers(ids),
+    enabled: ids.length > 0,
+  });
+}
+
 export function useTeamRosterQuery(teamId: string | undefined) {
   return useQuery({
     queryKey: teamRosterKey(teamId ?? ''),
@@ -118,7 +147,7 @@ export function useAddTeamRosterPlayersMutation(
     mutationFn: (entries: { athleteId: string; jersey?: string; pos?: string; sourceTryoutId?: string }[]) =>
       getDataSource().addTeamRosterPlayers(teamId, entries, onProgress),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+      invalidateTeamRoster(qc, teamId);
     },
   });
 }
@@ -128,7 +157,7 @@ export function useAddManualTeamPlayerMutation(teamId: string) {
   return useMutation({
     mutationFn: (form: AddPlayerForm) => getDataSource().addManualTeamPlayer(teamId, form),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+      invalidateTeamRoster(qc, teamId);
     },
   });
 }
@@ -139,7 +168,7 @@ export function useUploadTeamPlayerPhotoMutation(teamId: string) {
     mutationFn: ({ athleteId, fileUri, fileType }: { athleteId: string; fileUri: string; fileType: string }) =>
       getDataSource().uploadPlayerPhoto(athleteId, fileUri, fileType),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+      invalidateTeamRoster(qc, teamId);
     },
   });
 }
@@ -149,7 +178,7 @@ export function useRemoveTeamRosterPlayerMutation(teamId: string) {
   return useMutation({
     mutationFn: (athleteId: string) => getDataSource().removeTeamRosterPlayer(teamId, athleteId),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+      invalidateTeamRoster(qc, teamId);
     },
   });
 }
@@ -550,7 +579,7 @@ export function useAddRegistrationToTeamMutation(tryoutId: string) {
     mutationFn: ({ teamId, registrationId }: { teamId: string; registrationId: string }) =>
       getDataSource().addRegistrationToTeam(teamId, registrationId),
     onSuccess: (_data, { teamId }) => {
-      qc.invalidateQueries({ queryKey: teamRosterKey(teamId) });
+      invalidateTeamRoster(qc, teamId);
       qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
     },
@@ -634,7 +663,7 @@ export function usePlaceRegistrationsMutation(tryoutId: string, onProgress?: (do
           qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
         }
       } else {
-        qc.invalidateQueries({ queryKey: teamRosterKey(destination.id) });
+        invalidateTeamRoster(qc, destination.id);
       }
       qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
@@ -1027,9 +1056,19 @@ export function useAddSeasonEventMutation(seasonId: string, onProgress?: (done: 
 
 /**
  * Copies any team-roster player missing from the season roster across, then
- * returns the season roster. Availability (and therefore guardian portal
- * visibility) is keyed on season roster entries, so this is what makes a team
- * player actually receive events.
+ * returns the season-roster entries for the team's *current* players.
+ * Availability (and therefore guardian portal visibility) is keyed on season
+ * roster entries, so this is what makes a team player actually receive events.
+ *
+ * The return is deliberately narrower than the season roster. A season roster
+ * is not team membership: `createSeason()` seeds it from every participant of
+ * every tryout linked to the team, this function tops it up, and nothing ever
+ * deletes from it — `removeTeamRosterPlayer()` only touches `team_roster`. So
+ * the full roster carries athletes who tried out but never made the team, plus
+ * everyone since cut from it. Inviting that set is what made a new event's RSVP
+ * tally disagree with the team's own player count on the same screen. Team
+ * membership is `team_roster` (the same table `countTeamPlayers()` counts), so
+ * that's what an event's invite list is built from.
  */
 const SEASON_ROSTER_SYNC_CONCURRENCY = 8;
 
@@ -1045,7 +1084,11 @@ async function syncSeasonRosterFromTeam(
   ]);
   const alreadyOnSeason = new Set((season?.roster ?? []).map((p) => p.athleteId).filter(Boolean));
   const missing = teamRoster.filter((p) => p.athleteId && !alreadyOnSeason.has(p.athleteId));
-  if (missing.length === 0) return season?.roster ?? [];
+  // Keyed on athlete rather than season-roster id: the two rosters are separate
+  // tables joined only by athlete_id.
+  const onTeam = new Set(teamRoster.map((p) => p.athleteId).filter(Boolean));
+  const teamEntries = (roster: SeasonPlayer[]) => roster.filter((p) => p.athleteId && onTeam.has(p.athleteId));
+  if (missing.length === 0) return teamEntries(season?.roster ?? []);
 
   // One insert per missing player, run through a bounded pool rather than in
   // series — a large team otherwise stalls here, one round trip per player,
@@ -1072,7 +1115,7 @@ async function syncSeasonRosterFromTeam(
     }
   });
   const refreshed = await ds.getSeason(seasonId);
-  return refreshed?.roster ?? [];
+  return teamEntries(refreshed?.roster ?? []);
 }
 
 /**

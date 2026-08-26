@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Badge, Card, ErrorState, LoadingState, PageHeader, Tabs } from '@/components/ui';
+import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, Tabs } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import {
   useOrgQuery,
@@ -12,6 +13,7 @@ import {
   useTeamsQuery,
   useSeasonsQuery,
 } from '@/features/queries';
+import { queryKeys } from '@/lib/queryClient';
 import type { Tryout } from '@/data/types';
 
 const ENT_TABS = [
@@ -79,24 +81,80 @@ export default function EnterprisePage() {
   const [tab, setTab] = useState<EntTab>('overview');
   const orgQuery = useOrgQuery();
   const membersQuery = useOrgMembersQuery();
-  const tryoutsQuery = useTryoutsQuery(false);
+  // Archived assessments are still the association's history. Excluding them
+  // made this roll-up describe only whatever happened to be in flight, so a club
+  // between seasons read as having almost no players or evaluations at all. The
+  // totals count them; the action figures below filter them back out.
+  const tryoutsQuery = useTryoutsQuery(true);
   const teamsQuery = useTeamsQuery();
   const seasonsQuery = useSeasonsQuery();
+
+  const qc = useQueryClient();
+  /**
+   * Every figure here is derived from lists other screens own and cache, and
+   * this page never writes to any of them. With the default 30s staleTime and
+   * no refetch on focus, that meant opening the dashboard could report whatever
+   * the dashboard or teams screens last fetched, arbitrarily far in the past —
+   * a report has to be current at the moment you read it. Refetching on mount
+   * (and on demand) still paints the cached numbers immediately and corrects
+   * them underneath, so there is no spinner in the way.
+   */
+  const refresh = useCallback(() => {
+    for (const queryKey of [queryKeys.org, queryKeys.tryouts(true), queryKeys.teams, queryKeys.seasons]) {
+      void qc.invalidateQueries({ queryKey });
+    }
+  }, [qc]);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+  const refreshing =
+    orgQuery.isFetching ||
+    membersQuery.isFetching ||
+    tryoutsQuery.isFetching ||
+    teamsQuery.isFetching ||
+    seasonsQuery.isFetching;
+
   // Folds in the one-guardian-per-athlete rows from the members directory, so
   // the roster size doesn't get mistaken for headcount.
   const staffCount = membersQuery.data?.filter((m) => m.role !== 'guardian').length;
-  const ownedTeamsCount = teamsQuery.data?.filter((t) => !t.managed).length ?? 0;
+  const teams = teamsQuery.data ?? [];
+  // Delegated teams count too. A club that hands a team to a coach still owns
+  // it, so dropping them here made the association's own team count read lower
+  // than the Teams screen this page sits next to.
+  const managedTeamsCount = teams.filter((t) => t.managed).length;
 
-  const tryouts = tryoutsQuery.data ?? [];
+  // Memoised for its identity, not its cost: a bare `?? []` hands the metrics
+  // useMemo below a fresh array on every render while the query is still
+  // loading, so it recomputed the whole roll-up each time.
+  const tryouts = useMemo(() => tryoutsQuery.data ?? [], [tryoutsQuery.data]);
 
   const metrics = useMemo(() => {
-    let players = 0;
-    let scoredPlayers = 0;
+    /**
+     * Distinct people, not roster rows. An athlete the club assesses in four of
+     * its assessments is one player, and summing roster lengths reported four —
+     * which is what made "Players" here disagree with every athlete count
+     * elsewhere in the app. Roster *spots* are still tracked separately below,
+     * because scoring coverage genuinely is per-spot: being evaluated at the U15
+     * tryout says nothing about the U17 one.
+     *
+     * A participant whose athletes join didn't resolve falls back to its own
+     * (unique) participant id, so those still count once each rather than
+     * collapsing onto a single `undefined` key.
+     */
+    const athleteIds = new Set<string>();
+    let rosterSpots = 0;
+    let scoredSpots = 0;
     let evaluations = 0;
     let regsTotal = 0;
     let regsPending = 0;
     let regsAdded = 0;
-    let unpaid = 0;
+    let archivedCount = 0;
+    // Action figures, deliberately over active assessments only: an archived
+    // event's unscored players and pending registrations are history rather than
+    // work, and counting them buried the assessments still in flight.
+    let openPending = 0;
+    let openUnscored = 0;
+    let openUnpaid = 0;
     const recCounts: Record<string, number> = { Make: 0, Keep: 0, Bubble: 0, Release: 0 };
     const bySport: Record<string, number> = {};
     const needsAttention: { tryout: Tryout; unscored: number; pending: number }[] = [];
@@ -104,13 +162,15 @@ export default function EnterprisePage() {
     for (const t of tryouts) {
       const roster = t.roster ?? [];
       const evals = t.evals ?? [];
-      players += roster.length;
+      rosterSpots += roster.length;
       evaluations += evals.length;
       bySport[t.sport] = (bySport[t.sport] ?? 0) + 1;
+      if (t.archived) archivedCount++;
+      for (const p of roster) athleteIds.add(p.athleteId ?? p.id);
 
       const scoredIds = new Set(evals.map((e) => e.playerId));
       const unscored = roster.filter((p) => !scoredIds.has(p.id)).length;
-      scoredPlayers += roster.length - unscored;
+      scoredSpots += roster.length - unscored;
 
       for (const e of evals) {
         if (e.recommendation && recCounts[e.recommendation] !== undefined) {
@@ -123,8 +183,11 @@ export default function EnterprisePage() {
       const pending = regs.filter((r) => r.status === 'pending').length;
       regsPending += pending;
       regsAdded += regs.filter((r) => r.status === 'added').length;
-      unpaid += regs.filter((r) => r.paymentStatus && r.paymentStatus !== 'paid').length;
 
+      if (t.archived) continue;
+      openPending += pending;
+      openUnscored += unscored;
+      openUnpaid += regs.filter((r) => r.paymentStatus && r.paymentStatus !== 'paid').length;
       if (unscored > 0 || pending > 0) needsAttention.push({ tryout: t, unscored, pending });
     }
 
@@ -135,32 +198,51 @@ export default function EnterprisePage() {
       .slice(0, 5);
 
     return {
-      players,
-      scoredPlayers,
+      players: athleteIds.size,
+      rosterSpots,
+      scoredSpots,
       evaluations,
       regsTotal,
       regsPending,
       regsAdded,
-      unpaid,
+      archivedCount,
+      activeCount: tryouts.length - archivedCount,
+      openPending,
+      openUnscored,
+      openUnpaid,
       recCounts,
       bySport,
       needsAttention,
       largest,
-      scoredPct: players ? Math.round((scoredPlayers / players) * 100) : 0,
+      scoredPct: rosterSpots ? Math.round((scoredSpots / rosterSpots) * 100) : 0,
       convertedPct: regsTotal ? Math.round((regsAdded / regsTotal) * 100) : 0,
-      avgSize: tryouts.length ? Math.round(players / tryouts.length) : 0,
-      evalsPerPlayer: players ? (evaluations / players).toFixed(1) : '0',
+      avgSize: tryouts.length ? Math.round(rosterSpots / tryouts.length) : 0,
+      evalsPerSpot: rosterSpots ? (evaluations / rosterSpots).toFixed(1) : '0',
     };
   }, [tryouts]);
 
   if (orgQuery.isLoading) return <LoadingState message="Loading org..." />;
 
   const org = orgQuery.data;
-  const unscoredPlayers = metrics.players - metrics.scoredPlayers;
+  const unscoredSpots = metrics.rosterSpots - metrics.scoredSpots;
 
   return (
     <>
-      <PageHeader title="Enterprise Dashboard" subtitle="Association & Org Intelligence" showBack backHref="/dashboard" />
+      <PageHeader
+        title="Enterprise Dashboard"
+        subtitle="Association & Org Intelligence"
+        showBack
+        backHref="/dashboard"
+        right={
+          <Button
+            label={refreshing ? 'Refreshing...' : 'Refresh'}
+            variant="secondary"
+            size="sm"
+            loading={refreshing}
+            onClick={refresh}
+          />
+        }
+      />
 
       <PlanGate feature="enterprise" title="Enterprise Dashboard (Association)">
         <Tabs tabs={[...ENT_TABS]} activeKey={tab} onChange={(k) => setTab(k as EntTab)} className="mb-6" />
@@ -176,6 +258,9 @@ export default function EnterprisePage() {
                 <div className="flex flex-wrap gap-2 mt-2">
                   <Badge label={`${staffCount ?? org.memberCount} staff`} />
                   <Badge label={`${tryouts.length} assessments`} variant="brand" />
+                  {metrics.archivedCount > 0 ? (
+                    <Badge label={`${metrics.archivedCount} archived`} title="Included in the totals below" />
+                  ) : null}
                   <Badge label={`${metrics.players} players`} variant="info" />
                 </div>
               </Card>
@@ -190,12 +275,16 @@ export default function EnterprisePage() {
             ) : (
               <>
                 <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
-                  <Stat label="Players" value={`${metrics.players}`} hint={`${metrics.avgSize} avg / assessment`} />
-                  <Stat label="Evaluations" value={`${metrics.evaluations}`} hint={`${metrics.evalsPerPlayer} per player`} />
+                  <Stat
+                    label="Players"
+                    value={`${metrics.players}`}
+                    hint={`${metrics.rosterSpots} roster spots · ${metrics.avgSize} avg`}
+                  />
+                  <Stat label="Evaluations" value={`${metrics.evaluations}`} hint={`${metrics.evalsPerSpot} per roster spot`} />
                   <Stat
                     label="Scored"
                     value={`${metrics.scoredPct}%`}
-                    hint={`${unscoredPlayers} unscored`}
+                    hint={`${unscoredSpots} unscored`}
                     tone={
                       metrics.scoredPct >= 75
                         ? colors.success
@@ -204,7 +293,11 @@ export default function EnterprisePage() {
                           : colors.danger
                     }
                   />
-                  <Stat label="Teams" value={`${ownedTeamsCount}`} />
+                  <Stat
+                    label="Teams"
+                    value={`${teams.length}`}
+                    hint={managedTeamsCount > 0 ? `${managedTeamsCount} delegated` : undefined}
+                  />
                   <Stat label="Seasons" value={`${seasonsQuery.data?.length ?? 0}`} />
                   <Stat label="Registrations" value={`${metrics.regsTotal}`} hint={`${metrics.regsPending} pending`} />
                 </div>
@@ -214,10 +307,13 @@ export default function EnterprisePage() {
                     <h3 className="font-bold text-base" style={{ color: colors.ink }}>Scoring Progress</h3>
                     <ShareBar
                       parts={[
-                        { label: 'Scored', value: metrics.scoredPlayers, color: colors.success },
-                        { label: 'Unscored', value: unscoredPlayers, color: colors.border },
+                        { label: 'Scored', value: metrics.scoredSpots, color: colors.success },
+                        { label: 'Unscored', value: unscoredSpots, color: colors.border },
                       ]}
                     />
+                    <p className="text-xs" style={{ color: colors.inkMuted }}>
+                      Counted per roster spot — a player in two assessments needs scoring in both.
+                    </p>
                   </Card>
 
                   <Card className="flex flex-col gap-3">
@@ -277,7 +373,10 @@ export default function EnterprisePage() {
                                 {t.sport} · {t.evals?.length ?? 0} evaluations
                               </span>
                             </div>
-                            <Badge label={`${t.roster?.length ?? 0} players`} variant="brand" />
+                            <div className="flex shrink-0 items-center gap-2">
+                              {t.archived ? <Badge label="Archived" /> : null}
+                              <Badge label={`${t.roster?.length ?? 0} players`} variant="brand" />
+                            </div>
                           </div>
                         </Link>
                       ))}
@@ -293,24 +392,30 @@ export default function EnterprisePage() {
 
         {tab === 'actions' ? (
           <div className="space-y-6">
+            <p className="text-xs" style={{ color: colors.inkMuted }}>
+              Outstanding work across {metrics.activeCount} active{' '}
+              {metrics.activeCount === 1 ? 'assessment' : 'assessments'}
+              {metrics.archivedCount > 0 ? ` — ${metrics.archivedCount} archived excluded` : ''}.
+            </p>
+
             <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
               <Stat
                 label="Pending Regs"
-                value={`${metrics.regsPending}`}
+                value={`${metrics.openPending}`}
                 hint="awaiting review"
-                tone={metrics.regsPending ? colors.warning : colors.ink}
+                tone={metrics.openPending ? colors.warning : colors.ink}
               />
               <Stat
                 label="Unscored"
-                value={`${unscoredPlayers}`}
-                hint="players with no eval"
-                tone={unscoredPlayers ? colors.warning : colors.ink}
+                value={`${metrics.openUnscored}`}
+                hint="roster spots with no eval"
+                tone={metrics.openUnscored ? colors.warning : colors.ink}
               />
               <Stat
                 label="Unpaid"
-                value={`${metrics.unpaid}`}
+                value={`${metrics.openUnpaid}`}
                 hint="registrations"
-                tone={metrics.unpaid ? colors.danger : colors.ink}
+                tone={metrics.openUnpaid ? colors.danger : colors.ink}
               />
             </div>
 
@@ -320,7 +425,7 @@ export default function EnterprisePage() {
                 <Card className="flex flex-col gap-1">
                   <span className="font-bold" style={{ color: colors.success }}>All clear</span>
                   <span className="text-xs" style={{ color: colors.inkMuted }}>
-                    Every assessment is fully scored with no pending registrations.
+                    Every active assessment is fully scored with no pending registrations.
                   </span>
                 </Card>
               ) : (

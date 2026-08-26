@@ -7,14 +7,31 @@ import { queryClient } from '@/lib/queryClient';
 import { warmAfterAuth } from '@/features/prefetch';
 import { useSessionStore } from './sessionStore';
 
+/**
+ * Set while logout() tears the session down. The SDK fires SIGNED_OUT during
+ * that teardown, and the listener watching for a session dying on its own
+ * would otherwise read a deliberate sign-out as an expiry and toast the user
+ * on their way out the door.
+ */
+let deliberateSignOut = false;
+
 interface AuthState {
   session: AuthSession | null;
   isHydrated: boolean;
+  /**
+   * The last sign-out was not the user's doing — their refresh token was gone
+   * or revoked. Drives the "session expired" notice on the way to /login; not
+   * persisted, so a fresh page load starts clean.
+   */
+  sessionExpired: boolean;
   setSession: (session: AuthSession | null) => void;
   setHydrated: (v: boolean) => void;
   login: (email: string, password: string) => Promise<void>;
   signup: (displayName: string, email: string, password: string, accountType: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Sign out because the session died on its own — see the action's comment. */
+  expireSession: () => Promise<void>;
+  clearSessionExpired: () => void;
   restoreSession: (forceRefresh?: boolean) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
@@ -29,6 +46,7 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       session: null,
       isHydrated: false,
+      sessionExpired: false,
       setSession: (session) => {
         queryClient.clear();
         set({ session });
@@ -49,6 +67,8 @@ export const useAuthStore = create<AuthState>()(
         get().setSession(session);
       },
       logout: async () => {
+        deliberateSignOut = true;
+        set({ sessionExpired: false });
         try {
           await getDataSource().logout();
         } catch (e) {
@@ -67,23 +87,43 @@ export const useAuthStore = create<AuthState>()(
             completedSessions: {},
           });
           get().setSession(null);
+          deliberateSignOut = false;
         }
       },
+      /**
+       * Sign out because the session ended on its own — an expired or revoked
+       * refresh token — rather than because the user asked to. Same teardown as
+       * logout(), plus a flag so the UI can say *why* instead of dropping the
+       * user on /login with no explanation.
+       *
+       * A no-op when there is nothing to expire: a stray auth error arriving
+       * after a deliberate sign-out must not claim the session ran out.
+       */
+      expireSession: async () => {
+        if (deliberateSignOut || !get().session) return;
+        await get().logout();
+        set({ sessionExpired: true });
+      },
+      clearSessionExpired: () => set({ sessionExpired: false }),
       restoreSession: async (forceRefresh?: boolean) => {
+        // A session we believed in that the SDK can no longer produce is the
+        // cold-boot face of the same expiry: the persisted store rehydrates the
+        // old session, then the refresh behind getSession() comes back empty.
+        const hadSession = !!get().session;
         try {
           const session = await getDataSource().getSession(forceRefresh);
           const currentSession = get().session;
           if (session?.user?.id !== currentSession?.user?.id) {
             queryClient.clear();
           }
-          set({ session, isHydrated: true });
+          set({ session, isHydrated: true, sessionExpired: hadSession && !session });
           // Boot path, same reasoning as setSession(): on a cold load the
           // cache starts empty, and this fires while the screen behind
           // AuthGate is still being mounted rather than after it.
           warmAfterAuth(session?.user);
         } catch (e) {
           console.error('Failed to restore session:', e);
-          set({ session: null, isHydrated: true });
+          set({ session: null, isHydrated: true, sessionExpired: hadSession });
         }
       },
       updateProfile: async (updates) => {
