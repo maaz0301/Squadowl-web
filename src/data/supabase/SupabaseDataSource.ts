@@ -939,13 +939,34 @@ export class SupabaseDataSource implements DataSource {
   private async fetchEvaluationsForTryouts(supabase: SupabaseClient, ids: string[]): Promise<Row[]> {
     if (ids.length === 0) return [];
 
-    const { data, error } = await supabase.rpc('get_evaluations_for_tryouts', { p_tryout_ids: ids });
-    if (!error) return (data as Row[]) ?? [];
-
-    if (error.code === 'PGRST202' || error.code === '42883') {
-      console.warn('get_evaluations_for_tryouts() not deployed — trying the embedded read.');
-    } else {
-      console.error('get_evaluations_for_tryouts failed — trying the embedded read.', error);
+    // Keyset-paged like every other batched read here (see fetchAllByIn):
+    // `setof jsonb` from an RPC is still capped by PostgREST's db-max-rows,
+    // same as a plain table read, so taking a single call's result as complete
+    // silently truncated any tryout with more evaluations than that cap —
+    // no error, no short-page signal, just a quietly undercounted roster.
+    const rpcRows: Row[] = [];
+    let cursor: string | null = null;
+    for (;;) {
+      const { data, error } = await supabase.rpc('get_evaluations_for_tryouts', {
+        p_tryout_ids: ids,
+        p_after_id: cursor,
+        p_limit: EVALUATIONS_PAGE,
+      });
+      if (error) {
+        if (error.code === 'PGRST202' || error.code === '42883') {
+          console.warn('get_evaluations_for_tryouts() not deployed — trying the embedded read.');
+        } else {
+          // A later page failing mid-read is not "not deployed" — returning what
+          // was collected so far would silently undercount, same failure this
+          // whole thing exists to avoid, so fall through for the true total.
+          console.error('get_evaluations_for_tryouts failed — trying the embedded read.', error);
+        }
+        break;
+      }
+      const page = (data as Row[]) ?? [];
+      rpcRows.push(...page);
+      if (page.length < EVALUATIONS_PAGE) return rpcRows;
+      cursor = page[page.length - 1].id as string;
     }
 
     const embedded = await this.fetchEvaluationsViaTryouts(supabase, ids);
