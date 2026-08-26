@@ -2976,9 +2976,8 @@ export class SupabaseDataSource implements DataSource {
 
     const rubrics = tryout.settings.customRubrics ?? [];
 
-    // 3. Build evaluations: ~10% are left unscored to exercise the unscored
-    //    filter; the rest get exactly `sessionsPerPlayer` sessions, spread
-    //    across the assessment's assessors.
+    // 3. Build evaluations: every player gets exactly `sessionsPerPlayer`
+    //    sessions, spread across the assessment's assessors.
     const profile = await this.loadUserProfile(userId);
     const assessorNames = tryout.assessors.length
       ? tryout.assessors.map((a) => a.name)
@@ -2987,7 +2986,6 @@ export class SupabaseDataSource implements DataSource {
     const evalRows: Row[] = [];
     const evalPlayerIndex: number[] = [];
     generated.forEach((g, i) => {
-      if (Math.random() < 0.1) return; // leave unscored
       for (let sIdx = 0; sIdx < opts.sessionsPerPlayer; sIdx++) {
         const evaluatorName = assessorNames[(i + sIdx) % assessorNames.length];
         const isOwner = evaluatorName === profile.displayName;

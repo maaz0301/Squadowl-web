@@ -689,25 +689,13 @@ export function useGenerateTestDataMutation(tryoutId: string, onProgress?: (done
   return useMutation({
     mutationKey: tryoutBulkWriteKey(tryoutId),
     mutationFn: (options: DummyDataOptions) => getDataSource().generateTestData(tryoutId, options, onProgress),
-    onSuccess: (res) => {
-      // Same reasoning as usePlaceRegistrationsMutation: bump cached roster
-      // lengths immediately (placeholder rows, since generateTestData only
-      // returns a count) rather than leaving list badges — the dashboard's
-      // "N players" chip — stale until the background refetch below lands.
-      if (res.players > 0) {
-        const stubs: Player[] = Array.from({ length: res.players }, (_, i) => ({
-          id: `dummy-${Date.now()}-${i}`,
-          first: '',
-          last: '',
-          createdAt: Date.now(),
-        }));
-        patchTryoutRosterCaches(qc, tryoutId, stubs);
-      }
-    },
-    // Same reasoning as useGenerateDummyTeamsMutation: this writes
-    // incrementally, so a failure mid-batch still leaves real rows. The
-    // optimistic stubs above stay on success (they need the result count), but
-    // the refetch has to happen either way.
+    // onSuccess intentionally omitted: the previous optimistic stub patch
+    // inserted placeholder rows with empty first/last names that rendered as
+    // "Unknown Player" until the real refetch landed. The onSettled
+    // invalidation below already triggers an immediate background refetch, so
+    // the brief empty-name flash adds no user value.
+    // onSettled, not onSuccess: generateTestData writes incrementally, so a
+    // failure mid-batch still leaves real rows behind. Refetch either way.
     onSettled: () => {
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId) });
