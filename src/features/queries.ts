@@ -859,8 +859,8 @@ export function useAiPlayerSummaryMutation(tryoutId: string) {
     mutationFn: (playerId: string) => 
       withTimeout(
         getDataSource().getAiPlayerSummary(tryoutId, playerId), 
-        20000, 
-        'Generation timed out. The server might be busy, please try again.'
+        90000, 
+        'Generation is taking longer than expected.'
       ),
     onSuccess: (summary, playerId) => {
       // Write the AI result directly into the cached tryout so the UI updates
