@@ -2127,7 +2127,7 @@ export class SupabaseDataSource implements DataSource {
     return this.withFreshAccount((guard) => this._createTryout(form, guard));
   }
 
-  private async _createTryout(form: CreateAssessmentForm): Promise<Tryout> {
+  private async _createTryout(form: CreateAssessmentForm, _guard?: unknown): Promise<Tryout> {
     const { supabase, userId } = await this.ctx();
     const accountId = await this.writableAccountId();
     const profile = await this.loadUserProfile(userId);
