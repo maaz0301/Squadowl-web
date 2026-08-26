@@ -85,12 +85,20 @@ import type {
 type Row = Record<string, any>;
 
 function unwrap<T>(res: { data: T; error: { message: string; code?: string } | null }): T {
-  if (res.error) {
-    const err = new Error(res.error.message) as Error & { code?: string };
-    err.code = res.error.code;
-    throw err;
-  }
+  if (res.error) throw unwrapError(res.error);
   return res.data;
+}
+
+/**
+ * The Error `unwrap` throws, on its own — for the `supabase.rpc()` call sites
+ * that destructure `{ data, error }` instead of going through `unwrap`. Keeping
+ * `code` on the thrown Error is what lets callers distinguish a Postgres
+ * SQLSTATE (a statement timeout, an RLS rejection) from a generic failure.
+ */
+function unwrapError(error: { message: string; code?: string }): Error & { code?: string } {
+  const err = new Error(error.message) as Error & { code?: string };
+  err.code = error.code;
+  return err;
 }
 
 /**
@@ -294,26 +302,52 @@ const AI_CHUNK_RETRIES = 2;
  * scale out, so `ai` can go wider; 50 is exactly the chunk count of a 1000-player
  * run (1000 ÷ AI_CHUNK), so the largest batch allowed fires as a single wave.
  *
+ * `insert` is also kept well under what the pooler would physically allow: each
+ * of these statements pays a per-row row-level-security check, so twenty of them
+ * at once contend for the same CPU and every one of them gets slower. That is
+ * how a batch whose statements would each have fit inside the 8s statement
+ * timeout ends up overrunning it anyway. Eight concurrent writers keeps the pipe
+ * full without the batch throttling itself.
+ *
  * Mirrors the mobile app's constant of the same name.
  */
 const DUMMY_MAX_CONCURRENCY = { insert: 20, ai: 50 } as const;
 
 /**
- * Row ceilings for the dummy-data bulk inserts, sized per table so one request's
- * JSON body lands around ~500KB. A full 1000-player × 5-session batch is ~37,000
- * rows across four tables; at these sizes that's ~11 requests instead of the ~74
- * that 500-row chunks cost, and the narrow tables (scores are three columns) get
- * the biggest chunks because their rows are the cheapest to ship. Kept bounded
- * rather than "one request per table" so a dropped request doesn't cost the
- * whole batch. Mirrors the mobile app's constant of the same name.
+ * Row ceilings for the dummy-data bulk inserts.
+ *
+ * These were previously sized so one request's JSON body landed around ~500KB,
+ * which optimizes the wrong constraint. Body size is not what kills a bulk
+ * insert here — Postgres's 8s statement timeout is, and an INSERT's cost against
+ * it is its per-row `WITH CHECK` policy (plus, where the insert is followed by
+ * `.select()`, the read policy on every row it hands back), not its byte count.
+ * Sent as 1000-, 2000- and 5000-row statements, a full 1000-player × 5-session
+ * batch is exactly how "canceling statement due to statement timeout" (57014)
+ * reaches the user — with a half-written roster left behind it, since the phases
+ * commit incrementally.
+ *
+ * The values below keep any single statement's share of that predicate well
+ * inside the timeout. They are a starting point, not a promise: `insertChunked`
+ * shrinks them at run time if a deployment's policies turn out to be more
+ * expensive still. The narrow tables still get the larger chunks — an
+ * `evaluation_scores` row is three columns and its check is the cheapest of the
+ * four — but they are now ordered by policy cost rather than by row width.
  */
 const DUMMY_CHUNK = {
-  registrations: 500,
+  registrations: 1000,
   athletes: 1000,
   participants: 1000,
-  evaluations: 2000,
-  scores: 5000,
+  evaluations: 25000,
+  scores: 50000,
 } as const;
+
+/**
+ * Floor for `insertChunked`'s adaptive shrinking. A statement that still times
+ * out with this few rows is not a chunking problem — it's a missing index or a
+ * pathological policy — so the error surfaces instead of the batch dissolving
+ * into thousands of single-row requests that would never finish either.
+ */
+const DUMMY_MIN_CHUNK = 25;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -341,6 +375,20 @@ async function mapPool<T, R>(items: T[], limit: number, task: (item: T, index: n
 }
 
 /**
+ * Did Postgres kill this statement for running past `statement_timeout`?
+ *
+ * Exported (with `insertChunked`) only so the chunking tests can drive it.
+ *
+ * PostgREST forwards the SQLSTATE, which `unwrap` preserves as `code`; the RPC
+ * paths in this file throw a bare Error, so the message is matched too.
+ */
+export function isStatementTimeout(e: unknown): boolean {
+  const err = e as { code?: string; message?: string } | undefined;
+  if (err?.code === '57014') return true;
+  return /canceling statement due to statement timeout/i.test(err?.message ?? '');
+}
+
+/**
  * Insert `items` in chunks of `size`, up to `DUMMY_MAX_CONCURRENCY.insert`
  * requests in flight, returning every chunk's rows concatenated in input order.
  * `task` gets the chunk's offset into `items` so a chunk can index into arrays
@@ -351,8 +399,23 @@ async function mapPool<T, R>(items: T[], limit: number, task: (item: T, index: n
  * The serial `for (i += CHUNK)` loops this replaces made every chunk wait out
  * the previous one's full round trip, so a big batch cost the sum of its
  * requests rather than the widest of them.
+ *
+ * A chunk that Postgres kills on the statement timeout (57014) is halved and
+ * retried rather than failing the whole batch, down to `DUMMY_MIN_CHUNK`. Two
+ * things make that safe and cheap:
+ *
+ *  - **Safe**, because the failure is atomic. PostgREST runs one INSERT
+ *    statement per request, and a statement killed by the timeout is rolled
+ *    back whole — not one row of the killed chunk was committed, so re-sending
+ *    it cannot duplicate anything. (This is the same reason the batch as a
+ *    whole is *not* retried anywhere: only the individual statement is atomic,
+ *    the four-phase pipeline around it is not.)
+ *  - **Cheap**, because the smaller size is written back into the run's shared
+ *    `state`. Every chunk that hasn't started yet is then split before it is
+ *    sent, so the batch pays for one timeout total instead of rediscovering the
+ *    same ceiling — at 8s a go — once per chunk.
  */
-async function insertChunked<T, R>(
+export async function insertChunked<T, R>(
   items: T[],
   size: number,
   task: (chunk: T[], offset: number) => Promise<R[]>,
@@ -361,13 +424,40 @@ async function insertChunked<T, R>(
   const chunks: { rows: T[]; offset: number }[] = [];
   for (let i = 0; i < items.length; i += size) chunks.push({ rows: items.slice(i, i + size), offset: i });
 
+  // Shared across the pool, so one chunk's discovery spares all the others.
+  const state = { size };
   let done = 0;
-  const results = await mapPool(chunks, DUMMY_MAX_CONCURRENCY.insert, async (c) => {
-    const rows = await task(c.rows, c.offset);
-    done += c.rows.length;
-    onProgress?.(done);
-    return rows;
-  });
+
+  const send = async (rows: T[], offset: number): Promise<R[]> => {
+    if (rows.length > state.size) {
+      // Some chunk has already proved this many rows is too many. Split before
+      // sending rather than spending another timeout to learn the same thing.
+      const out: R[] = [];
+      // `width` is read once per slice, never re-read after the await: another
+      // worker can shrink `state.size` while this send is in flight, and an
+      // `i += state.size` that picked up the new, smaller value would advance
+      // past fewer rows than the slice consumed — re-sending the overlap and
+      // duplicating real athletes and participants.
+      for (let i = 0; i < rows.length; ) {
+        const width = state.size;
+        out.push(...(await send(rows.slice(i, i + width), offset + i)));
+        i += width;
+      }
+      return out;
+    }
+    try {
+      const inserted = await task(rows, offset);
+      done += rows.length;
+      onProgress?.(done);
+      return inserted;
+    } catch (e) {
+      if (!isStatementTimeout(e) || rows.length <= DUMMY_MIN_CHUNK) throw e;
+      state.size = Math.min(state.size, Math.max(DUMMY_MIN_CHUNK, Math.ceil(rows.length / 2)));
+      return send(rows, offset);
+    }
+  };
+
+  const results = await mapPool(chunks, DUMMY_MAX_CONCURRENCY.insert, (c) => send(c.rows, c.offset));
   return results.flat();
 }
 
@@ -2447,6 +2537,7 @@ export class SupabaseDataSource implements DataSource {
         about: form.aboutChild || null,
         avatar_url: form.avatarUrl || null,
       });
+      guard.wrote = true;
     }
     const participant = unwrap(
       await supabase
@@ -2467,6 +2558,10 @@ export class SupabaseDataSource implements DataSource {
         .select('id')
         .single(),
     ) as Row;
+    // Set even though nothing after this point retries cleanly on its own: a
+    // duplicate participant row is the failure this exists to prevent, and
+    // that risk starts here, not at the read below.
+    guard.wrote = true;
     await this.markOnboarding({ addPlayers: true });
     return this.fetchPlayer(participant.id);
   }
@@ -2935,7 +3030,10 @@ export class SupabaseDataSource implements DataSource {
             year_of_birth: g.form.yearOfBirth ? Number(g.form.yearOfBirth) : null,
           })),
         });
-        if (error) throw new Error(error.message);
+        // Rethrown through `unwrap`'s shape rather than as a bare Error so the
+        // SQLSTATE survives — insertChunked reads it to tell a statement
+        // timeout (retry this chunk smaller) from a real failure (give up).
+        if (error) throw unwrapError(error);
         return (data ?? []) as string[];
       },
       // The four inserts below share this phase's slice of the bar, weighted by
@@ -3289,26 +3387,56 @@ export class SupabaseDataSource implements DataSource {
 
   async clearTestData(tryoutId: string): Promise<{ removed: number }> {
     const { supabase } = await this.ctx();
-    // Deleting participants cascades to their evaluations and scores.
-    const rows = unwrap(
-      await supabase
-        .from('tryout_participants')
-        .delete()
-        .eq('tryout_id', tryoutId)
-        .eq('current_team', TEST_DATA_TAG)
-        .select('id'),
-    ) as Row[];
+
+    // Both deletes used to go out as a single unbounded statement, which is the
+    // same statement-timeout trap the inserts fell into (see DUMMY_CHUNK) — and
+    // worse on this side, because deleting a participant cascades to its
+    // evaluations and their scores. Clearing a full 1000-player × 5-session
+    // batch is ~36,000 cascaded row deletes in one statement; it dies on the 8s
+    // timeout, and because the tagged rows it did not reach are still there, the
+    // user is left with dummy data they have no other way to remove.
+    //
+    // So: collect the tagged ids first, then delete them through insertChunked,
+    // which bounds each statement and shrinks further if one still times out.
+    const collectIds = async (table: string): Promise<string[]> => {
+      const out: string[] = [];
+      let cursor: string | null = null;
+      for (;;) {
+        let q = supabase
+          .from(table)
+          .select('id')
+          .eq('tryout_id', tryoutId)
+          .eq('current_team', TEST_DATA_TAG);
+        // Keyset, not OFFSET — same reasoning as fetchAllByIn. An unranged
+        // select would also stop silently at PostgREST's 1000-row default and
+        // leave a 1000-player batch permanently half-cleared.
+        if (cursor !== null) q = q.gt('id', cursor);
+        const page = ((unwrap(await q.order('id').limit(FETCH_PAGE_SIZE)) as Row[] | null) ?? []) as Row[];
+        out.push(...page.map((r) => r.id as string));
+        if (page.length < FETCH_PAGE_SIZE) return out;
+        cursor = page[page.length - 1].id as string;
+      }
+    };
+
+    const deleteByIds = async (table: string, ids: string[], size: number): Promise<number> => {
+      if (ids.length === 0) return 0;
+      const deleted = await insertChunked(ids, size, async (chunk) => {
+        unwrap(await supabase.from(table).delete().in('id', chunk));
+        return chunk;
+      });
+      return deleted.length;
+    };
+
+    // Participants carry the cascade, so they get the smaller chunk.
+    const participantIds = await collectIds('tryout_participants');
+    const removedPlayers = await deleteByIds('tryout_participants', participantIds, DUMMY_CHUNK.participants);
+
     // Generated registrations carry the same tag, so a pending queue filled by
     // the dummy button is cleared by the same action.
-    const regs = unwrap(
-      await supabase
-        .from('registrations')
-        .delete()
-        .eq('tryout_id', tryoutId)
-        .eq('current_team', TEST_DATA_TAG)
-        .select('id'),
-    ) as Row[];
-    return { removed: rows.length + regs.length };
+    const registrationIds = await collectIds('registrations');
+    const removedRegs = await deleteByIds('registrations', registrationIds, DUMMY_CHUNK.registrations);
+
+    return { removed: removedPlayers + removedRegs };
   }
 
   // ─── Registration ───────────────────────────────────────────────────────────

@@ -56,6 +56,7 @@ import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { CreateEventFormSchema, EVENT_KINDS, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamManagersCard } from '@/components/TeamManagersCard';
+import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 import { TeamBanner } from '@/components/TeamBanner';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
@@ -255,7 +256,7 @@ export default function TeamDetailPage() {
     return (
       <>
         <PageHeader title="Team" showBack backHref="/teams" />
-        <ErrorState message="Team not found." onRetry={() => teamsQuery.refetch()} />
+        <TeamUnavailableState onRetry={() => teamsQuery.refetch()} />
       </>
     );
   }

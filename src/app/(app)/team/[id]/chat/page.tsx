@@ -6,6 +6,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { useTeamsQuery, useSeasonsQuery } from '@/features/queries';
 import { TeamChat } from '@/components/TeamChat';
+import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 
 function EditIcon() {
   return (
@@ -32,7 +33,7 @@ export default function TeamChatPage() {
 
   const team = teamsQuery.data?.find((t) => t.id === id);
   if (!team) {
-    return <ErrorState message="Team not found." onRetry={() => teamsQuery.refetch()} />;
+    return <TeamUnavailableState onRetry={() => teamsQuery.refetch()} />;
   }
   const seasonId = seasonsQuery.data?.find((s) => s.teamId === id)?.id;
 
