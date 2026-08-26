@@ -84,7 +84,7 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
     try {
       await remove.mutateAsync(id);
       if (isSelf) {
-        toast(`Removed your access to "${teamName}".`, 'info');
+        toast(`Removed your access to "${teamName}".`, 'default');
         router.replace('/teams');
       } else {
         toast(`Removed ${who} from team managers.`, 'success');
