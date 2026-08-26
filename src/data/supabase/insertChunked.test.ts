@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { insertChunked, isStatementTimeout } from './SupabaseDataSource';
+import { IN_FILTER_CHUNK, insertChunked, isStatementTimeout } from './SupabaseDataSource';
 
 /**
  * `insertChunked` is what keeps the dummy-data batches inside Postgres's 8s
@@ -106,5 +106,32 @@ describe('insertChunked', () => {
     const server = fakeServer(10);
     expect(await insertChunked([], 100, server.task)).toEqual([]);
     expect(server.stats().requests).toBe(0);
+  });
+});
+
+/**
+ * The delete side of the dummy-data batches is bounded by URL length, not by
+ * statement cost: PostgREST takes `in('id', [...])` in the query string, and
+ * Supabase's gateway rejects an over-long URI with a bare 400 before Postgres
+ * sees it. That failure is invisible from the code — the chunk size that
+ * triggers it looks exactly like the one that works — so the width is pinned.
+ */
+describe('IN_FILTER_CHUNK', () => {
+  /** What supabase-js puts on the wire for `.in('id', ids)`. */
+  const encodedFilter = (ids: string[]) => `id=in.${encodeURIComponent(`(${ids.join(',')})`)}`;
+
+  const uuids = (n: number) =>
+    Array.from({ length: n }, (_, i) => `000171f5-d7e0-43f5-9234-${String(i).padStart(12, '0')}`);
+
+  it('keeps a full chunk of uuids well inside a proxy URI limit', () => {
+    // 4 KB leaves room for the base URL and any other filters on the request;
+    // the 1000-id delete that prompted this cap built ~39 KB and was refused.
+    expect(encodedFilter(uuids(IN_FILTER_CHUNK)).length).toBeLessThan(4096);
+  });
+
+  it('is the binding cap for the dummy-data delete chunks', () => {
+    // insertChunked is handed Math.min(DUMMY_CHUNK.*, IN_FILTER_CHUNK); if a
+    // DUMMY_CHUNK ever dropped below this, the min would stop being a cap.
+    expect(IN_FILTER_CHUNK).toBeLessThan(1000);
   });
 });

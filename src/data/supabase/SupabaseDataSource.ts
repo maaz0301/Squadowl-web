@@ -349,6 +349,21 @@ const DUMMY_CHUNK = {
  */
 const DUMMY_MIN_CHUNK = 25;
 
+/**
+ * Most ids to put in a single PostgREST filter (`.in('id', [...])`).
+ *
+ * This is a separate ceiling from DUMMY_CHUNK, and it binds in the opposite
+ * direction. An insert carries its rows in the request *body*, so its only
+ * limit is what the statement can do inside the timeout. A filter is spent in
+ * the *query string*: every UUID costs 36 characters plus a 3-character encoded
+ * comma, so a 1000-id delete builds a ~39 KB URL and Supabase's gateway rejects
+ * it with a bare `400` — before it reaches PostgREST, so nothing is deleted and
+ * the error says nothing about length. 100 ids keeps the filter near 4 KB, well
+ * under any proxy's URI limit, and has the side benefit of bounding a cascading
+ * delete's statement to ~100 participants' worth of evaluations and scores.
+ */
+export const IN_FILTER_CHUNK = 100;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function concurrencyFor(chunkCount: number, max: number): number {
@@ -3307,8 +3322,14 @@ export class SupabaseDataSource implements DataSource {
     ) as Row[];
     if (rows.length === 0) return { teams: 0, assessments: 0 };
 
-    const ids = rows.map((r) => r.id);
-    unwrap(await supabase.from('tryouts').delete().in('id', ids).select('id'));
+    const ids = rows.map((r) => r.id) as string[];
+    // Chunked for the same URL-length reason as clearTestData: repeated presses
+    // of the generate button can leave more test assessments than fit in one
+    // filter, and an over-long one is rejected whole rather than truncated.
+    await insertChunked(ids, IN_FILTER_CHUNK, async (chunk) => {
+      unwrap(await supabase.from('tryouts').delete().in('id', chunk).select('id'));
+      return chunk;
+    });
 
     const teamIds = [...new Set(rows.map((r) => r.team_id).filter(Boolean))] as string[];
     let teams = 0;
@@ -3419,6 +3440,9 @@ export class SupabaseDataSource implements DataSource {
     //
     // So: collect the tagged ids first, then delete them through insertChunked,
     // which bounds each statement and shrinks further if one still times out.
+    // The chunk is additionally capped at IN_FILTER_CHUNK, because a delete
+    // spends its ids on URL length rather than on statement cost — an
+    // insert-sized chunk of them never reaches Postgres at all.
     const collectIds = async (table: string): Promise<string[]> => {
       const out: string[] = [];
       let cursor: string | null = null;
@@ -3441,14 +3465,13 @@ export class SupabaseDataSource implements DataSource {
 
     const deleteByIds = async (table: string, ids: string[], size: number): Promise<number> => {
       if (ids.length === 0) return 0;
-      const deleted = await insertChunked(ids, size, async (chunk) => {
+      const deleted = await insertChunked(ids, Math.min(size, IN_FILTER_CHUNK), async (chunk) => {
         unwrap(await supabase.from(table).delete().in('id', chunk));
         return chunk;
       });
       return deleted.length;
     };
 
-    // Participants carry the cascade, so they get the smaller chunk.
     const participantIds = await collectIds('tryout_participants');
     const removedPlayers = await deleteByIds('tryout_participants', participantIds, DUMMY_CHUNK.participants);
 
