@@ -215,6 +215,7 @@ export function useRemoveTeamManagerMutation(teamId: string) {
     mutationFn: (managerId: string) => getDataSource().removeTeamManager(managerId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
     },
   });
 }

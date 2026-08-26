@@ -273,7 +273,7 @@ const EVALUATIONS_TRYOUT_CHUNK = 1;
 
 const REGISTRATION_CHUNK = 20;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
-const GUARDIAN_EMAIL_CONCURRENCY = 10;
+const GUARDIAN_EMAIL_CONCURRENCY = 20;
 const GUARDIAN_RESOLVE_BATCH = 50;
 
 /** Players per `generate-test-players` call — sized so one Claude response stays

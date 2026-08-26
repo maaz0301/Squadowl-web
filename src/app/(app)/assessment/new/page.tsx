@@ -220,17 +220,16 @@ function NewAssessmentForm() {
                 : {}),
             },
           });
-          // Best-effort: the assessment and its assessor list are already saved,
-          // so a failed invite email shouldn't block the coach from moving on —
-          // they can still resend from the settings screen.
-          for (const a of updated.assessors) {
-            if (!a.email) continue;
-            try {
-              await getDataSource().sendEmail('tryout_invite', a.email, { role: 'assessor' });
-            } catch (err) {
-              console.error('Error sending assessor invite email', err);
-            }
-          }
+          // Best-effort in parallel: the assessment and its assessor list are already saved,
+          // so failed invite emails shouldn't block the coach from moving on.
+          const invitePromises = updated.assessors
+            .filter((a) => !!a.email)
+            .map((a) =>
+              getDataSource()
+                .sendEmail('tryout_invite', a.email!, { role: 'assessor' })
+                .catch((err) => console.error('Error sending assessor invite email to', a.email, err)),
+            );
+          await Promise.allSettled(invitePromises);
           toast('Assessment created', 'success');
         } catch (e) {
           await alert(
