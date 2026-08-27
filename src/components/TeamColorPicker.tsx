@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { readableInkOn } from '@/lib/teamBrand';
 
@@ -40,6 +41,10 @@ const SWATCH = 46;
 
 export function TeamColorPicker({ value, onChange, label = 'Team colour', className }: TeamColorPickerProps) {
   const colors = useThemeColors();
+  const customInputRef = useRef<HTMLInputElement>(null);
+
+  const isPreset = value != null && (TEAM_BRAND_COLORS as readonly string[]).includes(value);
+  const customValue = value != null && !isPreset ? value : null;
 
   const swatch = (color: string | null) => {
     const selected = (value ?? null) === color;
@@ -82,6 +87,44 @@ export function TeamColorPicker({ value, onChange, label = 'Team colour', classN
       <div className="flex flex-wrap gap-2.5">
         {swatch(null)}
         {TEAM_BRAND_COLORS.map((c) => swatch(c))}
+        <button
+          type="button"
+          onClick={() => customInputRef.current?.click()}
+          aria-label={customValue ? `Custom team colour ${customValue}` : 'Pick a custom team colour'}
+          aria-pressed={customValue !== null}
+          className="relative flex items-center justify-center overflow-hidden rounded-full"
+          style={{
+            width: SWATCH,
+            height: SWATCH,
+            background: customValue ?? 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)',
+            borderWidth: customValue !== null ? 3 : 1,
+            borderStyle: 'solid',
+            borderColor: customValue !== null ? colors.ink : colors.border,
+          }}
+        >
+          {customValue !== null ? (
+            <svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+              <path
+                d="M20 6L9 17l-5-5"
+                stroke={readableInkOn(customValue)}
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          ) : (
+            <span className="rounded-full" style={{ width: 18, height: 18, backgroundColor: colors.tile }} />
+          )}
+          <input
+            ref={customInputRef}
+            type="color"
+            value={customValue ?? '#000000'}
+            onChange={(e) => onChange(e.target.value)}
+            aria-hidden="true"
+            tabIndex={-1}
+            className="absolute h-px w-px opacity-0"
+          />
+        </button>
       </div>
     </div>
   );
