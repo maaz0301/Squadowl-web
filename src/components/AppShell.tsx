@@ -76,7 +76,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: '/archived-assessments', label: 'Archived', icon: 'archive' },
         { href: '/shared-athletes', label: 'Shared Athletes', icon: 'share' },
         ...(canUseFeature(planTier, 'enterprise')
-          ? ([{ href: '/enterprise', label: 'Enterprise', icon: 'enterprise' }] as NavItem[])
+          ? ([{ href: '/enterprise', label: 'Dashboard', icon: 'enterprise' }] as NavItem[])
           : []),
         ...(canUseFeature(planTier, 'payments')
           ? ([{ href: '/payments', label: 'Payments', icon: 'payments' }] as NavItem[])

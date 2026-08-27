@@ -105,7 +105,7 @@ export default function RegistrationsPage() {
   const tryout = tryoutQuery.data;
   const cloudCode = tryout.cloud?.id ?? '------';
   const baseUrl =
-    APP_CONFIG.webUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://aas-tryout.app');
+    APP_CONFIG.webUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://www.tryouthq.ca');
   const registrationUrl = `${baseUrl}/register/${cloudCode}`;
   const pendingCount = (regsQuery.data ?? []).filter((r) => r.status === 'pending').length;
 

@@ -274,6 +274,22 @@ a {
   }
 }
 
+/* Pending loader for a card that acts as a link (see NavPending). The wrapper
+   holds its size whether or not the spinner is inside it, so the row never
+   moves; the fade's 120ms delay means a navigation that lands quickly never
+   shows the loader at all. */
+.nav-pending {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+}
+
+.nav-pending.is-pending {
+  animation: aas-fade-in 150ms ease 120ms forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -282,6 +298,14 @@ a {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* The fade above is decoration, but the loader's *presence* is the feedback —
+   so when motion is reduced it still has to show, just without the fade. */
+@media (prefers-reduced-motion: reduce) {
+  .nav-pending.is-pending {
+    opacity: 1;
   }
 }
 

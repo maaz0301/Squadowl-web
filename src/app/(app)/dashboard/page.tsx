@@ -37,6 +37,7 @@ import {
 } from '@/features/queries';
 import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
 import { prefetchTryout } from '@/features/prefetch';
+import { NavPending } from '@/components/NavPending';
 
 export default function DashboardPage() {
   const colors = useThemeColors();
@@ -76,13 +77,20 @@ export default function DashboardPage() {
   const archiveTryout = useArchiveTryoutMutation();
   const deleteTryout = useDeleteTryoutMutation();
 
-  const openAssigned = (id: string) => {
+  // The session writes an assessor screen expects, without the navigation —
+  // a <Link> does that part itself, and only the accept-then-open flow below
+  // still has to push by hand.
+  const markAssessorSession = (id: string) => {
     setCurrentTryout(id);
     setActiveAssessor(
       user?.displayName
         ? { name: user.displayName, email: user.email, role: 'assessor', status: 'accepted' }
         : null,
     );
+  };
+
+  const openAssigned = (id: string) => {
+    markAssessorSession(id);
     router.push(`/assessment/${id}/roster?assessor=1`);
   };
 
@@ -104,14 +112,6 @@ export default function DashboardPage() {
     });
   };
 
-  const openTryout = (id: string) => {
-    if (combineMode) {
-      toggleCombineTryout(id);
-      return;
-    }
-    setCurrentTryout(id);
-    router.push(`/assessment/${id}/roster`);
-  };
 
   const handleDeleteAssessment = (id: string, name: string) => {
     setActionTryout({ id, name });
@@ -245,7 +245,7 @@ export default function DashboardPage() {
             <Icon name="enterprise" size={22} color={colors.primary} />
             <span className="flex-1">
               <span className="block text-base font-bold" style={{ color: colors.ink }}>
-                Enterprise Dashboard
+                Dashboard
               </span>
               <span className="block text-xs" style={{ color: colors.inkMuted }}>
                 Organization-wide reporting & members
@@ -322,10 +322,10 @@ export default function DashboardPage() {
                 const isPending = (mine?.status ?? 'pending') === 'pending';
                 return (
                   <Card key={t.id} className="mb-2 flex flex-col gap-3">
-                    <button
-                      type="button"
+                    <Link
+                      href={`/assessment/${t.id}/roster?assessor=1`}
                       className="flex items-center justify-between gap-3 text-left"
-                      onClick={() => openAssigned(t.id)}
+                      onClick={() => markAssessorSession(t.id)}
                     >
                       <span className="min-w-0 flex-1">
                         <span
@@ -338,8 +338,11 @@ export default function DashboardPage() {
                           {t.sport} · {t.playerCount} players
                         </span>
                       </span>
-                      <Badge label="Score" variant="brand" />
-                    </button>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <Badge label="Score" variant="brand" />
+                        <NavPending />
+                      </span>
+                    </Link>
                     {isPending ? (
                       <div className="flex gap-2">
                         <Button
@@ -397,60 +400,78 @@ export default function DashboardPage() {
             const selected = combineIds.includes(item.id);
             const isBusy = busyId === item.id;
             return (
-              <Card
+              // A real <Link>, not a click handler that pushes: only a Link
+              // gets Next's route prefetch, and with /assessment/[id]'s
+              // loading boundary that is what makes the tap land on the next
+              // screen immediately instead of after a server round trip.
+              <Link
                 key={item.id}
-                interactive={!isBusy}
-                accent={selected || combineMode}
-                className="flex h-full items-start justify-between gap-3"
-                style={isBusy ? { opacity: 0.5 } : undefined}
+                href={`/assessment/${item.id}/roster`}
+                className="block h-full"
                 // The roster screen this opens needs the full assessment, which
                 // the summary list deliberately doesn't carry. Starting that read
                 // on hover/touch usually covers the whole gap before the tap.
                 onMouseEnter={() => prefetchTryout(item.id)}
                 onTouchStart={() => prefetchTryout(item.id)}
-                onClick={() => {
-                  if (isBusy) return;
-                  openTryout(item.id);
+                onClick={(e) => {
+                  // Combine mode turns the grid into a multi-select, so a tap
+                  // picks the card rather than opening it.
+                  if (isBusy || combineMode) {
+                    e.preventDefault();
+                    if (!isBusy) toggleCombineTryout(item.id);
+                    return;
+                  }
+                  setCurrentTryout(item.id);
                 }}
               >
-                <span className="min-w-0 flex-1">
-                  <span
-                    className="block truncate text-lg font-bold"
-                    style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-                  >
-                    {item.name}
-                  </span>
-                  <span className="mt-1 block text-sm" style={{ color: colors.inkMuted }}>
-                    {item.sport} · {item.eventType}
-                  </span>
-                  {item.tryoutDate ? (
-                    <span className="block text-sm" style={{ color: colors.inkFaint }}>
-                      {item.tryoutDate} {item.startTime ? `· ${item.startTime}` : ''}
+                <Card
+                  interactive={!isBusy}
+                  accent={selected || combineMode}
+                  className="flex h-full items-start justify-between gap-3"
+                  style={isBusy ? { opacity: 0.5 } : undefined}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className="block truncate text-lg font-bold"
+                      style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+                    >
+                      {item.name}
                     </span>
-                  ) : null}
-                </span>
-                <span className="flex flex-col items-end gap-2">
-                  <span className="flex items-center gap-2">
-                    <Badge label={`${item.playerCount} players`} />
-                    {isBusy ? (
-                      <Spinner size={16} color={colors.danger} />
-                    ) : (
-                      <button
-                        type="button"
-                        aria-label="Assessment actions"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteAssessment(item.id, item.name);
-                        }}
-                        className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
-                      >
-                        <Icon name="trash" size={16} color={colors.danger} />
-                      </button>
-                    )}
+                    <span className="mt-1 block text-sm" style={{ color: colors.inkMuted }}>
+                      {item.sport} · {item.eventType}
+                    </span>
+                    {item.tryoutDate ? (
+                      <span className="block text-sm" style={{ color: colors.inkFaint }}>
+                        {item.tryoutDate} {item.startTime ? `· ${item.startTime}` : ''}
+                      </span>
+                    ) : null}
                   </span>
-                  {selected ? <Badge label="Selected" variant="brand" /> : null}
-                </span>
-              </Card>
+                  <span className="flex flex-col items-end gap-2">
+                    <span className="flex items-center gap-2">
+                      <Badge label={`${item.playerCount} players`} />
+                      <NavPending />
+                      {isBusy ? (
+                        <Spinner size={16} color={colors.danger} />
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label="Assessment actions"
+                          onClick={(e) => {
+                            // Inside a Link now, so the default has to go too.
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDeleteAssessment(item.id, item.name);
+                          }}
+                          className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                        >
+                          <Icon name="trash" size={16} color={colors.danger} />
+                        </button>
+                      )}
+                    </span>
+                    {selected ? <Badge label="Selected" variant="brand" /> : null}
+                  </span>
+                </Card>
+              </Link>
             );
           })}
         </div>

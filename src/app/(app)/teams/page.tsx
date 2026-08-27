@@ -30,6 +30,7 @@ import { useUser } from '@/state/authStore';
 import { isAtTeamLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { prefetchTeamDetail } from '@/features/prefetch';
+import { NavPending } from '@/components/NavPending';
 
 export default function TeamsPage() {
   const colors = useThemeColors();
@@ -149,22 +150,25 @@ export default function TeamsPage() {
                       </span>
                       {team.managed ? <Badge label="Managed" variant="info" /> : null}
                     </div>
-                    {isBusy ? (
-                      <Spinner size={16} color={colors.danger} />
-                    ) : team.managed ? null : (
-                      <button
-                        type="button"
-                        aria-label="Delete team"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleDeleteTeam(team.id, team.name);
-                        }}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
-                      >
-                        <Icon name="trash" size={16} color={colors.danger} />
-                      </button>
-                    )}
+                    <span className="flex shrink-0 items-center gap-2">
+                      <NavPending />
+                      {isBusy ? (
+                        <Spinner size={16} color={colors.danger} />
+                      ) : team.managed ? null : (
+                        <button
+                          type="button"
+                          aria-label="Delete team"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDeleteTeam(team.id, team.name);
+                          }}
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                        >
+                          <Icon name="trash" size={16} color={colors.danger} />
+                        </button>
+                      )}
+                    </span>
                   </div>
                   {team.season ? (
                     <span className="text-sm" style={{ color: colors.inkMuted }}>

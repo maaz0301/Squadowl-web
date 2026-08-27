@@ -245,7 +245,7 @@ export default function UpgradePage() {
                 </div>
               ) : isCurrent ? (
                 <div className="pt-4 mt-auto">
-                  <Button label="Active Plan" variant="ghost" disabled />
+                  <Button label="Active Plan" variant="ghost" disabled style={{ opacity: 1, fontWeight: "bold", fontFamily: "var(--font-space-grotesk)", font:"25" }} />
                 </div>
               ) : null}
             </Card>

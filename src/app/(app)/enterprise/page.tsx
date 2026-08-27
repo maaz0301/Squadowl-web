@@ -229,7 +229,7 @@ export default function EnterprisePage() {
   return (
     <>
       <PageHeader
-        title="Enterprise Dashboard"
+        title="Dashboard"
         subtitle="Association & Org Intelligence"
         showBack
         backHref="/dashboard"
