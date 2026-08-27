@@ -2316,10 +2316,15 @@ export class SupabaseDataSource implements DataSource {
             position: r.position ?? null,
             registration_source: 'manual' as const,
           }));
-          await supabase.from('tryout_participants').insert(participants);
+          await insertChunked(
+            participants,
+            DUMMY_CHUNK.participants,
+            async (chunk) => unwrap(await supabase.from('tryout_participants').insert(chunk).select('id')) as Row[],
+          );
         }
-      } catch {
+      } catch (e) {
         // Non-fatal: the assessment is created, the coach can add players later.
+        console.error('Failed to auto-import team roster into new tryout', e);
       }
     }
 
@@ -2480,23 +2485,26 @@ export class SupabaseDataSource implements DataSource {
       await supabase.from('tryout_participants').select('*').eq('tryout_id', id),
     ) as Row[];
     if (participants.length) {
-      await supabase.from('tryout_participants').insert(
-        participants.map((p) => ({
-          tryout_id: copy.id,
-          athlete_id: p.athlete_id,
-          jersey: p.jersey,
-          jersey_colour: p.jersey_colour,
-          position: p.position,
-          shoots: p.shoots,
-          position_trying_out_for: p.position_trying_out_for,
-          current_team: p.current_team,
-          current_level: p.current_level,
-          registration_source: p.registration_source,
-          anonymous: p.anonymous,
-          sort_out: p.sort_out,
-          friend1_name: p.friend1_name,
-          friend2_name: p.friend2_name,
-        })),
+      const copiedParticipants = participants.map((p) => ({
+        tryout_id: copy.id,
+        athlete_id: p.athlete_id,
+        jersey: p.jersey,
+        jersey_colour: p.jersey_colour,
+        position: p.position,
+        shoots: p.shoots,
+        position_trying_out_for: p.position_trying_out_for,
+        current_team: p.current_team,
+        current_level: p.current_level,
+        registration_source: p.registration_source,
+        anonymous: p.anonymous,
+        sort_out: p.sort_out,
+        friend1_name: p.friend1_name,
+        friend2_name: p.friend2_name,
+      }));
+      await insertChunked(
+        copiedParticipants,
+        DUMMY_CHUNK.participants,
+        async (chunk) => unwrap(await supabase.from('tryout_participants').insert(chunk).select('id')) as Row[],
       );
     }
     const [assembled] = await this.assembleTryouts([copy]);
