@@ -479,7 +479,11 @@ export default function TeamDetailPage() {
         return { playerId, name: `${player.firstName} ${player.lastName}`, response: r };
       });
     const order: Rsvp[] = ['yes', 'maybe', 'no', 'pending'];
-    rows.sort((a, b) => order.indexOf(a.response) - order.indexOf(b.response));
+    // Name breaks the tie so the list is stable within a response group rather
+    // than ordered by whatever the availability read happened to return.
+    rows.sort(
+      (a, b) => order.indexOf(a.response) - order.indexOf(b.response) || a.name.localeCompare(b.name),
+    );
     return { counts, rows };
   };
 

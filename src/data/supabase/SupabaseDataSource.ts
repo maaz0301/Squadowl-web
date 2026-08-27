@@ -255,6 +255,12 @@ const EVALUATIONS_PAGE = 300;
 const PARTICIPANTS_PAGE = 200;
 
 /**
+ * Rows per request when reading a season roster. Same embed, same reasoning as
+ * PARTICIPANTS_PAGE. Mirrors the mobile app's constant of the same name.
+ */
+const SEASON_ROSTER_PAGE = 200;
+
+/**
  * Headcount statements in flight at once for the list screens — see
  * countParticipantsByTryout() and countTeamPlayers(). Bounded rather than
  * "all the tryouts at once"
@@ -4276,25 +4282,44 @@ export class SupabaseDataSource implements DataSource {
     const supabase = getSupabase();
     const ids = seasonRows.map((s) => s.id);
 
-    const [eventsRes, rosterRes] = await Promise.all([
-      supabase.from('season_events').select('*').in('season_id', ids).order('event_date'),
-      supabase.from('season_roster').select('*, athletes(*)').in('season_id', ids),
+    // Keyset-paged like every other batched read here (see fetchAllByIn), not
+    // one unbounded select each. A season roster is seeded from every
+    // participant of every tryout linked to the team and never pruned, so on a
+    // club-sized team it runs past PostgREST's 1,000-row default — which
+    // truncates silently rather than erroring. The rows that landed past the
+    // cutoff took their players out of every event's RSVP list (the availability
+    // rows join back through `rosterById` below), so a coach saw part of the
+    // roster on an event the whole team was invited to. It also fed
+    // addSeasonEvent(), which builds an event's invites from this roster.
+    //
+    // `.order()` isn't available through the paged helper — it keysets on `id` —
+    // so the event_date ordering callers rely on is restored client-side.
+    const [eventRowsUnsorted, rosterRows] = await Promise.all([
+      fetchAllByIn(supabase, 'season_events', '*', 'season_id', ids),
+      fetchAllByIn(supabase, 'season_roster', '*, athletes(*)', 'season_id', ids, SEASON_ROSTER_PAGE),
     ]);
-    const eventRows = unwrap(eventsRes) as Row[];
-    const rosterRows = unwrap(rosterRes) as Row[];
+    // Dates are ISO `YYYY-MM-DD`, so a string compare is the date compare the
+    // server was doing. Undated rows go last, where PostgREST's `.order()` put
+    // them, rather than sorting ahead of everything as an empty string would.
+    const eventRows = [...eventRowsUnsorted].sort((a, b) => {
+      const ad = (a.event_date as string | null) ?? '';
+      const bd = (b.event_date as string | null) ?? '';
+      if (!ad || !bd) return (ad ? 0 : 1) - (bd ? 0 : 1);
+      return ad.localeCompare(bd);
+    });
 
     let availabilityRows: Row[] = [];
     let availabilityFailed = false;
     let inviteRows: Row[] = [];
     if (withDetail) {
       const eventIds = eventRows.map((e) => e.id as string);
-      const [avail, invRes] = await Promise.all([
+      const [avail, invites] = await Promise.all([
         this.fetchEventAvailability(supabase, eventIds),
-        supabase.from('portal_invites').select('*').in('season_id', ids),
+        fetchAllByIn(supabase, 'portal_invites', '*', 'season_id', ids),
       ]);
       availabilityRows = avail.rows;
       availabilityFailed = avail.failed;
-      inviteRows = unwrap(invRes) as Row[];
+      inviteRows = invites;
     }
 
     const eventsBySeason: Record<string, Row[]> = {};
