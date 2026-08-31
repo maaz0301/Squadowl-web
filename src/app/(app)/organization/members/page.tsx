@@ -15,7 +15,7 @@ const TABS = [
 
 export default function OrganizationMembersPage() {
   const colors = useThemeColors();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const { canManageOrganization } = usePermissions();
   const [tab, setTab] = useState<'staff' | 'guardians'>('staff');
 
@@ -40,8 +40,29 @@ export default function OrganizationMembersPage() {
     }
   };
 
-  const handleRemove = async (memberId: string) => {
-    await removeMut.mutateAsync(memberId);
+  /**
+   * Removal is permanent and there is no undo — a mis-tapped row on a list this
+   * dense would silently cut someone's access — so both the staff Remove and
+   * the guardian Revoke confirm first, and surface a failure rather than
+   * leaving the row on screen with no explanation.
+   */
+  const handleRemove = async (member: OrgMember) => {
+    const who = member.name || member.email;
+    const ok = await confirm({
+      title: member.role === 'guardian' ? 'Revoke Access' : 'Remove Member',
+      message:
+        member.role === 'guardian'
+          ? `Revoke ${who}'s access to this organization? They will no longer see their players here.`
+          : `Remove ${who} from this organization? They will lose access to its teams and evaluations.`,
+      confirmLabel: member.role === 'guardian' ? 'Revoke' : 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await removeMut.mutateAsync(member.id);
+    } catch (e) {
+      await alert('Remove Failed', e instanceof Error ? e.message : 'Could not remove this member.');
+    }
   };
 
   const filteredMembers = members.filter((m) => (tab === 'staff' ? m.role !== 'guardian' : m.role === 'guardian'));
@@ -96,18 +117,17 @@ export default function OrganizationMembersPage() {
                 </div>
               </div>
               {canManageOrganization && item.role !== 'admin' ? (
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   {tab === 'staff' ? (
                     <Button label="Role" variant="ghost" size="sm" onClick={() => setSelectedMemberForRole(item)} />
-                  ) : (
-                    <Button
-                      label="Revoke"
-                      variant="danger"
-                      size="sm"
-                      onClick={() => handleRemove(item.id)}
-                      loading={removeMut.isPending && removeMut.variables === item.id}
-                    />
-                  )}
+                  ) : null}
+                  <Button
+                    label={tab === 'staff' ? 'Remove' : 'Revoke'}
+                    variant="danger"
+                    size="sm"
+                    onClick={() => handleRemove(item)}
+                    loading={removeMut.isPending && removeMut.variables === item.id}
+                  />
                 </div>
               ) : null}
             </Card>

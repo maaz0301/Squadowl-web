@@ -109,6 +109,22 @@ function unwrapError(error: { message: string; code?: string }): Error & { code?
 type WriteGuard = { wrote: boolean };
 
 /**
+ * Which table a Manage Organization row came out of, and who it belongs to.
+ * listOrgMembers() folds memberships, tryout_assessors and athlete guardian
+ * contacts into one list, so a row id alone doesn't say what removing it means.
+ */
+type OrgMemberIdentity = {
+  kind: 'membership' | 'assessor' | 'guardian';
+  accountId: string | null;
+  userId?: string;
+  email?: string;
+  /** memberships.role, so an owner/admin can be refused before the delete. */
+  role?: string;
+  /** The one assessor row the deduped list surfaced. */
+  tryoutId?: string;
+};
+
+/**
  * Does this failure look like the cached account being wrong?
  *
  * That is the *only* thing withFreshAccount() can fix by retrying, so it is the
@@ -5958,56 +5974,281 @@ export class SupabaseDataSource implements DataSource {
     return (data ?? {}) as import('../types').OrgMember;
   }
 
+  /**
+   * Remove someone from the organization — staff, assessor or guardian.
+   *
+   * Routes through a SECURITY DEFINER RPC for the same reason
+   * updateOrgMemberRole does. The direct deletes this replaced were subject to
+   * RLS: when the policy filtered the row out, PostgREST removed nothing and
+   * still answered 204 with no error, so this resolved successfully and the
+   * person was back as soon as the list refetched.
+   *
+   * The RPC also removes by identity rather than by the one row id the list
+   * surfaced. An assessor holds a tryout_assessors row per assessment but
+   * listOrgMembers() dedupes them to a single entry, so deleting that entry's
+   * row used to leave every other assessment's row behind.
+   */
   async removeOrgMember(memberId: string): Promise<void> {
+    // Resolved up front because the removal is what destroys the rows the
+    // identity is read from — and the identity is what the team-manager
+    // revocation below matches on.
+    const identity = await this.resolveOrgMemberIdentity(memberId);
+
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('remove_org_member', { member_id: memberId });
+
+    if (error) {
+      // Projects that haven't run 20260831000000_remove_org_member_rpc.sql yet
+      // answer PGRST202 ("Could not find the function"); anything else is a
+      // real failure — an authorization refusal from inside the function
+      // included — and belongs in front of the user unchanged.
+      const missingFunction = error.code === 'PGRST202' || error.code === '42883';
+      if (!missingFunction) throw new Error(error.message);
+      console.warn('remove_org_member() not deployed — falling back to direct deletes.');
+
+      await this.removeOrgMemberDirect(memberId, identity);
+    }
+
+    // A delegated team (CLUB mode) is a grant of its own: `team_managers` rows
+    // are not memberships and nothing above touches them, so a coach removed
+    // from the organization kept the team they had been handed and stayed on
+    // its Managers list. Guardians are left alone — "Revoke" there clears a
+    // guardian contact on an athlete, which says nothing about a coaching role
+    // the same person may hold.
+    if (identity && identity.kind !== 'guardian') {
+      await this.revokeTeamManagerAccess(identity);
+    }
+  }
+
+  /**
+   * Who a Manage Organization row actually is. The list surfaces three
+   * different kinds of row under one `id`, so every removal has to work out
+   * which table the id came from before it can do anything with it.
+   */
+  private async resolveOrgMemberIdentity(memberId: string): Promise<OrgMemberIdentity | null> {
     const { supabase } = await this.ctx();
 
-    // 1. Try to find and delete from memberships
     const { data: membership } = await supabase
       .from('memberships')
-      .select('id')
+      .select('id, user_id, role, account_id, profiles(email)')
       .eq('id', memberId)
       .maybeSingle();
 
     if (membership) {
-      const { error } = await supabase.from('memberships').delete().eq('id', memberId);
-      if (error) throw new Error(error.message);
-      return;
+      const profiles = membership.profiles;
+      const profile = Array.isArray(profiles) ? profiles[0] : profiles;
+      return {
+        kind: 'membership',
+        accountId: (membership.account_id as string) ?? null,
+        userId: (membership.user_id as string) ?? undefined,
+        email: (profile?.email as string) ?? undefined,
+        role: (membership.role as string) ?? undefined,
+      };
     }
 
-    // 2. Try to find and delete from tryout_assessors
     const { data: assessor } = await supabase
       .from('tryout_assessors')
-      .select('id')
+      .select('id, user_id, email, tryout_id')
       .eq('id', memberId)
       .maybeSingle();
 
     if (assessor) {
-      const { error } = await supabase.from('tryout_assessors').delete().eq('id', memberId);
-      if (error) throw new Error(error.message);
-      return;
+      // Read the owning account off the tryout rather than embedding it: the
+      // embed makes RLS run over the parent for a row we already hold, and a
+      // relationship PostgREST can't resolve would fail the whole lookup.
+      const { data: tryout } = await supabase
+        .from('tryouts')
+        .select('account_id')
+        .eq('id', assessor.tryout_id)
+        .maybeSingle();
+      return {
+        kind: 'assessor',
+        accountId: (tryout?.account_id as string) ?? null,
+        userId: (assessor.user_id as string) ?? undefined,
+        email: (assessor.email as string) ?? undefined,
+        tryoutId: (assessor.tryout_id as string) ?? undefined,
+      };
     }
 
-    // 3. Try to find and clear guardian info from athletes
     const { data: athlete } = await supabase
       .from('athletes')
-      .select('id, guardian_email, account_id')
+      .select('id, guardian_email, guardian_user_id, account_id')
       .eq('id', memberId)
       .maybeSingle();
 
-    if (athlete && athlete.guardian_email) {
-      const { error } = await supabase
-        .from('athletes')
-        .update({
-          guardian_name: null,
-          guardian_email: null,
-          guardian_phone: null,
-          guardian_user_id: null,
-        })
-        .eq('account_id', athlete.account_id)
-        .eq('guardian_email', athlete.guardian_email);
+    if (athlete?.guardian_email) {
+      return {
+        kind: 'guardian',
+        accountId: (athlete.account_id as string) ?? null,
+        userId: (athlete.guardian_user_id as string) ?? undefined,
+        email: athlete.guardian_email as string,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Give up the delegated teams a person holds under this account.
+   *
+   * Goes through the deployed list_team_managers/remove_team_manager RPCs
+   * rather than deleting `team_managers` directly, so the club-owner check the
+   * backend already enforces is the one that runs.
+   */
+  private async revokeTeamManagerAccess(identity: OrgMemberIdentity): Promise<void> {
+    const { supabase, accountId } = await this.ctx();
+
+    const email = identity.email?.toLowerCase();
+    if (!email && !identity.userId) return;
+
+    // Archived teams included on purpose — an archived team can be restored,
+    // and the delegation would come back with it.
+    const { data: teams, error } = await supabase.from('teams').select('id').eq('account_id', accountId);
+    if (error) throw new Error(error.message);
+
+    const teamIds = ((teams ?? []) as Row[]).map((t) => t.id as string);
+    if (teamIds.length === 0) return;
+
+    const managers = (await Promise.all(teamIds.map((id) => this.listTeamManagers(id)))).flat();
+    const theirs = managers.filter(
+      (m) =>
+        (!!email && m.email?.toLowerCase() === email) ||
+        (!!identity.userId && m.userId === identity.userId),
+    );
+
+    for (const manager of theirs) {
+      try {
+        await this.removeTeamManager(manager.id);
+      } catch (e) {
+        // The organization row is already gone by now, so say which half failed
+        // instead of letting a raw Postgres message read as "nothing happened".
+        console.error('Failed to revoke delegated team access:', e);
+        throw new Error(
+          'Removed from the organization, but their delegated team access could not be revoked. Remove them from the team’s Managers list.',
+        );
+      }
+    }
+  }
+
+  /**
+   * The pre-RPC removal path, kept for deployments without the function.
+   *
+   * It differs from the original in the two ways that made removals fail
+   * silently. Each delete is followed by a read-back, so a row RLS refused to
+   * touch raises instead of reporting a success the next refetch undoes; and
+   * assessors are removed by identity across every assessment the account owns,
+   * not just the single row id the deduped list happened to surface.
+   */
+  private async removeOrgMemberDirect(memberId: string, identity: OrgMemberIdentity | null): Promise<void> {
+    const { supabase, accountId } = await this.ctx();
+
+    if (!identity) throw new Error('Member not found.');
+    if (identity.accountId !== accountId) throw new Error('Member not found in this organization.');
+
+    const blocked = (what: string) => {
+      console.error(`removeOrgMember: ${what} survived the delete — RLS most likely refused it.`);
+      return new Error(
+        'Could not remove this member. You may not have permission to remove them from this organization.',
+      );
+    };
+
+    // 1. Staff, who hold a membership on the account.
+    if (identity.kind === 'membership') {
+      // The screen already hides the action for admins; this is the half of
+      // that the RPC enforces server-side, so it holds here too.
+      if (identity.role === 'owner' || identity.role === 'admin') {
+        throw new Error('An organization admin cannot be removed here.');
+      }
+
+      const { error } = await supabase.from('memberships').delete().eq('id', memberId);
       if (error) throw new Error(error.message);
+
+      const { data: left } = await supabase
+        .from('memberships')
+        .select('id')
+        .eq('id', memberId)
+        .maybeSingle();
+      if (left) throw blocked('the membership');
       return;
     }
+
+    // 2. Assessors, who exist only as rows against the account's assessments.
+    if (identity.kind === 'assessor') {
+      const { data: tryouts } = await supabase.from('tryouts').select('id').eq('account_id', accountId);
+      const tryoutIds = ((tryouts ?? []) as Row[]).map((t) => t.id as string);
+      if (tryoutIds.length === 0) throw new Error('Member not found in this organization.');
+
+      // Two statements rather than one `or()` filter: the identity is a user id
+      // *or* an e-mail, an unlinked invite carries only the latter, and an
+      // e-mail interpolated into an or() string would have to be escaped.
+      if (identity.userId) {
+        const { error } = await supabase
+          .from('tryout_assessors')
+          .delete()
+          .in('tryout_id', tryoutIds)
+          .eq('user_id', identity.userId);
+        if (error) throw new Error(error.message);
+      }
+      if (identity.email) {
+        const { error } = await supabase
+          .from('tryout_assessors')
+          .delete()
+          .in('tryout_id', tryoutIds)
+          .eq('email', identity.email);
+        if (error) throw new Error(error.message);
+      }
+
+      // Read back the whole identity, not just the row the list surfaced: a
+      // policy that let one delete through and refused the rest would otherwise
+      // look like a clean removal until the person reappeared.
+      let remaining = 0;
+      if (identity.userId) {
+        const { data: left } = await supabase
+          .from('tryout_assessors')
+          .select('id')
+          .in('tryout_id', tryoutIds)
+          .eq('user_id', identity.userId)
+          .limit(1);
+        remaining += left?.length ?? 0;
+      }
+      if (identity.email) {
+        const { data: left } = await supabase
+          .from('tryout_assessors')
+          .select('id')
+          .in('tryout_id', tryoutIds)
+          .eq('email', identity.email)
+          .limit(1);
+        remaining += left?.length ?? 0;
+      }
+      if (remaining > 0) throw blocked('an assessor row');
+      return;
+    }
+
+    // 3. Guardians, who are not members at all — they are the guardian contact
+    // on one or more of the account's athletes, so removal clears that contact.
+    if (!identity.email) throw new Error('Member not found.');
+
+    // guardian_email is citext, so eq() is already case-insensitive and still
+    // uses the btree index on the column.
+    const { error } = await supabase
+      .from('athletes')
+      .update({
+        guardian_name: null,
+        guardian_email: null,
+        guardian_phone: null,
+        guardian_user_id: null,
+      })
+      .eq('account_id', accountId)
+      .eq('guardian_email', identity.email);
+    if (error) throw new Error(error.message);
+
+    const { data: left } = await supabase
+      .from('athletes')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('guardian_email', identity.email)
+      .limit(1);
+    if (left && left.length > 0) throw blocked('the guardian contact');
   }
 
   async linkGuardianToAthlete(guardianId: string, tryoutId: string, playerId: string): Promise<import('../types').Player> {

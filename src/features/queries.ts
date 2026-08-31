@@ -1595,6 +1595,13 @@ export function useRemoveMemberMutation() {
     mutationFn: (memberId: string) => getDataSource().removeOrgMember(memberId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
+      // Removal also gives up any team the person had been delegated, and the
+      // manager lists are keyed per team (['team', id, 'managers']) — there is
+      // no prefix that reaches them all, so match on the shape.
+      void qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'team' && q.queryKey[2] === 'managers',
+      });
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
     },
   });
 }
