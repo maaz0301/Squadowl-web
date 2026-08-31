@@ -16,6 +16,13 @@ const isValidGuardianPhone = (val?: string) => {
   return digits.length >= 10 && digits.length <= 15;
 };
 
+/**
+ * Validate an optional email. Blank passes — a player email is never required,
+ * so an empty field must not block a save the way a malformed one does.
+ */
+const isValidOptionalEmail = (val?: string) =>
+  !val || !val.trim() || z.string().email().safeParse(val.trim()).success;
+
 export const SPORTS = [
   'Hockey',
   'Soccer',
@@ -106,6 +113,8 @@ export const AthleteSchema = z.object({
   first: z.string(),
   last: z.string(),
   yearOfBirth: z.string().optional(),
+  /** The player's own address, separate from their guardian's — either can be invited. */
+  playerEmail: z.string().optional(),
   guardianName: z.string().optional(),
   guardianEmail: z.string().optional(),
   guardianPhone: z.string().optional(),
@@ -147,6 +156,7 @@ export const PlayerSchema = z.object({
   pos: z.string().optional(),
   shoots: z.string().optional(),
   assignedAssessor: z.string().optional(),
+  playerEmail: z.string().optional(),
   guardianName: z.string().optional(),
   guardianEmail: z.string().optional(),
   guardianPhone: z.string().optional(),
@@ -193,6 +203,7 @@ export const RegistrationSchema = z.object({
   lastName: z.string(),
   yearOfBirth: z.string().optional(),
   positionTryingOutFor: z.string().optional(),
+  playerEmail: z.string().optional(),
   guardianName: z.string(),
   guardianEmail: z.string(),
   guardianPhone: z.string().optional(),
@@ -323,12 +334,53 @@ export const TeamRosterPlayerSchema = z.object({
   jersey: z.string().optional(),
   pos: z.string().optional(),
   yearOfBirth: z.number().optional(),
+  /**
+   * Invite addresses, carried on the roster row itself. The team screen used to
+   * dig these out of the full assessment read; "Send Invites" needs them for
+   * every player at once, and a team's roster can outlive the assessment its
+   * players came from.
+   */
+  playerEmail: z.string().optional(),
+  guardianEmail: z.string().optional(),
+  /**
+   * Guardian contact and link state, also straight off the athlete row.
+   * These used to be read only via the athlete's assessment-roster Player
+   * record, so a team player who isn't on any assessment — added manually, or
+   * whose assessment was archived — rendered every guardian field as "—" and
+   * always badged as "Not Linked", regardless of what was actually on file.
+   */
+  guardianName: z.string().optional(),
+  guardianPhone: z.string().optional(),
+  linkedGuardianId: z.string().optional(),
+  /**
+   * Also on the athlete, and read here for the same reason as the guardian
+   * fields: it was showing "—" for any team player not on an assessment roster.
+   * Deliberately the only sensitive field pulled onto the roster read — see the
+   * column list on the team_roster select.
+   */
+  medicalInfo: z.string().optional(),
   /** Assessment the athlete was added from, when known. */
   sourceTryoutId: z.string().optional(),
   sourceTryoutName: z.string().optional(),
 });
 
 export type TeamRosterPlayer = z.infer<typeof TeamRosterPlayerSchema>;
+
+/**
+ * Outcome of inviting a team's roster to the player/guardian portal.
+ *
+ * Partial success is the normal case, not an edge case: a roster of thirty
+ * routinely has a handful of players with no address on file and the odd
+ * address the mail provider rejects. Throwing on the first failure would hide
+ * the twenty-seven that did go out, so every address is attempted and reported.
+ */
+export interface TeamInviteResult {
+  /** Addresses an invite actually went to. */
+  sent: string[];
+  failed: { email: string; message: string }[];
+  /** Players skipped for having neither a player nor a guardian email. */
+  skipped: string[];
+}
 
 /** A permanently-saved snapshot of a Team Builder generation, so regenerating doesn't lose it. */
 export const TeamBuilderResultSchema = z.object({
@@ -439,6 +491,10 @@ export const AddPlayerFormSchema = z.object({
   shoots: z.string().optional(),
   yearOfBirth: z.string().optional(),
   positionTryingOutFor: z.string().optional(),
+  playerEmail: z
+    .string()
+    .optional()
+    .refine(isValidOptionalEmail, { message: 'Please enter a valid email address' }),
   guardianName: z.string().optional(),
   guardianEmail: z
     .string({ message: 'Guardian email is required' })
@@ -462,6 +518,10 @@ export const RegistrationSubmitSchema = z.object({
   lastName: z.string().min(1, 'Last name is required'),
   yearOfBirth: z.string().optional(),
   positionTryingOutFor: z.string().optional(),
+  playerEmail: z
+    .string()
+    .optional()
+    .refine(isValidOptionalEmail, { message: 'Please enter a valid email address' }),
   guardianName: z.string().min(1, 'Guardian name is required'),
   guardianEmail: z.string().email(),
   guardianPhone: z.string().optional().refine(isValidGuardianPhone, { message: 'Phone number must be between 10 and 15 digits' }),
@@ -679,6 +739,7 @@ export interface PlayerProfile {
   yearOfBirth?: string;
   aboutChild?: string;
   medicalInfo?: string;
+  playerEmail?: string;
   guardianName?: string;
   guardianEmail?: string;
   guardianPhone?: string;

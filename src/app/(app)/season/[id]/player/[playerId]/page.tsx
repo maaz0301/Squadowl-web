@@ -39,6 +39,7 @@ export default function SeasonPlayerPage() {
       <PageHeader title={`${player.firstName} ${player.lastName}`} showBack backHref={`/season/${id}/roster`} />
       <Card className="mb-4 flex flex-col gap-2">
         <p style={{ color: colors.inkMuted }}>Jersey #{player.jersey ?? '—'}</p>
+        <p style={{ color: colors.ink }}>{player.playerEmail ?? 'No player email'}</p>
         <p style={{ color: colors.ink }}>{player.guardianEmail ?? 'No guardian email'}</p>
         {player.portalInviteSentAt ? (
           <div>
@@ -52,11 +53,17 @@ export default function SeasonPlayerPage() {
           <p className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Send Portal Invite
           </p>
-          <Input label="Email" value={email || player.guardianEmail || ''} onChange={(e) => setEmail(e.target.value)} />
+          <Input
+            label="Email"
+            value={email || player.playerEmail || player.guardianEmail || ''}
+            onChange={(e) => setEmail(e.target.value)}
+          />
           <Button
             label="Send Invite"
             loading={portalInvite.isPending}
-            onClick={() => portalInvite.mutate({ playerId, email: email || player.guardianEmail || '' })}
+            onClick={() =>
+              portalInvite.mutate({ playerId, email: email || player.playerEmail || player.guardianEmail || '' })
+            }
           />
         </Card>
       </PlanGate>

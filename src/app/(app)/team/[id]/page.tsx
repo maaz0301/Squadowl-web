@@ -40,6 +40,7 @@ import {
   useAddManualTeamPlayerMutation,
   useUploadTeamPlayerPhotoMutation,
   useRemoveTeamRosterPlayerMutation,
+  useTeamRosterInvitesMutation,
   useSeasonsQuery,
   useSeasonQuery,
   useSeasonRealtimeSync,
@@ -53,7 +54,7 @@ import { queryKeys } from '@/lib/queryClient';
 import { useUser, usePermissions } from '@/state/authStore';
 import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
-import { CreateEventFormSchema, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
+import { CreateEventFormSchema, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent, type TeamInviteResult } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamManagersCard } from '@/components/TeamManagersCard';
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
@@ -177,6 +178,9 @@ export default function TeamDetailPage() {
   const addManualPlayer = useAddManualTeamPlayerMutation(id);
   const uploadTeamPlayerPhoto = useUploadTeamPlayerPhotoMutation(id);
   const removeRosterPlayer = useRemoveTeamRosterPlayerMutation(id);
+  const sendInvites = useTeamRosterInvitesMutation(id);
+  /** Which player's single-invite send is in flight, so only that row spins. */
+  const [invitingAthleteId, setInvitingAthleteId] = useState<string | null>(null);
 
   // A player who never went through an assessment (no tryout roster to pull
   // them from) has no other way onto the team — this is that direct path.
@@ -287,13 +291,19 @@ export default function TeamDetailPage() {
     ? teamPlayers.filter((p) => `${p.first} ${p.last}`.toLowerCase().includes(playerSearch.trim().toLowerCase()))
     : teamPlayers;
 
-  // The team_roster row only has roster-scoped fields (name, jersey, position).
-  // Guardian/medical/about details live on the assessment-roster Player record,
-  // so the detail modal looks that up by athleteId across every assessment.
+  // The team_roster row carries the roster-scoped fields plus everything that
+  // lives on the athlete itself — name, jersey, position, and the player/guardian
+  // contact details. Only the assessment-scoped extras (medical notes, jersey
+  // colour, registration source) still need the Player record, which the modal
+  // looks up by athleteId across every assessment.
   const viewingRosterEntry = viewPlayerId ? teamPlayers.find((p) => p.athleteId === viewPlayerId) : undefined;
   const viewingFullPlayer = viewPlayerId
     ? (tryoutsQuery.data ?? []).flatMap((t) => t.roster ?? []).find((p) => p.athleteId === viewPlayerId)
     : undefined;
+  // Link state comes off the athlete row now, so the badge is correct for a
+  // player who was never on an assessment roster. The Player record stays as a
+  // fallback for the case where only it resolved.
+  const guardianLinked = !!(viewingRosterEntry?.linkedGuardianId ?? viewingFullPlayer?.linkedGuardianId);
 
   // Candidates: every athlete on any assessment roster, deduped. Already-on-team
   // athletes stay in the list and are flagged instead of hidden.
@@ -440,6 +450,53 @@ export default function TeamDetailPage() {
       destructive: true,
     });
     if (ok) removeRosterPlayer.mutate(athleteId);
+  };
+
+  /**
+   * Report an invite send. Partial success is the normal outcome — see
+   * TeamInviteResult — so this always names what went out, what bounced, and who
+   * had no address on file, rather than collapsing to "sent" or "failed".
+   */
+  const reportInviteResult = async (result: TeamInviteResult) => {
+    const lines: string[] = [];
+    if (result.sent.length > 0) {
+      lines.push(`Invites sent to ${result.sent.length} ${result.sent.length === 1 ? 'address' : 'addresses'}.`);
+    }
+    if (result.skipped.length > 0) {
+      lines.push(`No email on file for: ${result.skipped.join(', ')}.`);
+    }
+    if (result.failed.length > 0) {
+      lines.push(`Could not send to ${result.failed.map((f) => f.email).join(', ')}.`);
+    }
+    if (lines.length === 0) lines.push('There was nobody to invite.');
+    await alert(result.sent.length > 0 ? 'Invites Sent' : 'No Invites Sent', lines.join('\n\n'));
+  };
+
+  const sendRosterInvites = async () => {
+    const ok = await confirm({
+      title: 'Send Invites',
+      message:
+        `Invite all ${teamPlayers.length} ${teamPlayers.length === 1 ? 'player' : 'players'} on ${team.name} to the portal? ` +
+        'Each invite goes to the player\u2019s own email and their guardian\u2019s, wherever those are on file.',
+      confirmLabel: 'Send',
+    });
+    if (!ok) return;
+    try {
+      await reportInviteResult(await sendInvites.mutateAsync(undefined));
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not send invites.');
+    }
+  };
+
+  const sendPlayerInvite = async (athleteId: string) => {
+    setInvitingAthleteId(athleteId);
+    try {
+      await reportInviteResult(await sendInvites.mutateAsync([athleteId]));
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not send invite.');
+    } finally {
+      setInvitingAthleteId(null);
+    }
   };
 
   const teamSeason = seasonQuery.data;
@@ -860,6 +917,15 @@ export default function TeamDetailPage() {
               variant="secondary"
               onClick={() => setShowAddManualPlayer(true)}
             />
+            {canManageTeam && teamPlayers.length > 0 ? (
+              <Button
+                label="Send Invites"
+                size="sm"
+                variant="secondary"
+                loading={sendInvites.isPending && invitingAthleteId === null}
+                onClick={sendRosterInvites}
+              />
+            ) : null}
           </div>
           {teamPlayers.length > 0 ? (
             <Input
@@ -1421,8 +1487,8 @@ export default function TeamDetailPage() {
             {!viewingFullPlayer && (tryoutsQuery.isLoading || tryoutsQuery.isError) ? (
               <p className="text-xs" style={{ color: colors.inkMuted }}>
                 {tryoutsQuery.isLoading
-                  ? 'Loading guardian, jersey colour, and medical details…'
-                  : 'Some details could not be loaded.'}{' '}
+                  ? 'Loading photo…'
+                  : 'The player photo could not be loaded.'}{' '}
                 {tryoutsQuery.isError ? (
                   <button
                     type="button"
@@ -1458,8 +1524,11 @@ export default function TeamDetailPage() {
                 value={viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined}
                 colors={colors}
               />
-              <PlayerDetailRow label="Evaluation" value={viewingRosterEntry.sourceTryoutName} colors={colors} />
-              <PlayerDetailRow label="Jersey Colour" value={viewingFullPlayer?.jerseyColour} colors={colors} />
+              <PlayerDetailRow
+                label="Player Email"
+                value={viewingRosterEntry.playerEmail ?? viewingFullPlayer?.playerEmail}
+                colors={colors}
+              />
             </Card>
 
             <Card className="flex flex-col gap-2">
@@ -1468,22 +1537,52 @@ export default function TeamDetailPage() {
                   Guardian
                 </span>
                 <Badge
-                  label={viewingFullPlayer?.linkedGuardianId ? 'Account Linked' : 'Not Linked'}
-                  variant={viewingFullPlayer?.linkedGuardianId ? 'success' : 'default'}
+                  label={guardianLinked ? 'Account Linked' : 'Not Linked'}
+                  variant={guardianLinked ? 'success' : 'default'}
                 />
               </div>
-              <PlayerDetailRow label="Name" value={viewingFullPlayer?.guardianName} colors={colors} />
-              <PlayerDetailRow label="Email" value={viewingFullPlayer?.guardianEmail} colors={colors} />
-              <PlayerDetailRow label="Phone" value={viewingFullPlayer?.guardianPhone} colors={colors} />
+              <PlayerDetailRow
+                label="Name"
+                value={viewingRosterEntry.guardianName ?? viewingFullPlayer?.guardianName}
+                colors={colors}
+              />
+              <PlayerDetailRow
+                label="Email"
+                value={viewingRosterEntry.guardianEmail ?? viewingFullPlayer?.guardianEmail}
+                colors={colors}
+              />
+              <PlayerDetailRow
+                label="Phone"
+                value={viewingRosterEntry.guardianPhone ?? viewingFullPlayer?.guardianPhone}
+                colors={colors}
+              />
             </Card>
 
             <Card className="flex flex-col gap-2">
               <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
                 Additional Info
               </span>
-              <PlayerDetailRow label="About" value={viewingFullPlayer?.aboutChild} colors={colors} />
-              <PlayerDetailRow label="Medical" value={viewingFullPlayer?.medicalInfo} colors={colors} />
+              <PlayerDetailRow
+                label="Medical"
+                value={viewingRosterEntry.medicalInfo ?? viewingFullPlayer?.medicalInfo}
+                colors={colors}
+              />
             </Card>
+
+            {canManageTeam ? (
+              <Button
+                label="Send Invite"
+                variant="secondary"
+                disabled={!viewingRosterEntry.playerEmail && !viewingRosterEntry.guardianEmail}
+                loading={invitingAthleteId === viewingRosterEntry.athleteId}
+                onClick={() => sendPlayerInvite(viewingRosterEntry.athleteId)}
+              />
+            ) : null}
+            {canManageTeam && !viewingRosterEntry.playerEmail && !viewingRosterEntry.guardianEmail ? (
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                Add a player or guardian email to this athlete before inviting them.
+              </p>
+            ) : null}
           </div>
         )}
       </Modal>

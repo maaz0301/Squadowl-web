@@ -19,6 +19,7 @@ export default function SeasonRosterPage() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [jersey, setJersey] = useState('');
+  const [playerEmail, setPlayerEmail] = useState('');
   const [guardianEmail, setGuardianEmail] = useState('');
 
   if (seasonQuery.isLoading) return <LoadingState message="Loading roster..." />;
@@ -36,12 +37,14 @@ export default function SeasonRosterPage() {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         jersey: jersey.trim() || undefined,
+        playerEmail: playerEmail.trim() || undefined,
         guardianEmail: guardianEmail.trim() || undefined,
       },
     });
     setFirstName('');
     setLastName('');
     setJersey('');
+    setPlayerEmail('');
     setGuardianEmail('');
     setShowAdd(false);
   };
@@ -82,7 +85,7 @@ export default function SeasonRosterPage() {
                     {item.firstName} {item.lastName}
                   </span>
                   <span className="block truncate text-sm" style={{ color: colors.inkMuted }}>
-                    #{item.jersey ?? '—'} · {item.guardianEmail ?? 'No guardian email'}
+                    #{item.jersey ?? '—'} · {item.playerEmail ?? item.guardianEmail ?? 'No email'}
                   </span>
                 </span>
                 {item.portalInviteSentAt ? (
@@ -101,7 +104,8 @@ export default function SeasonRosterPage() {
           <Input label="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           <Input label="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
           <Input label="Jersey" value={jersey} onChange={(e) => setJersey(e.target.value)} />
-          <Input label="Guardian email" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} />
+          <Input label="Player email" type="email" value={playerEmail} onChange={(e) => setPlayerEmail(e.target.value)} />
+          <Input label="Guardian email" type="email" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} />
           <Button label="Add to Roster" onClick={handleAdd} loading={addPlayer.isPending} />
         </div>
       </Modal>

@@ -20,6 +20,7 @@ export function RegistrationForm({ loading, full, onSubmit }: Props) {
       lastName: '',
       yearOfBirth: '',
       positionTryingOutFor: '',
+      playerEmail: '',
       guardianName: '',
       guardianEmail: '',
       guardianPhone: '',
@@ -62,6 +63,13 @@ export function RegistrationForm({ loading, full, onSubmit }: Props) {
           control={control}
           name="positionTryingOutFor"
           render={({ field }) => <Input label="Position" {...field} value={field.value ?? ''} />}
+        />
+        <Controller
+          control={control}
+          name="playerEmail"
+          render={({ field, fieldState }) => (
+            <Input label="Player Email" type="email" {...field} value={field.value ?? ''} error={fieldState.error?.message} />
+          )}
         />
         <Controller
           control={control}

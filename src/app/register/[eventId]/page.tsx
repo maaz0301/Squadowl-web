@@ -27,6 +27,7 @@ export default function PublicRegistrationPage() {
       lastName: '',
       yearOfBirth: '',
       positionTryingOutFor: '',
+      playerEmail: '',
       guardianName: '',
       guardianEmail: '',
       guardianPhone: '',
@@ -141,6 +142,14 @@ export default function PublicRegistrationPage() {
             name="yearOfBirth"
             render={({ field }) => (
               <Input label="Year of Birth" {...field} value={field.value ?? ''} placeholder="YYYY" error={errors.yearOfBirth?.message} />
+            )}
+          />
+
+          <Controller
+            control={control}
+            name="playerEmail"
+            render={({ field }) => (
+              <Input label="Player Email" type="email" {...field} value={field.value ?? ''} error={errors.playerEmail?.message} />
             )}
           />
 

@@ -267,6 +267,9 @@ export default function PlayerHubPage() {
             </span>
             {player.registrationSource === 'qr' ? <Badge label="QR Registered" variant="info" /> : null}
             {player.yearOfBirth ? <Badge label={`Born ${player.yearOfBirth}`} /> : null}
+            {player.playerEmail ? (
+              <span className="break-words text-sm" style={{ color: colors.inkMuted }}>{player.playerEmail}</span>
+            ) : null}
           </Card>
 
           <Card className="flex flex-col gap-2">

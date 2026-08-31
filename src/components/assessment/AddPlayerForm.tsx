@@ -35,6 +35,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
       shoots: defaultValues?.shoots || '',
       yearOfBirth: defaultValues?.yearOfBirth || '',
       positionTryingOutFor: defaultValues?.positionTryingOutFor || '',
+      playerEmail: defaultValues?.playerEmail || '',
       guardianName: defaultValues?.guardianName || '',
       guardianEmail: defaultValues?.guardianEmail || '',
       guardianPhone: defaultValues?.guardianPhone || '',
@@ -71,6 +72,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
     setValue('first', a.first);
     setValue('last', a.last);
     setValue('yearOfBirth', a.yearOfBirth || '');
+    setValue('playerEmail', a.playerEmail || '');
     setValue('guardianName', a.guardianName || '');
     setValue('guardianEmail', a.guardianEmail || '');
     setValue('guardianPhone', a.guardianPhone || '');
@@ -86,8 +88,9 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
   };
 
   const submit = handleSubmit(onSubmit, async (errors) => {
-    if (errors.guardianEmail) {
-      await alert('Invalid Email', errors.guardianEmail.message || 'Please enter a valid email address');
+    const emailError = errors.guardianEmail ?? errors.playerEmail;
+    if (emailError) {
+      await alert('Invalid Email', emailError.message || 'Please enter a valid email address');
     } else {
       await alert('Validation Error', 'Please check the highlighted fields before saving.');
     }
@@ -195,6 +198,13 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
             name="yearOfBirth"
             render={({ field, fieldState }) => (
               <YearField label="Year of Birth" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+            )}
+          />
+          <Controller
+            control={control}
+            name="playerEmail"
+            render={({ field, fieldState }) => (
+              <Input label="Player Email" type="email" {...field} error={fieldState.error?.message} />
             )}
           />
           <Controller

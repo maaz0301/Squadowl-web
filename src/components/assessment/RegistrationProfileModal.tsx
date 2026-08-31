@@ -96,6 +96,7 @@ export function RegistrationProfileModal({
             <Row label="Position" value={r.positionTryingOutFor} colors={colors} />
             <Row label="Current Team" value={r.currentTeam} colors={colors} />
             <Row label="Current Level" value={r.currentLevel} colors={colors} />
+            <Row label="Email" value={r.playerEmail} colors={colors} />
           </Section>
 
           <Section title="Guardian" colors={colors}>

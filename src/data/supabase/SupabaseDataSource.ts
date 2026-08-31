@@ -72,6 +72,7 @@ import type {
   Sport,
   Team,
   TeamBuilderResult,
+  TeamInviteResult,
   TeamMessage,
   TeamRosterPlayer,
   Tryout,
@@ -907,6 +908,7 @@ export class SupabaseDataSource implements DataSource {
       pos: p.position ?? undefined,
       shoots: p.shoots ?? undefined,
       assignedAssessor: p.assigned_assessor_id ? assessorNameById[p.assigned_assessor_id] : undefined,
+      playerEmail: a.player_email ?? undefined,
       guardianName: a.guardian_name ?? undefined,
       guardianEmail: a.guardian_email ?? undefined,
       guardianPhone: a.guardian_phone ?? undefined,
@@ -965,6 +967,7 @@ export class SupabaseDataSource implements DataSource {
       lastName: r.last_name,
       yearOfBirth: r.year_of_birth != null ? String(r.year_of_birth) : undefined,
       positionTryingOutFor: r.position_trying_out_for ?? undefined,
+      playerEmail: r.player_email ?? undefined,
       guardianName: r.guardian_name,
       guardianEmail: r.guardian_email,
       guardianPhone: r.guardian_phone ?? undefined,
@@ -1709,6 +1712,12 @@ export class SupabaseDataSource implements DataSource {
       jersey: r.jersey ?? undefined,
       pos: r.position ?? undefined,
       yearOfBirth: a.year_of_birth ?? undefined,
+      playerEmail: a.player_email ?? undefined,
+      guardianEmail: a.guardian_email ?? undefined,
+      guardianName: a.guardian_name ?? undefined,
+      guardianPhone: a.guardian_phone ?? undefined,
+      linkedGuardianId: a.guardian_user_id ?? undefined,
+      medicalInfo: a.medical_info ?? undefined,
       sourceTryoutId: r.source_tryout_id ?? undefined,
       sourceTryoutName: src.name ?? undefined,
     };
@@ -1832,6 +1841,7 @@ export class SupabaseDataSource implements DataSource {
         guardian_name: form.guardianName || null,
         guardian_email: form.guardianEmail || null,
         guardian_phone: form.guardianPhone || null,
+        player_email: form.playerEmail || null,
         medical_info: form.medicalInfo || null,
         about: form.aboutChild || null,
         avatar_url: form.avatarUrl || null,
@@ -1851,6 +1861,96 @@ export class SupabaseDataSource implements DataSource {
         .eq('athlete_id', athleteId)
         .select('id'),
     );
+  }
+
+  /**
+   * Invite a team's roster to the player/guardian portal.
+   *
+   * The season equivalent (sendPortalInvite) takes one player and one address
+   * chosen by the caller. A team roster is invited as a set, and each player has
+   * up to two addresses — their own and their guardian's — so the recipient list
+   * is derived here rather than passed in.
+   *
+   * Every address is attempted. A player with no email on file, or an address
+   * the send-email function rejects, is reported back rather than thrown: on a
+   * roster of any size at least one of those is normal, and failing the whole
+   * batch on it would leave the coach unable to tell who was actually invited.
+   */
+  async sendTeamRosterInvites(teamId: string, athleteIds?: string[]): Promise<TeamInviteResult> {
+    const { supabase } = await this.ctx();
+
+    // portal_invites.account_id is the *team's* owning account, not the
+    // caller's: for a delegated team those differ, and its RLS policy is keyed
+    // to the former — the same account team_roster's own policy checks.
+    // accounts(name) rides along so the invite email can name the club that sent
+    // it — a guardian with children at two clubs can't tell them apart otherwise.
+    const team = unwrap(
+      await supabase.from('teams').select('id, account_id, name, accounts(name)').eq('id', teamId).maybeSingle(),
+    ) as Row | null;
+    if (!team) throw new Error('Team not found');
+    const rawAccount = team.accounts;
+    const clubName = (Array.isArray(rawAccount) ? rawAccount[0] : rawAccount)?.name as string | undefined;
+
+    const roster = await this.listTeamRoster(teamId);
+    const invitees = athleteIds
+      ? roster.filter((p) => athleteIds.includes(p.athleteId))
+      : roster;
+
+    const result: TeamInviteResult = { sent: [], failed: [], skipped: [] };
+
+    // One work item per (player, address). A player and their guardian each get
+    // their own invite row and token, so accepting one doesn't consume the other.
+    // The role travels with the address because the email is worded differently
+    // for the player than for their guardian; when one address is on file as
+    // both, Player wins and it's only sent once.
+    const targets: { player: TeamRosterPlayer; email: string; role: 'Player' | 'Guardian' }[] = [];
+    for (const p of invitees) {
+      const byEmail = new Map<string, 'Player' | 'Guardian'>();
+      const guardian = p.guardianEmail?.trim();
+      if (guardian) byEmail.set(guardian, 'Guardian');
+      const own = p.playerEmail?.trim();
+      if (own) byEmail.set(own, 'Player');
+      if (byEmail.size === 0) {
+        result.skipped.push(`${p.first} ${p.last}`.trim() || 'Unnamed player');
+        continue;
+      }
+      for (const [email, role] of byEmail) targets.push({ player: p, email, role });
+    }
+
+    if (targets.length === 0) return result;
+
+    // Same bounded fan-out as the other per-recipient email loops — each target
+    // is an insert plus a send-email call, and a full roster sent serially is
+    // the dominant cost of the whole operation.
+    await mapPool(targets, GUARDIAN_EMAIL_CONCURRENCY, async ({ player, email, role }) => {
+      try {
+        unwrap(
+          await supabase
+            .from('portal_invites')
+            .insert({
+              account_id: team.account_id,
+              athlete_id: player.athleteId,
+              team_id: teamId,
+              email,
+              token: generateId('invite').slice(0, 20),
+            })
+            .select('id'),
+        );
+        await this.sendEmail('player_invite', email, {
+          playerName: `${player.first} ${player.last}`.trim(),
+          teamName: team.name,
+          clubName,
+          jersey: player.jersey,
+          position: player.pos,
+          role,
+        });
+        result.sent.push(email);
+      } catch (e) {
+        result.failed.push({ email, message: e instanceof Error ? e.message : 'Could not send invite.' });
+      }
+    });
+
+    return result;
   }
 
   async deleteTeam(id: string): Promise<void> {
@@ -2480,7 +2580,7 @@ export class SupabaseDataSource implements DataSource {
     );
   }
 
-  async sendEmail(type: 'org_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: Record<string, unknown>): Promise<void> {
+  async sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: Record<string, unknown>): Promise<void> {
     const { supabase } = await this.ctx();
     const { error } = await supabase.functions.invoke('send-email', {
       body: { type, to, payload },
@@ -2628,6 +2728,7 @@ export class SupabaseDataSource implements DataSource {
         guardian_name: form.guardianName || null,
         guardian_email: form.guardianEmail || null,
         guardian_phone: form.guardianPhone || null,
+        player_email: form.playerEmail || null,
         medical_info: form.medicalInfo || null,
         about: form.aboutChild || null,
         avatar_url: form.avatarUrl || null,
@@ -2672,6 +2773,7 @@ export class SupabaseDataSource implements DataSource {
     if (updates.guardianName !== undefined) athletePatch.guardian_name = updates.guardianName || null;
     if (updates.guardianEmail !== undefined) athletePatch.guardian_email = updates.guardianEmail || null;
     if (updates.guardianPhone !== undefined) athletePatch.guardian_phone = updates.guardianPhone || null;
+    if (updates.playerEmail !== undefined) athletePatch.player_email = updates.playerEmail || null;
     if (updates.medicalInfo !== undefined) athletePatch.medical_info = updates.medicalInfo || null;
     if (updates.aboutChild !== undefined) athletePatch.about = updates.aboutChild || null;
     if (updates.currentPosition !== undefined)
@@ -3065,6 +3167,7 @@ export class SupabaseDataSource implements DataSource {
         last_name: form.lastName,
         year_of_birth: form.yearOfBirth ? Number(form.yearOfBirth) : null,
         position_trying_out_for: form.positionTryingOutFor || null,
+        player_email: form.playerEmail || null,
         guardian_name: form.guardianName,
         guardian_email: form.guardianEmail,
         guardian_phone: form.guardianPhone || null,
@@ -3105,7 +3208,13 @@ export class SupabaseDataSource implements DataSource {
       return { players: 0, evaluations: 0, athleteIds: [] };
     }
 
-    // 1. Bulk-insert canonical athletes (no guardian contact → no side effects).
+    // 1. Bulk-insert canonical athletes, contact details included.
+    //
+    // Safe to carry here, unlike the single-player and registration paths:
+    // create_athletes_for_caller() is a plain insert and never resolves or
+    // creates a guardian auth account, and the addresses are on a disposable
+    // testing domain. Omitting them is what left dummy players with no contact
+    // details on the player detail and nothing for "Send Invites" to reach.
     // Chunked at DUMMY_CHUNK.athletes, so the 1000-player ceiling is one request.
     //
     // Routed through create_athletes_for_caller() rather than a direct table
@@ -3123,6 +3232,9 @@ export class SupabaseDataSource implements DataSource {
             first_name: g.form.first,
             last_name: g.form.last,
             year_of_birth: g.form.yearOfBirth ? Number(g.form.yearOfBirth) : null,
+            guardian_name: g.form.guardianName || null,
+            guardian_email: g.form.guardianEmail || null,
+            player_email: g.form.playerEmail || null,
           })),
         });
         // Rethrown through `unwrap`'s shape rather than as a bare Error so the
@@ -3585,6 +3697,7 @@ export class SupabaseDataSource implements DataSource {
           last_name: form.lastName,
           year_of_birth: form.yearOfBirth ? Number(form.yearOfBirth) : null,
           position_trying_out_for: form.positionTryingOutFor || null,
+          player_email: form.playerEmail || null,
           guardian_name: form.guardianName,
           guardian_email: form.guardianEmail,
           guardian_phone: form.guardianPhone || null,
@@ -3638,6 +3751,7 @@ export class SupabaseDataSource implements DataSource {
       guardian_name: reg.guardian_name || null,
       guardian_email: reg.guardian_email || null,
       guardian_phone: reg.guardian_phone || null,
+      player_email: reg.player_email || null,
       medical_info: reg.medical_info || null,
       about: reg.about_player || null,
     });
@@ -3686,6 +3800,7 @@ export class SupabaseDataSource implements DataSource {
       guardian_name: reg.guardian_name || null,
       guardian_email: reg.guardian_email || null,
       guardian_phone: reg.guardian_phone || null,
+      player_email: reg.player_email || null,
       medical_info: reg.medical_info || null,
       about: reg.about_player || null,
     });
@@ -3775,6 +3890,7 @@ export class SupabaseDataSource implements DataSource {
       guardian_email: reg.guardian_email || null,
       guardian_phone: reg.guardian_phone || null,
       guardian_user_id: guardianUserId || null,
+      player_email: reg.player_email || null,
       medical_info: reg.medical_info || null,
       about: reg.about_player || null,
     };
@@ -4162,7 +4278,10 @@ export class SupabaseDataSource implements DataSource {
       jersey: r.jersey ?? undefined,
       guardianEmail: a.guardian_email ?? undefined,
       guardianPhone: a.guardian_phone ?? undefined,
-      playerEmail: r.player_email ?? undefined,
+      // The season enrollment can override it, but the athlete's own address is
+      // the default — otherwise a player email captured on the assessment or
+      // team roster would be invisible here until it was retyped per season.
+      playerEmail: r.player_email ?? a.player_email ?? undefined,
       portalInviteEmails: myInvites.length ? myInvites.map((i) => i.email) : undefined,
       portalInviteSentAt: myInvites.length
         ? Math.max(...myInvites.map((i) => toMs(i.sent_at)))
@@ -4823,6 +4942,7 @@ export class SupabaseDataSource implements DataSource {
       last_name: player.lastName,
       guardian_email: player.guardianEmail || null,
       guardian_phone: player.guardianPhone || null,
+      player_email: player.playerEmail || null,
     });
     const row = unwrap(
       await supabase
@@ -5085,6 +5205,7 @@ export class SupabaseDataSource implements DataSource {
         first: a.first_name ?? '',
         last: a.last_name ?? '',
         yearOfBirth: a.year_of_birth != null ? String(a.year_of_birth) : undefined,
+        playerEmail: a.player_email ?? undefined,
         guardianName: a.guardian_name ?? undefined,
         guardianEmail: a.guardian_email ?? undefined,
         guardianPhone: a.guardian_phone ?? undefined,
@@ -5318,7 +5439,7 @@ export class SupabaseDataSource implements DataSource {
     const { data: athleteRow } = await supabase
       .from('athletes')
       .select(
-        'id, first_name, last_name, avatar_url, guardian_name, guardian_email, guardian_phone, default_position, year_of_birth, about, medical_info',
+        'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, default_position, year_of_birth, about, medical_info',
       )
       .eq('id', athleteId)
       .maybeSingle();
@@ -5361,6 +5482,7 @@ export class SupabaseDataSource implements DataSource {
       yearOfBirth: athleteRow.year_of_birth != null ? String(athleteRow.year_of_birth) : undefined,
       aboutChild: athleteRow.about ?? undefined,
       medicalInfo: athleteRow.medical_info ?? undefined,
+      playerEmail: athleteRow.player_email ?? undefined,
       guardianName: athleteRow.guardian_name ?? undefined,
       guardianEmail: athleteRow.guardian_email ?? undefined,
       guardianPhone: athleteRow.guardian_phone ?? undefined,

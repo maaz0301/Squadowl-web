@@ -69,6 +69,7 @@ export default function PlayerProfilePage() {
         ) : null}
         <Row label="Position" value={profile.currentPosition} colors={colors} />
         <Row label="Year of Birth" value={profile.yearOfBirth} colors={colors} />
+        <Row label="Player Email" value={profile.playerEmail} colors={colors} />
         <Row label="Guardian" value={profile.guardianName} colors={colors} />
         <Row label="Guardian Email" value={profile.guardianEmail} colors={colors} />
         <Row label="Guardian Phone" value={profile.guardianPhone} colors={colors} />
