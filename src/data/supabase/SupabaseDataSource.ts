@@ -2522,6 +2522,17 @@ export class SupabaseDataSource implements DataSource {
     return result;
   }
 
+  /**
+   * The team_id write on its own — see DataSource.setTryoutTeam for why the
+   * team screen can't go through updateTryout() for it. `select('id')` keeps
+   * the response to one column while still turning an RLS refusal into an
+   * error rather than a silent no-op.
+   */
+  async setTryoutTeam(id: string, teamId: string | null): Promise<void> {
+    const { supabase } = await this.ctx();
+    unwrap(await supabase.from('tryouts').update({ team_id: teamId }).eq('id', id).select('id').single());
+  }
+
   /** Reconcile the desired assessor list against the tryout_assessors table. */
   private async syncAssessors(tryoutId: string, desired: Assessor[]): Promise<void> {
     const supabase = getSupabase();

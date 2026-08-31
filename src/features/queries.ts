@@ -375,6 +375,30 @@ export function useUpdateTryoutMutation() {
 }
 
 /**
+ * Links an assessment to a team (or unlinks it with null).
+ *
+ * Deliberately not useUpdateTryoutMutation with `{ teamId }`: that path returns
+ * the fully assembled Tryout, so the cheap one-column write is followed by a
+ * read of the whole roster, its evaluations and scores. On a large assessment
+ * that read blows the 15s timeout and the coach is told the request failed even
+ * though the link is already saved. setTryoutTeam does the write and nothing
+ * else; the lists below refetch the new state on their own.
+ */
+export function useSetTryoutTeamMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, teamId }: { id: string; teamId: string | null }) =>
+      withTimeout(getDataSource().setTryoutTeam(id, teamId), 15000),
+    onSuccess: (_result, { id }) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.tryout(id) });
+      // ['tryouts'] is the prefix both the full lists and the summary lists
+      // hang off, archived and active — the attach modal reads the latter.
+      void qc.invalidateQueries({ queryKey: ALL_TRYOUT_LISTS });
+    },
+  });
+}
+
+/**
  * Applies `update` to every cached tryout *list* under a key prefix, leaving
  * non-list entries under the same prefix (the ['tryouts','count'] number)
  * alone. Returning null from `update` drops the row.

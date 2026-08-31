@@ -34,7 +34,7 @@ import {
   useTryoutSummariesQuery,
   useUpdateTeamMutation,
   useDeleteTeamMutation,
-  useUpdateTryoutMutation,
+  useSetTryoutTeamMutation,
   useTeamRosterQuery,
   useAddTeamRosterPlayersMutation,
   useAddManualTeamPlayerMutation,
@@ -131,7 +131,7 @@ export default function TeamDetailPage() {
   const tryoutSummariesQuery = useTryoutSummariesQuery(false);
   const updateTeam = useUpdateTeamMutation();
   const deleteTeam = useDeleteTeamMutation();
-  const updateTryout = useUpdateTryoutMutation();
+  const setTryoutTeam = useSetTryoutTeamMutation();
   const [attachingId, setAttachingId] = useState<string | null>(null);
   const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
@@ -1146,7 +1146,7 @@ export default function TeamDetailPage() {
               onClick={async () => {
                 setAttachingId(t.id);
                 try {
-                  await updateTryout.mutateAsync({ id: t.id, updates: { teamId: team.id } });
+                  await setTryoutTeam.mutateAsync({ id: t.id, teamId: team.id });
                   setShowAttachModal(false);
                 } catch (e) {
                   await alert('Error', e instanceof Error ? e.message : 'Could not link evaluation.');

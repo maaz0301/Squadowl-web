@@ -77,6 +77,16 @@ export interface DataSource {
   getTryout(id: string): Promise<Tryout | null>;
   createTryout(form: CreateAssessmentForm): Promise<Tryout>;
   updateTryout(id: string, updates: Partial<Tryout>): Promise<Tryout>;
+  /**
+   * Link an assessment to a team, or unlink it with null.
+   *
+   * updateTryout() would do the same write, but its Tryout return forces a full
+   * re-read of the assessment afterwards — every participant joined to its
+   * athlete, every evaluation, score and registration. On a large roster that
+   * read alone outruns the client's request timeout, so the coach sees a network
+   * error for a link that actually saved. This is the write on its own.
+   */
+  setTryoutTeam(id: string, teamId: string | null): Promise<void>;
   archiveTryout(id: string): Promise<Tryout>;
   deleteTryout(id: string): Promise<void>;
 
