@@ -194,7 +194,8 @@ export interface DataSource {
   createTeamFeePayment(seasonRosterId: string, successUrl?: string, cancelUrl?: string): Promise<{ url: string }>;
 
   // Org Members & Permissions
-  listOrgMembers(): Promise<OrgMember[]>;
+  /** `includeTeamManagers` also lists the coaches a club has delegated a team to. */
+  listOrgMembers(includeTeamManagers?: boolean): Promise<OrgMember[]>;
   inviteOrgMember(email: string, role: OrgRole): Promise<OrgMember>;
   updateOrgMemberRole(memberId: string, role: OrgRole): Promise<OrgMember>;
   removeOrgMember(memberId: string): Promise<void>;

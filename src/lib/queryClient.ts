@@ -90,7 +90,16 @@ export const queryKeys = {
   seasonSummaries: ['seasons', { view: 'summary' }] as const,
   season: (id: string) => ['season', id] as const,
   org: ['org'] as const,
-  orgMembers: (userId?: string) => userId ? ['org', 'members', userId] as const : ['org', 'members'] as const,
+  /**
+   * `includeTeamManagers` is a suffix rather than a separate key so the plain
+   * ['org', 'members'] prefix every org write invalidates still reaches it.
+   */
+  orgMembers: (userId?: string, includeTeamManagers?: boolean) =>
+    userId
+      ? includeTeamManagers
+        ? (['org', 'members', userId, 'withTeamManagers'] as const)
+        : (['org', 'members', userId] as const)
+      : (['org', 'members'] as const),
   enterprisePayments: ['enterprise', 'payments'] as const,
   connectAccountStatus: ['connect', 'account-status'] as const,
   adminStats: ['admin', 'stats'] as const,

@@ -114,7 +114,7 @@ type WriteGuard = { wrote: boolean };
  * contacts into one list, so a row id alone doesn't say what removing it means.
  */
 type OrgMemberIdentity = {
-  kind: 'membership' | 'assessor' | 'guardian';
+  kind: 'membership' | 'assessor' | 'guardian' | 'teamManager';
   accountId: string | null;
   userId?: string;
   email?: string;
@@ -2119,6 +2119,21 @@ export class SupabaseDataSource implements DataSource {
     const { supabase } = await this.ctx();
     const { error } = await supabase.rpc('remove_team_manager', { manager_id: managerId });
     if (error) throw error;
+  }
+
+  /**
+   * Every delegated manager across the given teams, flattened.
+   *
+   * Goes team by team through list_team_managers because that is the only read
+   * the backend exposes — `team_managers` itself is reached through those RPCs
+   * everywhere else in the app, and a direct select that RLS filtered would
+   * come back empty with no error, quietly showing an org no managers at all.
+   * Callers are expected to be screens, not the every-route permission read.
+   */
+  private async fetchTeamManagers(teamIds: string[]): Promise<import('../types').TeamManager[]> {
+    if (teamIds.length === 0) return [];
+    const lists = await Promise.all(teamIds.map((id) => this.listTeamManagers(id)));
+    return lists.flat();
   }
 
   private rowToTeamManager(r: Row): import('../types').TeamManager {
@@ -5788,7 +5803,14 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // ─── Org Members ─────────────────────────────────────────────────────────────
-  async listOrgMembers(): Promise<import('../types').OrgMember[]> {
+  /**
+   * @param includeTeamManagers  Also list the coaches a club has delegated a
+   *   single team to. Off by default and paid for only by Manage Organization:
+   *   there is no account-wide read for them — the deployed RPC is per team —
+   *   and AppShell's usePermissions() subscribes to this query on every route,
+   *   where a per-team fan-out would land on every navigation.
+   */
+  async listOrgMembers(includeTeamManagers = false): Promise<import('../types').OrgMember[]> {
     const { supabase, accountId } = await this.ctx();
 
     // Memberships, the account's tryouts (needed only to scope the assessor
@@ -5796,13 +5818,19 @@ export class SupabaseDataSource implements DataSource {
     // only the assessors depend on anything here. Running all four in series
     // put ~2.1s in front of every screen in the app, since AppShell's
     // usePermissions() subscribes to this query on every route.
-    const [memRes, tryoutRes, athleteRes] = await Promise.all([
+    const [memRes, tryoutRes, teamRes, athleteRes] = await Promise.all([
       supabase
         .from('memberships')
         .select('id, user_id, role, created_at, profiles(email, display_name)')
         .eq('account_id', accountId),
       // Fetch tryouts for the account to get assessors
       supabase.from('tryouts').select('id').eq('account_id', accountId),
+      // …and the teams, for the managers they've been delegated to. Archived
+      // ones included: the delegation survives the archive and comes back with
+      // the team, so hiding it here would hide access that still exists.
+      includeTeamManagers
+        ? supabase.from('teams').select('id, name').eq('account_id', accountId)
+        : Promise.resolve({ data: [] as Row[] }),
       supabase
         .from('athletes')
         .select('id, guardian_name, guardian_email, guardian_user_id, created_at')
@@ -5812,17 +5840,23 @@ export class SupabaseDataSource implements DataSource {
 
     const memData = memRes.data;
     const tryouts = tryoutRes.data;
+    const teams = (teamRes.data ?? []) as Row[];
     const athletesData = athleteRes.data;
 
-    let assData: Row[] = [];
-    if (tryouts && tryouts.length > 0) {
-      const tryoutIds = tryouts.map(t => t.id);
-      const { data } = await supabase
-        .from('tryout_assessors')
-        .select('id, user_id, role, joined_at, email, name')
-        .in('tryout_id', tryoutIds);
-      assData = data || [];
-    }
+    // Second wave: both of these need ids from the first one, and neither needs
+    // anything from the other.
+    const [assData, teamManagers] = await Promise.all([
+      (async (): Promise<Row[]> => {
+        if (!tryouts || tryouts.length === 0) return [];
+        const tryoutIds = tryouts.map(t => t.id);
+        const { data } = await supabase
+          .from('tryout_assessors')
+          .select('id, user_id, role, joined_at, email, name')
+          .in('tryout_id', tryoutIds);
+        return data || [];
+      })(),
+      this.fetchTeamManagers(teams.map((t) => t.id as string)),
+    ]);
     const members: Map<string, import('../types').OrgMember> = new Map();
 
     // Add memberships
@@ -5841,6 +5875,7 @@ export class SupabaseDataSource implements DataSource {
         role: r.role === 'owner' ? 'admin' : r.role,
         status: 'active',
         createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+        source: 'membership',
       });
     }
 
@@ -5857,6 +5892,45 @@ export class SupabaseDataSource implements DataSource {
         role: 'assessor',
         status: 'active',
         createdAt: a.joined_at ? new Date(a.joined_at).getTime() : Date.now(),
+        source: 'assessor',
+      });
+    }
+
+    // Delegated team managers (CLUB mode). They hold no membership, so before
+    // this they were invisible here — Manage Organization showed no trace of
+    // someone who had been handed a whole team, and removing their membership
+    // (when they even had one) left the delegation behind.
+    const teamNames = new Map(teams.map((t) => [t.id as string, (t.name as string) ?? 'a team']));
+    for (const tm of teamManagers) {
+      const email = tm.email;
+      if (!email) continue;
+      const emailKey = email.toLowerCase();
+      const teamName = teamNames.get(tm.teamId);
+
+      const existing = members.get(emailKey);
+      if (existing) {
+        // Already staff by another route. Keep that row — its id is the one the
+        // role change needs — and just note the teams next to their name.
+        if (teamName) existing.teams = [...(existing.teams ?? []), teamName];
+        if (!existing.name && tm.name) existing.name = tm.name;
+        continue;
+      }
+
+      members.set(emailKey, {
+        id: tm.id,
+        orgId: accountId,
+        userId: tm.userId || undefined,
+        email,
+        name: tm.name,
+        // TeamManagerRole ('manager' | 'coach') has no exact OrgRole; both run a
+        // team, which is what 'coach' means on this screen.
+        role: 'coach',
+        // No linked account yet means the invite is still outstanding — the
+        // same distinction the guardian rows draw.
+        status: tm.userId ? 'active' : 'pending',
+        createdAt: tm.createdAt,
+        source: 'teamManager',
+        teams: teamName ? [teamName] : [],
       });
     }
 
@@ -5876,6 +5950,7 @@ export class SupabaseDataSource implements DataSource {
           role: 'guardian',
           status: a.guardian_user_id ? 'active' : 'pending',
           createdAt: a.created_at ? new Date(a.created_at).getTime() : Date.now(),
+          source: 'guardian',
         });
       } else {
         const existing = members.get(emailKey)!;
@@ -5994,6 +6069,14 @@ export class SupabaseDataSource implements DataSource {
     // revocation below matches on.
     const identity = await this.resolveOrgMemberIdentity(memberId);
 
+    // A delegated manager has nothing in memberships/tryout_assessors/athletes,
+    // so the RPC below would only report "Member not found" — giving up the
+    // team *is* the removal.
+    if (identity?.kind === 'teamManager') {
+      await this.revokeTeamManagerAccess(identity);
+      return;
+    }
+
     const { supabase } = await this.ctx();
     const { error } = await supabase.rpc('remove_org_member', { member_id: memberId });
 
@@ -6085,6 +6168,22 @@ export class SupabaseDataSource implements DataSource {
       };
     }
 
+    // Last, and only once the cheap lookups have missed: a row that is on the
+    // list purely because a team was delegated to them. Finding it costs a read
+    // per team, which is why nothing above it pays for the search.
+    const { accountId } = await this.ctx();
+    const { data: teams } = await supabase.from('teams').select('id').eq('account_id', accountId);
+    const managers = await this.fetchTeamManagers(((teams ?? []) as Row[]).map((t) => t.id as string));
+    const manager = managers.find((m) => m.id === memberId);
+    if (manager) {
+      return {
+        kind: 'teamManager',
+        accountId,
+        userId: manager.userId || undefined,
+        email: manager.email,
+      };
+    }
+
     return null;
   }
 
@@ -6124,7 +6223,9 @@ export class SupabaseDataSource implements DataSource {
         // instead of letting a raw Postgres message read as "nothing happened".
         console.error('Failed to revoke delegated team access:', e);
         throw new Error(
-          'Removed from the organization, but their delegated team access could not be revoked. Remove them from the team’s Managers list.',
+          identity.kind === 'teamManager'
+            ? 'Could not remove their access to the team. You may not have permission to change its managers.'
+            : 'Removed from the organization, but their delegated team access could not be revoked. Remove them from the team’s Managers list.',
         );
       }
     }
@@ -6226,7 +6327,9 @@ export class SupabaseDataSource implements DataSource {
 
     // 3. Guardians, who are not members at all — they are the guardian contact
     // on one or more of the account's athletes, so removal clears that contact.
-    if (!identity.email) throw new Error('Member not found.');
+    // Delegated managers never reach here: removeOrgMember() hands them to
+    // revokeTeamManagerAccess() and returns.
+    if (identity.kind !== 'guardian' || !identity.email) throw new Error('Member not found.');
 
     // guardian_email is citext, so eq() is already case-insensitive and still
     // uses the btree index on the column.

@@ -216,6 +216,8 @@ export function useInviteTeamManagerMutation(teamId: string) {
     }) => getDataSource().inviteTeamManager(teamId, email, role, name),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) });
+      // Manage Organization lists delegated managers too, so it goes stale here.
+      void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
     },
   });
 }
@@ -227,6 +229,7 @@ export function useRemoveTeamManagerMutation(teamId: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.teamManagers(teamId) });
       void qc.invalidateQueries({ queryKey: queryKeys.teams });
+      void qc.invalidateQueries({ queryKey: queryKeys.orgMembers() });
     },
   });
 }
@@ -1536,11 +1539,16 @@ export function useOrgQuery() {
   });
 }
 
-export function useOrgMembersQuery() {
+/**
+ * @param includeTeamManagers  Adds the coaches a club has delegated a team to.
+ *   Manage Organization asks for them; the every-route permission read does
+ *   not, because they cost a read per team — see listOrgMembers().
+ */
+export function useOrgMembersQuery(includeTeamManagers = false) {
   const userId = useAuthStore((s) => s.session?.user?.id);
   return useQuery({
-    queryKey: queryKeys.orgMembers(userId),
-    queryFn: () => getDataSource().listOrgMembers(),
+    queryKey: queryKeys.orgMembers(userId, includeTeamManagers),
+    queryFn: () => getDataSource().listOrgMembers(includeTeamManagers),
     enabled: !!userId,
   });
 }

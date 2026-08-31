@@ -24,7 +24,9 @@ export default function OrganizationMembersPage() {
   const [showRolePicker, setShowRolePicker] = useState(false);
   const [selectedMemberForRole, setSelectedMemberForRole] = useState<OrgMember | null>(null);
 
-  const { data: members = [], isLoading } = useOrgMembersQuery();
+  // `true`: this is the one screen that lists the coaches a club has delegated
+  // a single team to, alongside its own staff.
+  const { data: members = [], isLoading } = useOrgMembersQuery(true);
   const inviteMut = useInviteMemberMutation();
   const updateRoleMut = useUpdateMemberRoleMutation();
   const removeMut = useRemoveMemberMutation();
@@ -48,12 +50,21 @@ export default function OrganizationMembersPage() {
    */
   const handleRemove = async (member: OrgMember) => {
     const who = member.name || member.email;
+    const teams = member.teams?.length ? member.teams.join(', ') : null;
+
+    let message: string;
+    if (member.role === 'guardian') {
+      message = `Revoke ${who}'s access to this organization? They will no longer see their players here.`;
+    } else if (member.source === 'teamManager') {
+      // Their only access *is* the delegation, so name what they lose.
+      message = `Remove ${who} from this organization? They will lose ${teams ? `access to ${teams}` : 'the team delegated to them'}.`;
+    } else {
+      message = `Remove ${who} from this organization? They will lose access to its teams and evaluations${teams ? `, including ${teams}` : ''}.`;
+    }
+
     const ok = await confirm({
       title: member.role === 'guardian' ? 'Revoke Access' : 'Remove Member',
-      message:
-        member.role === 'guardian'
-          ? `Revoke ${who}'s access to this organization? They will no longer see their players here.`
-          : `Remove ${who} from this organization? They will lose access to its teams and evaluations.`,
+      message,
       confirmLabel: member.role === 'guardian' ? 'Revoke' : 'Remove',
       destructive: true,
     });
@@ -111,14 +122,22 @@ export default function OrganizationMembersPage() {
                     {item.email}
                   </p>
                 ) : null}
-                <div className="mt-1.5 flex gap-2">
+                <div className="mt-1.5 flex flex-wrap gap-2">
                   <Badge label={item.role.toUpperCase()} variant="brand" />
                   <Badge label={item.status.toUpperCase()} variant={item.status === 'active' ? 'success' : 'warning'} />
+                  {item.source === 'teamManager' ? <Badge label="TEAM MANAGER" variant="info" /> : null}
                 </div>
+                {item.teams?.length ? (
+                  <p className="mt-1 truncate text-sm" style={{ color: colors.inkMuted }}>
+                    Manages {item.teams.join(', ')}
+                  </p>
+                ) : null}
               </div>
               {canManageOrganization && item.role !== 'admin' ? (
                 <div className="flex shrink-0 items-center gap-2">
-                  {tab === 'staff' ? (
+                  {/* A delegated manager has no membership row, so there is no
+                      organization role to change — only the team to take back. */}
+                  {tab === 'staff' && item.source !== 'teamManager' ? (
                     <Button label="Role" variant="ghost" size="sm" onClick={() => setSelectedMemberForRole(item)} />
                   ) : null}
                   <Button
