@@ -385,6 +385,9 @@ export const IN_FILTER_CHUNK = 100;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Extra attempts resolveAccount() gives a just-created membership row to show up. */
+const RESOLVE_ACCOUNT_RETRIES = 2;
+
 function concurrencyFor(chunkCount: number, max: number): number {
   return Math.max(1, Math.min(chunkCount, max));
 }
@@ -625,7 +628,7 @@ export class SupabaseDataSource implements DataSource {
   private userId: string | null = null;
   private accountId: string | null = null;
   /** In-flight ctx() account resolution, shared by concurrent callers. */
-  private accountPromise: Promise<void> | null = null;
+  private accountPromise: Promise<string> | null = null;
   private profileCache: Record<string, UserProfile> = {};
   /** Membership role per account, filled in by ctx()'s memberships lookup. */
   private roleByAccountId: Record<string, string> = {};
@@ -703,28 +706,35 @@ export class SupabaseDataSource implements DataSource {
     const supabase = getSupabase();
     const uId = await this.resolveUserId();
 
-    if (!this.accountId) {
-      // Share one lookup between everything that asks while it is in flight.
-      // ctx() fronts ~90 datasource methods and the screens above it fire
-      // their reads together — the dashboard alone entered here four times in
-      // the same tick, so the identical memberships query went out four times
-      // and the callers waited on the slowest copy (286ms vs 1110ms) instead
-      // of the first. Cleared in `finally` so only a *resolved* account is
-      // remembered; a failure leaves the next caller to retry rather than
-      // handing it a cached rejection.
-      const pending = (this.accountPromise ??= this.resolveAccount(supabase, uId).finally(() => {
-        // Only retire *this* lookup. resetAccountCaches() may have dropped it
-        // and a newer one may already be in flight; clearing unconditionally
-        // would discard that one and send a third caller out for a duplicate.
-        if (this.accountPromise === pending) this.accountPromise = null;
-      }));
-      await pending;
+    const cached = this.accountId;
+    if (cached) {
+      return { supabase, userId: uId, accountId: cached };
     }
 
-    const accountId = this.accountId;
-    if (!accountId) {
-      throw new Error('No account for user');
-    }
+    // Share one lookup between everything that asks while it is in flight.
+    // ctx() fronts ~90 datasource methods and the screens above it fire
+    // their reads together — the dashboard alone entered here four times in
+    // the same tick, so the identical memberships query went out four times
+    // and the callers waited on the slowest copy (286ms vs 1110ms) instead
+    // of the first. Cleared in `finally` so only a *resolved* account is
+    // remembered; a failure leaves the next caller to retry rather than
+    // handing it a cached rejection.
+    const pending = (this.accountPromise ??= this.resolveAccount(supabase, uId).finally(() => {
+      // Only retire *this* lookup. resetAccountCaches() may have dropped it
+      // and a newer one may already be in flight; clearing unconditionally
+      // would discard that one and send a third caller out for a duplicate.
+      if (this.accountPromise === pending) this.accountPromise = null;
+    }));
+
+    // Deliberately the resolved value, not a re-read of `this.accountId`:
+    // resetAccountCaches() nulls that field, and it can land while this await
+    // is outstanding — the auth listener fires it on any identity change and
+    // isStaleAccountError() fires it on a 42501 (which the web-only
+    // get_evaluations_for_tryouts / get_event_availability RPCs raise when
+    // they're missing their grants). Re-reading the field turned an unrelated
+    // reset into a spurious "No account for user" on a perfectly valid
+    // account. resolveAccount() still throws when there genuinely is none.
+    const accountId = await pending;
 
     return {
       supabase,
@@ -737,15 +747,31 @@ export class SupabaseDataSource implements DataSource {
    * The memberships read behind ctx(), factored out so concurrent callers can
    * share a single in-flight copy of it. Sets the same two caches ctx() used to
    * set inline, and throws the same errors.
+   *
+   * Also *returns* the id it resolved. Populating `this.accountId` alone isn't
+   * enough for the caller: resetAccountCaches() can null that field between
+   * this resolving and ctx() reading it back (the auth listener fires it on
+   * any identity change, and isStaleAccountError() fires it on a 42501),
+   * which surfaced as "No account for user" for a user who has one. ctx()
+   * uses the returned value so an unrelated reset can't race its answer away.
    */
-  private async resolveAccount(supabase: SupabaseClient, uId: string): Promise<void> {
-    const m = await supabase.from('memberships').select('account_id, role').eq('user_id', uId);
-
-    if (m.error) {
-      throw m.error;
+  private async resolveAccount(supabase: SupabaseClient, uId: string): Promise<string> {
+    // Right after signup the membership row can lag a beat behind the session
+    // the client already has — the account/membership insert happens
+    // server-side, async from auth.signUp() resolving. A brand-new user's
+    // first screen used to land in exactly that gap and see a permanent "No
+    // account for user", even though the row shows up moments later. This
+    // only ever fires for account-holding roles (guardians never reach ctx()
+    // — see userCtx()), so retrying empty results briefly costs nothing on
+    // the normal path and only adds latency to the rare genuine failure.
+    let memberships: Row[] = [];
+    for (let attempt = 0; attempt <= RESOLVE_ACCOUNT_RETRIES; attempt++) {
+      const m = await supabase.from('memberships').select('account_id, role').eq('user_id', uId);
+      if (m.error) throw m.error;
+      memberships = m.data ?? [];
+      if (memberships.length > 0 || attempt === RESOLVE_ACCOUNT_RETRIES) break;
+      await sleep(400 * 2 ** attempt);
     }
-
-    const memberships = m.data ?? [];
 
     if (memberships.length === 0) {
       throw new Error('No account for user');
@@ -755,11 +781,13 @@ export class SupabaseDataSource implements DataSource {
       (a: Row, b: Row) => this.getRoleWeight(b.role) - this.getRoleWeight(a.role),
     );
 
-    this.accountId = sorted[0].account_id;
+    const accountId = sorted[0].account_id as string;
+    this.accountId = accountId;
     // The role came back on the same row, so writableAccountId() never has
     // to go ask for it again.
     this.roleByAccountId = {};
     for (const row of memberships) this.roleByAccountId[row.account_id] = row.role;
+    return accountId;
   }
 
   private async writableAccountId(): Promise<string> {
