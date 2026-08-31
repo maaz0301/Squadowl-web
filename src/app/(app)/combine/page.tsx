@@ -31,8 +31,8 @@ export default function CombinePage() {
   if (tryoutsQuery.isError) {
     return (
       <>
-        <PageHeader title="Combine Assessments" showBack backHref="/dashboard" />
-        <ErrorState message="Could not load assessments." onRetry={() => tryoutsQuery.refetch()} />
+        <PageHeader title="Combine Evaluations" showBack backHref="/dashboard" />
+        <ErrorState message="Could not load evaluations." onRetry={() => tryoutsQuery.refetch()} />
       </>
     );
   }
@@ -40,10 +40,10 @@ export default function CombinePage() {
   if (combineIds.length < 2) {
     return (
       <>
-        <PageHeader title="Combine Assessments" showBack backHref="/dashboard" />
+        <PageHeader title="Combine Evaluations" showBack backHref="/dashboard" />
         <EmptyState
-          title="Select 2+ assessments"
-          message="From the dashboard, tap Combine mode and select assessments to compare side-by-side."
+          title="Select 2+ evaluations"
+          message="From the dashboard, tap Combine mode and select evaluations to compare side-by-side."
           actionLabel="Go to Dashboard"
           onAction={() => (window.location.href = '/dashboard')}
         />
@@ -55,14 +55,14 @@ export default function CombinePage() {
     <>
       <PageHeader
         title="Combined View"
-        subtitle={`${combineIds.length} assessments selected`}
+        subtitle={`${combineIds.length} evaluations selected`}
         showBack
         backHref="/dashboard"
       />
 
       <Card accent className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <p className="text-sm" style={{ color: colors.inkMuted }}>
-          Cross-assessment comparison using average overall scores.
+          Cross-evaluation comparison using average overall scores.
         </p>
         <div>
           <Button label="Clear Selection" variant="ghost" size="sm" onClick={() => setCombineTryoutIds([])} />

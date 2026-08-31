@@ -197,14 +197,14 @@ function NewAssessmentForm() {
       // user past their plan limit.
       const count = assessmentCount.data ?? (await assessmentCount.refetch()).data ?? 0;
       if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
-        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'assessments'));
+        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'evaluations'));
         return;
       }
       let tryout;
       try {
         tryout = await createTryout.mutateAsync(data);
       } catch (e) {
-        await alert('Error', e instanceof Error ? e.message : 'Could not create the assessment.');
+        await alert('Error', e instanceof Error ? e.message : 'Could not create the evaluation.');
         return;
       }
       setCurrentTryout(tryout.id);
@@ -230,11 +230,11 @@ function NewAssessmentForm() {
                 .catch((err) => console.error('Error sending assessor invite email to', a.email, err)),
             );
           await Promise.allSettled(invitePromises);
-          toast('Assessment created', 'success');
+          toast('Evaluation created', 'success');
         } catch (e) {
           await alert(
             'Partial Save',
-            `The assessment was created, but saving its rubrics/assessors failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
+            `The evaluation was created, but saving its rubrics/assessors failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
           );
         }
       }
@@ -253,7 +253,7 @@ function NewAssessmentForm() {
   if (teamsQuery.isError && assessmentCount.isError) {
     return (
       <>
-        <PageHeader title="New Assessment" showBack />
+        <PageHeader title="New Evaluation" showBack />
         <ErrorState
           message="Could not load required data."
           onRetry={() => {
@@ -267,7 +267,7 @@ function NewAssessmentForm() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <PageHeader title="New Assessment" showBack backHref="/dashboard" />
+      <PageHeader title="New Evaluation" showBack backHref="/dashboard" />
 
       <Card>
         <form onSubmit={onSubmit} className="flex flex-col gap-5">
@@ -277,7 +277,7 @@ function NewAssessmentForm() {
               name="name"
               render={({ field, fieldState }) => (
                 <Input
-                  label="Assessment Name"
+                  label="Evaluation Name"
                   placeholder="Spring U14 Tryout"
                   {...field}
                   error={fieldState.error?.message}
@@ -355,7 +355,7 @@ function NewAssessmentForm() {
               {pendingRubrics.length === 0 ? (
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
                   Every sport already scores on a default set of skills — add one here only if this
-                  assessment needs something extra.
+                  evaluation needs something extra.
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-2">
@@ -373,7 +373,7 @@ function NewAssessmentForm() {
               </div>
               {pendingAssessors.length === 0 ? (
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
-                  Invite whoever else is scoring — they get an email once the assessment is created.
+                  Invite whoever else is scoring — they get an email once the evaluation is created.
                 </p>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -396,12 +396,12 @@ function NewAssessmentForm() {
 
           </FormLock>
 
-          <Button type="submit" label="Create Assessment" loading={submitting} size="lg" />
+          <Button type="submit" label="Create Evaluation" loading={submitting} size="lg" />
         </form>
       </Card>
 
       <p className="mt-3 text-xs" style={{ color: colors.inkFaint }}>
-        Registration options are available once the assessment is created.
+        Registration options are available once the evaluation is created.
       </p>
 
       <Modal visible={showRubricForm} title="Add Custom Drill / Category" onClose={() => setShowRubricForm(false)} hideDefaultFooter>

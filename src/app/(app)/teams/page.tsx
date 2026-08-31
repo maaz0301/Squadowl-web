@@ -112,7 +112,7 @@ export default function TeamsPage() {
       {teams.length === 0 ? (
         <EmptyState
           title="No teams created"
-          message="Create a team to group rosters, schedule practices and games, and manage assessments."
+          message="Create a team to group rosters, schedule practices and games, and manage evaluations."
           actionLabel="Create Team"
           onAction={newTeam}
         />

@@ -135,7 +135,7 @@ export function AddToRosterModal({
           </p>
           <div className="flex flex-wrap gap-2">
             <Chip
-              label="Assessment"
+              label="Evaluation"
               active={kind === 'assessment'}
               onClick={() => {
                 setKind('assessment');
@@ -155,7 +155,7 @@ export function AddToRosterModal({
 
         {kind === null ? (
           <p className="text-sm" style={{ color: colors.inkMuted }}>
-            Choose whether these players join an assessment roster or a team roster.
+            Choose whether these players join an evaluation roster or a team roster.
           </p>
         ) : listLoading ? (
           <div className="flex items-center justify-center py-6">
@@ -164,18 +164,18 @@ export function AddToRosterModal({
         ) : options.length === 0 ? (
           <div className="flex flex-col gap-1 py-4">
             <p className="text-base font-bold" style={{ color: colors.ink }}>
-              {kind === 'assessment' ? 'No assessments' : 'No teams'}
+              {kind === 'assessment' ? 'No evaluations' : 'No teams'}
             </p>
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               {kind === 'assessment'
-                ? 'Create an assessment before adding players to one.'
+                ? 'Create an evaluation before adding players to one.'
                 : 'Create a team before adding players to one.'}
             </p>
           </div>
         ) : (
           <div>
             <p className="mb-2 text-sm font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
-              {kind === 'assessment' ? 'Available Assessments' : 'Available Teams'}
+              {kind === 'assessment' ? 'Available Evaluations' : 'Available Teams'}
             </p>
             <div className="flex flex-col gap-2">
               {options.map((o) => {

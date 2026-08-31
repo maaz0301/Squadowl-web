@@ -216,7 +216,7 @@ export default function SettingsPage() {
   const handleCopy = async () => {
     const count = assessmentCount.data ?? 0;
     if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
-      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'assessments'));
+      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'evaluations'));
       return;
     }
     const copy = await copyTryout.mutateAsync(tryout.id);
@@ -230,9 +230,9 @@ export default function SettingsPage() {
 
   const handleDelete = async () => {
     const ok = await confirm({
-      title: 'Delete Assessment',
+      title: 'Delete Evaluation',
       message:
-        'Are you sure you want to delete this assessment? This action cannot be undone and will delete all associated data.',
+        'Are you sure you want to delete this evaluation? This action cannot be undone and will delete all associated data.',
       confirmLabel: 'Delete',
       destructive: true,
     });
@@ -241,7 +241,7 @@ export default function SettingsPage() {
       await deleteTryout.mutateAsync(tryout.id);
       router.replace('/dashboard');
     } catch (e) {
-      await alert('Error', e instanceof Error ? e.message : 'Could not delete this assessment.');
+      await alert('Error', e instanceof Error ? e.message : 'Could not delete this evaluation.');
     }
   };
 
@@ -340,23 +340,23 @@ export default function SettingsPage() {
 
       <Card className="flex flex-col items-start gap-2">
         <SectionLabel>Duplicate</SectionLabel>
-        <Button label="Copy Assessment" variant="secondary" onClick={handleCopy} loading={copyTryout.isPending} />
+        <Button label="Copy Evaluation" variant="secondary" onClick={handleCopy} loading={copyTryout.isPending} />
       </Card>
 
       <Card className="flex flex-col items-start gap-2">
         <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           <Button
-            label="Archive Assessment"
+            label="Archive Evaluation"
             variant="danger"
             onClick={handleArchive}
             loading={archiveTryout.isPending}
           />
-          <Button label="Delete Assessment" variant="danger" onClick={handleDelete} loading={deleteTryout.isPending} />
+          <Button label="Delete Evaluation" variant="danger" onClick={handleDelete} loading={deleteTryout.isPending} />
         </div>
       </Card>
 
-      <Modal visible={showEdit} title="Edit Assessment" onClose={() => setShowEdit(false)} hideDefaultFooter>
+      <Modal visible={showEdit} title="Edit Evaluation" onClose={() => setShowEdit(false)} hideDefaultFooter>
         <div className="flex flex-col gap-3">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <DateField label="Date" value={tryoutDate} onChange={setTryoutDate} />

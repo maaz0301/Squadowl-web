@@ -7,7 +7,7 @@ import { useOnboardingStore } from '@/state/uiStore';
 import { APP_CONFIG } from '@/config/app';
 
 const HIGHLIGHTS = [
-  'Create teams & assessments',
+  'Create teams & evaluations',
   'QR athlete registration',
   'Rinkside rubric scoring',
   'Results & leaderboard',
@@ -28,7 +28,7 @@ export default function WelcomePage() {
           Welcome to {APP_CONFIG.appName}
         </h1>
         <p className="text-base leading-relaxed" style={{ color: colors.inkMuted }}>
-          Run athlete tryouts and assessments from any device. Score players rinkside, manage rosters, and
+          Run athlete tryouts and evaluations from any device. Score players rinkside, manage rosters, and
           share results — all in one place.
         </p>
       </div>

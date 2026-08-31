@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/States';
  */
 export default function AssessmentLoading() {
   return (
-    <div role="status" aria-label="Loading assessment">
+    <div role="status" aria-label="Loading evaluation">
       <div className="mb-4 flex flex-wrap gap-2">
         <Skeleton width={140} height={38} radius={12} />
         <Skeleton width={104} height={38} radius={12} />

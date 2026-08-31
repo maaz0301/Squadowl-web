@@ -8,7 +8,7 @@ const spaceGrotesk = Space_Grotesk({ variable: '--font-space-grotesk', subsets: 
 
 export const metadata: Metadata = {
   title: 'TryoutHQ',
-  description: 'Run athlete tryouts and assessments — rosters, rinkside scoring, results and team building.',
+  description: 'Run athlete tryouts and evaluations — rosters, rinkside scoring, results and team building.',
   // Home-screen installs on iOS get the app name and their own status bar.
   appleWebApp: { capable: true, title: 'TryoutHQ', statusBarStyle: 'black-translucent' },
 };

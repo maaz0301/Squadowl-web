@@ -114,9 +114,6 @@ export default function EnterprisePage() {
     teamsQuery.isFetching ||
     seasonsQuery.isFetching;
 
-  // Folds in the one-guardian-per-athlete rows from the members directory, so
-  // the roster size doesn't get mistaken for headcount.
-  const staffCount = membersQuery.data?.filter((m) => m.role !== 'guardian').length;
   const teams = teamsQuery.data ?? [];
   // Delegated teams count too. A club that hands a team to a coach still owns
   // it, so dropping them here made the association's own team count read lower
@@ -223,7 +220,6 @@ export default function EnterprisePage() {
 
   if (orgQuery.isLoading) return <LoadingState message="Loading org..." />;
 
-  const org = orgQuery.data;
   const unscoredSpots = metrics.rosterSpots - metrics.scoredSpots;
 
   return (
@@ -249,24 +245,9 @@ export default function EnterprisePage() {
 
         {tab === 'overview' ? (
           <div className="space-y-6">
-            {org ? (
-              <Card accent className="flex flex-col gap-2">
-                <h2 className="text-xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-                  {org.orgName}
-                </h2>
-                <p className="text-sm" style={{ color: colors.inkMuted }}>/{org.orgSlug}</p>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  <Badge label={`${staffCount ?? org.memberCount} staff`} />
-                  <Badge label={`${tryouts.length} assessments`} variant="brand" />
-                  {metrics.archivedCount > 0 ? (
-                    <Badge label={`${metrics.archivedCount} archived`} title="Included in the totals below" />
-                  ) : null}
-                  <Badge label={`${metrics.players} players`} variant="info" />
-                </div>
-              </Card>
-            ) : orgQuery.isError ? (
-              // Only a real fetch failure is an error — an account with nothing in
-              // it yet still renders its (zeroed) metrics below.
+            {/* Only a real fetch failure is an error — an account with nothing in
+                it yet still renders its (zeroed) metrics below. */}
+            {orgQuery.isError ? (
               <ErrorState message="Could not load your organization." onRetry={() => orgQuery.refetch()} />
             ) : null}
 
@@ -312,7 +293,7 @@ export default function EnterprisePage() {
                       ]}
                     />
                     <p className="text-xs" style={{ color: colors.inkMuted }}>
-                      Counted per roster spot — a player in two assessments needs scoring in both.
+                      Counted per roster spot — a player in two evaluations needs scoring in both.
                     </p>
                   </Card>
 
@@ -349,7 +330,7 @@ export default function EnterprisePage() {
 
                 {Object.keys(metrics.bySport).length > 0 ? (
                   <Card className="flex flex-col gap-2">
-                    <h3 className="font-bold text-base" style={{ color: colors.ink }}>Assessments by Sport</h3>
+                    <h3 className="font-bold text-base" style={{ color: colors.ink }}>Evaluations by Sport</h3>
                     <div className="flex flex-wrap gap-2">
                       {Object.entries(metrics.bySport)
                         .sort((a, b) => b[1] - a[1])
@@ -362,7 +343,7 @@ export default function EnterprisePage() {
 
                 {metrics.largest.length > 0 ? (
                   <Card className="flex flex-col gap-2">
-                    <h3 className="font-bold text-base mb-2" style={{ color: colors.ink }}>Largest Assessments</h3>
+                    <h3 className="font-bold text-base mb-2" style={{ color: colors.ink }}>Largest Evaluations</h3>
                     <div className="divide-y" style={{ borderColor: colors.border }}>
                       {metrics.largest.map((t) => (
                         <Link key={t.id} href={`/assessment/${t.id}/roster`} className="block py-3 hover:opacity-80 transition-opacity">
@@ -394,7 +375,7 @@ export default function EnterprisePage() {
           <div className="space-y-6">
             <p className="text-xs" style={{ color: colors.inkMuted }}>
               Outstanding work across {metrics.activeCount} active{' '}
-              {metrics.activeCount === 1 ? 'assessment' : 'assessments'}
+              {metrics.activeCount === 1 ? 'evaluation' : 'evaluations'}
               {metrics.archivedCount > 0 ? ` — ${metrics.archivedCount} archived excluded` : ''}.
             </p>
 
@@ -425,7 +406,7 @@ export default function EnterprisePage() {
                 <Card className="flex flex-col gap-1">
                   <span className="font-bold" style={{ color: colors.success }}>All clear</span>
                   <span className="text-xs" style={{ color: colors.inkMuted }}>
-                    Every active assessment is fully scored with no pending registrations.
+                    Every active evaluation is fully scored with no pending registrations.
                   </span>
                 </Card>
               ) : (

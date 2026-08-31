@@ -29,8 +29,8 @@ export default function ArchivedAssessmentsPage() {
     return (
       <>
         <PageHeader
-          title="Archived Assessments"
-          subtitle="Past assessments you can restore at any time"
+          title="Archived Evaluations"
+          subtitle="Past evaluations you can restore at any time"
           showBack
           backHref="/dashboard"
         />
@@ -41,8 +41,8 @@ export default function ArchivedAssessmentsPage() {
   if (tryoutsQuery.isError) {
     return (
       <>
-        <PageHeader title="Archived Assessments" showBack backHref="/dashboard" />
-        <ErrorState message="Could not load archived assessments." onRetry={() => tryoutsQuery.refetch()} />
+        <PageHeader title="Archived Evaluations" showBack backHref="/dashboard" />
+        <ErrorState message="Could not load archived evaluations." onRetry={() => tryoutsQuery.refetch()} />
       </>
     );
   }
@@ -55,7 +55,7 @@ export default function ArchivedAssessmentsPage() {
       await restore.mutateAsync(id);
       toast(`"${name}" restored`, 'success');
     } catch (e) {
-      await alert('Error', e instanceof Error ? e.message : 'Could not restore the assessment.');
+      await alert('Error', e instanceof Error ? e.message : 'Could not restore the evaluation.');
     } finally {
       setRestoringId(null);
     }
@@ -64,16 +64,16 @@ export default function ArchivedAssessmentsPage() {
   return (
     <>
       <PageHeader
-        title="Archived Assessments"
-        subtitle="Past assessments you can restore at any time"
+        title="Archived Evaluations"
+        subtitle="Past evaluations you can restore at any time"
         showBack
         backHref="/dashboard"
       />
 
       {archived.length === 0 ? (
         <EmptyState
-          title="No archived assessments"
-          message="Assessments you archive will appear here. You can restore them to active status at any time."
+          title="No archived evaluations"
+          message="Evaluations you archive will appear here. You can restore them to active status at any time."
         />
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

@@ -114,7 +114,7 @@ export default function PaymentsPage() {
       const csvRows = rows.map(
         (p) => `${p.playerName},${p.teamName},${p.assessmentName || 'Unknown Event'},${p.amount.toFixed(2)},${p.status}`,
       );
-      const csv = `player,team,assessment,amount,status\n${csvRows.join('\n')}`;
+      const csv = `player,team,evaluation,amount,status\n${csvRows.join('\n')}`;
       download('payments.csv', csv, 'utf8', 'text/csv');
     } finally {
       setExporting(false);
@@ -241,7 +241,7 @@ export default function PaymentsPage() {
               )}
 
               <p className="mb-3 mt-2 text-base font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-                By Assessment
+                By Evaluation
               </p>
               {finance.byAssessment.length === 0 ? (
                 <p className="mb-4 text-sm" style={{ color: colors.inkMuted }}>

@@ -45,13 +45,13 @@ export default function SearchPage() {
 
   const hasQuery = query.trim().length > 0;
   const items = [
-    ...results.assessments.map((a) => ({ type: 'assessment' as const, ...a })),
+    ...results.assessments.map((a) => ({ type: 'evaluation' as const, ...a })),
     ...results.players.map((p) => ({ type: 'player' as const, ...p })),
     ...results.seasons.map((s) => ({ type: 'season' as const, ...s })),
   ];
 
   const open = (item: (typeof items)[number]) => {
-    if (item.type === 'assessment') {
+    if (item.type === 'evaluation') {
       setCurrentTryout(item.id);
       router.push(`/assessment/${item.id}/roster`);
     } else if (item.type === 'player') {
@@ -67,7 +67,7 @@ export default function SearchPage() {
       <PageHeader title="Search" showBack />
 
       <Input
-        label="Search assessments, players, seasons"
+        label="Search evaluations, players, seasons"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Tryout name, player, team..."
@@ -76,7 +76,7 @@ export default function SearchPage() {
 
       <div className="mt-5">
         {!hasQuery ? (
-          <EmptyState title="Start typing" message="Search across assessments, rosters, and seasons." />
+          <EmptyState title="Start typing" message="Search across evaluations, rosters, and seasons." />
         ) : items.length === 0 ? (
           <EmptyState title="No results" message={`Nothing matched "${query.trim()}".`} />
         ) : (
@@ -99,7 +99,7 @@ export default function SearchPage() {
                     {item.teamName}
                   </p>
                 ) : null}
-                {item.type === 'assessment' ? (
+                {item.type === 'evaluation' ? (
                   <p className="text-sm" style={{ color: colors.inkMuted }}>
                     {item.sport}
                   </p>

@@ -19,13 +19,13 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 const STEPS = [
   {
     title: 'Create your first team',
-    description: 'Teams help organize your assessments and rosters.',
+    description: 'Teams help organize your evaluations and rosters.',
     action: 'Create Team',
   },
   {
-    title: 'Set up an assessment',
-    description: 'Create a tryout or assessment event for your athletes.',
-    action: 'Create Assessment',
+    title: 'Set up an evaluation',
+    description: 'Create a tryout or evaluation event for your athletes.',
+    action: 'Create Evaluation',
   },
   {
     title: 'Add players',
@@ -119,7 +119,7 @@ export default function WizardPage() {
       }
 
       const tryout = await createTryout.mutateAsync({
-        name: 'First Assessment',
+        name: 'First Evaluation',
         sport: 'Hockey',
         eventType: 'Tryout',
         teamId: tId,
@@ -154,7 +154,7 @@ export default function WizardPage() {
         createdNewTeam = true;
       }
       const tryout = await createTryout.mutateAsync({
-        name: 'First Assessment',
+        name: 'First Evaluation',
         sport: 'Hockey',
         eventType: 'Tryout',
         teamId: tId,

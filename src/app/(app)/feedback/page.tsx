@@ -96,7 +96,7 @@ export default function FeedbackPage() {
 
       <Card className="mt-4 max-w-2xl">
         <p className="mb-4 text-sm" style={{ color: colors.inkMuted }}>
-          Rate your experience with assessments, scoring, and Team Hub.
+          Rate your experience with evaluations, scoring, and Team Hub.
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">

@@ -169,7 +169,7 @@ export default function RosterPage() {
     },
     {
       label: 'Roster Library',
-      desc: 'Import players from past seasons or other assessments.',
+      desc: 'Import players from past seasons or other evaluations.',
       go: () => router.push(href('roster-library')),
     },
     {
@@ -274,7 +274,7 @@ export default function RosterPage() {
       ) : !hasPlayers ? (
         <EmptyState
           title="Add your players to get started"
-          message="Add players to this assessment, then you can start scoring."
+          message="Add players to this evaluation, then you can start scoring."
           actionLabel="+ Add Player"
           onAction={openAdd}
         />

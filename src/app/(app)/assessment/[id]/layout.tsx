@@ -68,7 +68,7 @@ export default function AssessmentLayout({
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none">
             <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
           </svg>
-          All assessments
+          All evaluations
         </Link>
         <h1
           // Two lines on a phone, one ellipsised line from sm up: a 320px screen

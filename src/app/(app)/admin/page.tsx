@@ -56,7 +56,7 @@ export default function AdminPage() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Badge label={`${stats.totalUsers} users`} variant="brand" />
                   <Badge label={`${stats.activeUsers} active`} variant="success" />
-                  <Badge label={`${stats.totalAssessments} assessments`} />
+                  <Badge label={`${stats.totalAssessments} evaluations`} />
                   <Badge label={`$${stats.revenueMtd} MTD`} variant="info" />
                 </div>
               </Card>
@@ -65,7 +65,7 @@ export default function AdminPage() {
                   Recent Activity (Mock)
                 </h3>
                 <p className="text-sm" style={{ color: colors.inkMuted }}>12 new registrations today</p>
-                <p className="text-sm" style={{ color: colors.inkMuted }}>3 assessments exported</p>
+                <p className="text-sm" style={{ color: colors.inkMuted }}>3 evaluations exported</p>
                 <p className="text-sm" style={{ color: colors.inkMuted }}>1 enterprise org onboarded</p>
               </Card>
             </div>
@@ -81,7 +81,7 @@ export default function AdminPage() {
                   </div>
                   <p className="text-sm" style={{ color: colors.inkMuted }}>{u.email}</p>
                   <p className="text-xs" style={{ color: colors.inkFaint }}>
-                    {u.teamCount} teams · {u.assessmentCount} assessments
+                    {u.teamCount} teams · {u.assessmentCount} evaluations
                   </p>
                   {u.planTier !== 'club' ? (
                     <Button

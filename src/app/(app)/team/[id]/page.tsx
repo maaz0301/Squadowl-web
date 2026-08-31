@@ -680,14 +680,14 @@ export default function TeamDetailPage() {
       <div className="mb-5 flex gap-2">
         <StatTile label="Players" value={teamPlayers.length} colors={colors} />
         <StatTile label="Upcoming" value={upcomingEvents.length} colors={colors} />
-        <StatTile label="Assessments" value={tryoutsLoading ? undefined : linkedTryouts.length} colors={colors} />
+        <StatTile label="Evaluations" value={tryoutsLoading ? undefined : linkedTryouts.length} colors={colors} />
       </div>
 
       <Tabs
         tabs={[
           { key: 'schedule', label: 'Schedule', badge: upcomingEvents.length },
           { key: 'players', label: 'Players', badge: teamPlayers.length },
-          { key: 'assessments', label: 'Assessments', badge: tryoutsLoading ? undefined : linkedTryouts.length },
+          { key: 'assessments', label: 'Evaluations', badge: tryoutsLoading ? undefined : linkedTryouts.length },
           { key: 'chat', label: 'Chat' },
           { key: 'settings', label: 'Settings' },
         ]}
@@ -849,7 +849,7 @@ export default function TeamDetailPage() {
         <div>
           <div className="mb-4 flex flex-wrap gap-2">
             <Button
-              label="Add Players from Assessments"
+              label="Add Players from Evaluations"
               size="sm"
               onClick={() => {
                 setPickedAthletes(new Set());
@@ -881,7 +881,7 @@ export default function TeamDetailPage() {
                 No players yet
               </span>
               <span className="text-sm" style={{ color: colors.inkMuted }}>
-                Pull players in from any assessment roster to build this team.
+                Pull players in from any evaluation roster to build this team.
               </span>
             </Card>
           ) : filteredTeamPlayers.length === 0 ? (
@@ -942,14 +942,14 @@ export default function TeamDetailPage() {
           ) : tryoutSummariesQuery.isError ? (
             <Card className="flex flex-col items-center gap-2 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
-                Could not load assessments
+                Could not load evaluations
               </span>
               <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutSummariesQuery.refetch()} />
             </Card>
           ) : linkedTryouts.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
-                No assessments linked
+                No evaluations linked
               </span>
               <span className="text-sm" style={{ color: colors.inkMuted }}>
                 Create a tryout or evaluation for this team, or attach one you already have.
@@ -996,7 +996,7 @@ export default function TeamDetailPage() {
             <Card className="flex flex-col items-start gap-2">
               <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
               <p className="text-xs" style={{ color: colors.inkMuted }}>
-                Deleting a team removes its roster, schedule, and links to assessments.
+                Deleting a team removes its roster, schedule, and links to evaluations.
               </p>
               <Button label="Delete Team" variant="danger" size="sm" onClick={handleDelete} loading={deleteTeam.isPending} />
             </Card>
@@ -1061,17 +1061,17 @@ export default function TeamDetailPage() {
         </div>
       </Modal>
 
-      <Modal visible={showAttachModal} title="Attach Assessment" onClose={() => setShowAttachModal(false)}>
+      <Modal visible={showAttachModal} title="Attach Evaluation" onClose={() => setShowAttachModal(false)}>
         {tryoutsLoading ? (
-          <LoadingState message="Loading assessments..." />
+          <LoadingState message="Loading evaluations..." />
         ) : tryoutSummariesQuery.isError ? (
           <div className="flex flex-col items-center gap-2 p-3 text-center">
-            <p style={{ color: colors.inkMuted }}>Could not load assessments.</p>
+            <p style={{ color: colors.inkMuted }}>Could not load evaluations.</p>
             <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutSummariesQuery.refetch()} />
           </div>
         ) : unlinkedTryouts.length === 0 ? (
           <p className="p-3" style={{ color: colors.inkMuted }}>
-            No assessments available to link.
+            No evaluations available to link.
           </p>
         ) : (
           unlinkedTryouts.map((t) => (
@@ -1085,7 +1085,7 @@ export default function TeamDetailPage() {
                   await updateTryout.mutateAsync({ id: t.id, updates: { teamId: team.id } });
                   setShowAttachModal(false);
                 } catch (e) {
-                  await alert('Error', e instanceof Error ? e.message : 'Could not link assessment.');
+                  await alert('Error', e instanceof Error ? e.message : 'Could not link evaluation.');
                 } finally {
                   setAttachingId(null);
                 }
@@ -1109,7 +1109,7 @@ export default function TeamDetailPage() {
 
       <Modal
         visible={showAddPlayers}
-        title="Add Players from Assessments"
+        title="Add Players from Evaluations"
         size="lg"
         onClose={() => setShowAddPlayers(false)}
         footer={
@@ -1153,12 +1153,12 @@ export default function TeamDetailPage() {
           <LoadingState message="Loading players..." />
         ) : tryoutsQuery.isError ? (
           <div className="flex flex-col items-center gap-2 py-3 text-center text-sm">
-            <p style={{ color: colors.inkMuted }}>Could not load players from assessments.</p>
+            <p style={{ color: colors.inkMuted }}>Could not load players from evaluations.</p>
             <Button label="Retry" size="sm" variant="secondary" onClick={() => tryoutsQuery.refetch()} />
           </div>
         ) : candidates.length === 0 ? (
           <p className="py-3 text-sm" style={{ color: colors.inkMuted }}>
-            No assessments have players yet — add players to an assessment roster first.
+            No evaluations have players yet — add players to an evaluation roster first.
           </p>
         ) : (
           <>
@@ -1183,7 +1183,7 @@ export default function TeamDetailPage() {
             ) : null}
             <div className="mb-3 flex items-center justify-between gap-2">
               <span className="text-xs" style={{ color: colors.inkMuted }}>
-                Athletes from all of your assessments. Click to select.
+                Athletes from all of your evaluations. Click to select.
               </span>
               {availableCount > 0 ? (
                 <button
@@ -1465,7 +1465,7 @@ export default function TeamDetailPage() {
                 value={viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined}
                 colors={colors}
               />
-              <PlayerDetailRow label="Assessment" value={viewingRosterEntry.sourceTryoutName} colors={colors} />
+              <PlayerDetailRow label="Evaluation" value={viewingRosterEntry.sourceTryoutName} colors={colors} />
               <PlayerDetailRow label="Jersey Colour" value={viewingFullPlayer?.jerseyColour} colors={colors} />
             </Card>
 

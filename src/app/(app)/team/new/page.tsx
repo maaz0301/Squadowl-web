@@ -212,7 +212,7 @@ export default function NewTeamPage() {
       await alert(
         'Dummy teams created',
         `Created ${res.teams} team${res.teams === 1 ? '' : 's'} with ${res.assessments} linked ` +
-          `assessment${res.assessments === 1 ? '' : 's'}, ${res.players} players, and ` +
+          `evaluation${res.assessments === 1 ? '' : 's'}, ${res.players} players, and ` +
           `${res.evaluations} evaluations.`,
       );
       router.push('/teams');
@@ -234,7 +234,7 @@ export default function NewTeamPage() {
         res.assessments === 0
           ? 'No dummy teams to remove.'
           : `Removed ${res.teams} team${res.teams === 1 ? '' : 's'} and ${res.assessments} ` +
-            `assessment${res.assessments === 1 ? '' : 's'}.`,
+            `evaluation${res.assessments === 1 ? '' : 's'}.`,
       );
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Failed to clear dummy teams.');
@@ -342,7 +342,7 @@ export default function NewTeamPage() {
                     <p className="text-xs" style={{ color: colors.inkMuted }}>
                       Creating this team creates (or reuses) its season and adds everyone on the roster to it —
                       each player&apos;s guardian will then be asked to pay this fee, plus TryoutHQ&apos;s 0.5%
-                      platform fee, from their portal. QR/link assessment registration always stays free.
+                      platform fee, from their portal. QR/link evaluation registration always stays free.
                     </p>
                     {connect.chargesEnabled ? (
                       <Badge label="Stripe connected" variant="success" />
@@ -377,7 +377,7 @@ export default function NewTeamPage() {
         <Card className="mt-6 flex flex-col gap-2">
           <SectionLabel>Testing Tools</SectionLabel>
           <p className="text-xs" style={{ color: colors.inkMuted }}>
-            Skip the form and generate whole teams — each with a linked assessment, a rubric set, and a
+            Skip the form and generate whole teams — each with a linked evaluation, a rubric set, and a
             roster of dummy players you can optionally score.
           </p>
           <div className="mt-1 flex flex-wrap gap-2">

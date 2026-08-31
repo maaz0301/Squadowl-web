@@ -29,7 +29,7 @@ const STATUS_VARIANT: Record<AthleteShareStatus, 'brand' | 'success' | 'danger' 
 
 const STATUS_MESSAGE: Record<AthleteShareStatus, string> = {
   shared: 'Waiting for a response.',
-  assigned: 'Accepted and placed into an assessment.',
+  assigned: 'Accepted and placed into an evaluation.',
   declined: 'This coach declined the share.',
   withdrawn: 'This athlete was placed with another coach.',
   released: 'The coach has released this player from their roster.',
@@ -241,10 +241,10 @@ export default function ShareDetailPage() {
         <Button label="Send" onClick={handleSendComment} loading={addCommentMutation.isPending} disabled={!commentBody.trim()} />
       </div>
 
-      <Modal visible={tryoutPickerVisible} title="Assign to Assessment" onClose={() => setTryoutPickerVisible(false)}>
+      <Modal visible={tryoutPickerVisible} title="Assign to Evaluation" onClose={() => setTryoutPickerVisible(false)}>
         <div className="flex flex-col gap-2">
           {(tryoutsQuery.data ?? []).length === 0 ? (
-            <p style={{ color: colors.inkMuted }}>You don&apos;t have any assessments yet. Create one first.</p>
+            <p style={{ color: colors.inkMuted }}>You don&apos;t have any evaluations yet. Create one first.</p>
           ) : (
             (tryoutsQuery.data ?? []).map((t) => (
               <Button key={t.id} label={t.name} variant="ghost" onClick={() => handleAccept(t.id)} />

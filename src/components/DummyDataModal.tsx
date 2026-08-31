@@ -152,7 +152,7 @@ export function DummyDataModal(props: DummyDataModalProps) {
       <div className="flex flex-col gap-5 py-1">
         {isTeam ? (
           <p className="text-sm" style={{ color: colors.inkMuted }}>
-            Teams hold no roster of their own, so each dummy team is created with a linked assessment —
+            Teams hold no roster of their own, so each dummy team is created with a linked evaluation —
             seeded with rubrics covering skill, time, distance, and speed — and the players are added there.
           </p>
         ) : (
@@ -196,7 +196,7 @@ export function DummyDataModal(props: DummyDataModalProps) {
         {rubricNotice && props.variant === 'assessment' ? (
           <div className="flex flex-col items-start gap-2">
             <p className="text-sm" style={{ color: colors.ink }}>
-              Players are scored against this assessment&apos;s rubrics, but none are defined yet. Add at
+              Players are scored against this evaluation&apos;s rubrics, but none are defined yet. Add at
               least one rubric to generate scoring data — or continue to create unscored players.
             </p>
             <Button label="Add Rubrics" variant="secondary" size="sm" onClick={props.onAddRubrics} />
@@ -213,7 +213,7 @@ export function DummyDataModal(props: DummyDataModalProps) {
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
                   {canScore
                     ? 'Score every player across every rubric so rankings and reports have data.'
-                    : 'Unavailable until this assessment has at least one rubric.'}
+                    : 'Unavailable until this evaluation has at least one rubric.'}
                 </p>
               </div>
               <Switch checked={scoring} disabled={!canScore} onChange={setWithScores} />
@@ -221,7 +221,7 @@ export function DummyDataModal(props: DummyDataModalProps) {
 
             {scoring ? (
               <Input
-                label={`Scoring assessments per player (${DUMMY_LIMITS.sessionsPerPlayer.min}–${DUMMY_LIMITS.sessionsPerPlayer.max})`}
+                label={`Scoring evaluations per player (${DUMMY_LIMITS.sessionsPerPlayer.min}–${DUMMY_LIMITS.sessionsPerPlayer.max})`}
                 value={sessions}
                 onChange={(e) => setSessions(e.target.value)}
                 inputMode="numeric"

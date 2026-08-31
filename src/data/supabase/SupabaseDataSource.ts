@@ -2925,7 +2925,7 @@ export class SupabaseDataSource implements DataSource {
     // server-side from auth.uid(). Matches the mobile app.
     const accountId = await this.writableAccountId();
     const tryout = await this.getTryout(tryoutId);
-    if (!tryout) throw new Error('Assessment not found');
+    if (!tryout) throw new Error('Evaluation not found');
 
     const target = options?.target ?? 'roster';
     const wantsRoster = target === 'roster' || target === 'both';

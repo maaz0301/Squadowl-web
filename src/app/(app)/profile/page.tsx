@@ -21,7 +21,7 @@ const QUICK_LINKS = [
   { href: '/search', label: 'Search' },
   { href: '/organization/members', label: 'Manage Organization Members' },
   { href: '/shared-athletes', label: 'Shared Athletes' },
-  { href: '/archived-assessments', label: 'Archived Assessments' },
+  { href: '/archived-assessments', label: 'Archived Evaluations' },
   { href: '/feedback', label: 'Send Feedback' },
   { href: '/friend-packages', label: 'Gift a Coach' },
 ];
@@ -200,7 +200,7 @@ export default function ProfilePage() {
           <Card className="flex flex-col gap-2">
             <SectionLabel>Plan Limits</SectionLabel>
             <p style={{ color: colors.inkMuted }}>
-              Assessments: {formatLimit(plan.limits.assessments)} · Players: {formatLimit(plan.limits.players)} ·
+              Evaluations: {formatLimit(plan.limits.assessments)} · Players: {formatLimit(plan.limits.players)} ·
               Teams: {formatLimit(getTeamAllowance(user?.planTier ?? 'free', user?.extraTeamLicenses ?? 0))}
             </p>
             {(user?.extraTeamLicenses ?? 0) > 0 ? (

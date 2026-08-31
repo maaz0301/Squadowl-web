@@ -99,16 +99,16 @@ export default function DashboardPage() {
     acceptAssignment.mutate(id, {
       onSettled: () => setAcceptingId(null),
       onSuccess: () => openAssigned(id),
-      onError: (error: Error) => alert(error?.message || 'Could not accept this assessment.'),
+      onError: (error: Error) => alert(error?.message || 'Could not accept this evaluation.'),
     });
   };
 
   const declineAssigned = (id: string, name: string) => {
-    if (!confirm(`Decline "${name}"? You will lose access to score this assessment unless invited again.`)) return;
+    if (!confirm(`Decline "${name}"? You will lose access to score this evaluation unless invited again.`)) return;
     setDecliningId(id);
     rejectAssignment.mutate(id, {
       onSettled: () => setDecliningId(null),
-      onError: (error: Error) => alert(error?.message || 'Could not decline this assessment.'),
+      onError: (error: Error) => alert(error?.message || 'Could not decline this evaluation.'),
     });
   };
 
@@ -217,7 +217,7 @@ export default function DashboardPage() {
 
   const newAssessment = () => {
     if (isAtAssessmentLimit(planTier, tryouts.length)) {
-      setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'assessments'));
+      setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'evaluations'));
       return;
     }
     router.push('/assessment/new');
@@ -230,13 +230,13 @@ export default function DashboardPage() {
         right={
           <>
             <Button label="Search" variant="secondary" onClick={() => router.push('/search')} />
-            <Button label="+ New Assessment" onClick={newAssessment} />
+            <Button label="+ New Evaluation" onClick={newAssessment} />
           </>
         }
       />
 
       {loadingTryouts ? null : (
-        <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="assessments" />
+        <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="evaluations" />
       )}
 
       {canUseFeature(planTier, 'enterprise') ? (
@@ -297,7 +297,7 @@ export default function DashboardPage() {
               Archived
             </span>
             <span className="text-xs" style={{ color: colors.inkMuted }}>
-              Past assessments
+              Past evaluations
             </span>
           </Card>
         </Link>
@@ -369,9 +369,9 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      {/* Assessment list */}
+      {/* Evaluation list */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <SectionLabel>Assessments &amp; Tryouts</SectionLabel>
+        <SectionLabel>Evaluations &amp; Tryouts</SectionLabel>
         <div className="flex flex-wrap gap-2">
           <Button
             label={combineMode ? 'Cancel Combine' : 'Combine Mode'}
@@ -389,9 +389,9 @@ export default function DashboardPage() {
         <CardGridSkeleton count={4} lines={2} columns="sm:grid-cols-2" />
       ) : tryouts.length === 0 ? (
         <EmptyState
-          title="No assessments yet"
+          title="No evaluations yet"
           message="Create your first tryout or evaluation to begin scoring players."
-          actionLabel="Create Assessment"
+          actionLabel="Create Evaluation"
           onAction={newAssessment}
         />
       ) : (
@@ -455,7 +455,7 @@ export default function DashboardPage() {
                       ) : (
                         <button
                           type="button"
-                          aria-label="Assessment actions"
+                          aria-label="Evaluation actions"
                           onClick={(e) => {
                             // Inside a Link now, so the default has to go too.
                             e.preventDefault();
@@ -479,7 +479,7 @@ export default function DashboardPage() {
 
       <Modal
         visible={!!actionTryout}
-        title="Assessment Actions"
+        title="Evaluation Actions"
         onClose={() => setActionTryout(null)}
         hideDefaultFooter
       >
@@ -488,7 +488,7 @@ export default function DashboardPage() {
             What would you like to do with &quot;{actionTryout?.name}&quot;?
           </p>
           <Button
-            label="Archive Assessment"
+            label="Archive Evaluation"
             variant="secondary"
             onClick={() => {
               if (actionTryout) {
@@ -502,7 +502,7 @@ export default function DashboardPage() {
                   onSettled: () => setBusyId(null),
                   onSuccess: () => toast(`"${name}" archived`, 'success'),
                   onError: (e) =>
-                    showAlert('Error', e instanceof Error ? e.message : 'Could not archive this assessment.'),
+                    showAlert('Error', e instanceof Error ? e.message : 'Could not archive this evaluation.'),
                 });
               }
               setActionTryout(null);
@@ -519,7 +519,7 @@ export default function DashboardPage() {
                   onSettled: () => setBusyId(null),
                   onSuccess: () => toast(`"${name}" deleted`, 'success'),
                   onError: (e) =>
-                    showAlert('Error', e instanceof Error ? e.message : 'Could not delete this assessment.'),
+                    showAlert('Error', e instanceof Error ? e.message : 'Could not delete this evaluation.'),
                 });
               }
               setActionTryout(null);

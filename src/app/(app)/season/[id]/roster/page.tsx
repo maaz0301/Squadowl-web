@@ -50,7 +50,7 @@ export default function SeasonRosterPage() {
     if (!id) return;
     try {
       await importTeam.mutateAsync(id);
-      await alert('Import Complete', 'Roster players imported successfully from the linked team assessments.');
+      await alert('Import Complete', 'Roster players imported successfully from the linked team evaluations.');
     } catch (e) {
       await alert('Import Failed', e instanceof Error ? e.message : 'Could not import players.');
     }
@@ -68,7 +68,7 @@ export default function SeasonRosterPage() {
       {season.roster.length === 0 ? (
         <EmptyState
           title="No roster players"
-          message={season.teamId ? 'Import players from the linked team assessments or add them manually.' : 'Add players manually to get started.'}
+          message={season.teamId ? 'Import players from the linked team evaluations or add them manually.' : 'Add players manually to get started.'}
           actionLabel={season.teamId ? 'Import from Team' : 'Add Player'}
           onAction={season.teamId ? handleImport : () => setShowAdd(true)}
         />

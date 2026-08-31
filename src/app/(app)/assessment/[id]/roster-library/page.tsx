@@ -73,7 +73,7 @@ export default function RosterLibraryPage() {
     <>
       <PageHeader
         title="Roster Library"
-        subtitle="Import players from other assessments in your account"
+        subtitle="Import players from other evaluations in your account"
         showBack
         backHref={href('roster')}
         right={
@@ -88,7 +88,7 @@ export default function RosterLibraryPage() {
       />
 
       {library.length === 0 ? (
-        <EmptyState title="Library empty" message="Add players to other assessments first." />
+        <EmptyState title="Library empty" message="Add players to other evaluations first." />
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {library.map((item) => {

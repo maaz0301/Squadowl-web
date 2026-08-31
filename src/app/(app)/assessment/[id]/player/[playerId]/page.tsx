@@ -391,7 +391,7 @@ export default function PlayerHubPage() {
           <Card className="flex flex-col items-start gap-2">
             <p className="font-display font-bold" style={{ color: colors.ink }}>Player Profile</p>
             <p className="text-sm" style={{ color: colors.inkMuted }}>
-              View full assessment history, score trends, and season-over-season comparison.
+              View full evaluation history, score trends, and season-over-season comparison.
             </p>
             <Button
               label="View Full Profile"

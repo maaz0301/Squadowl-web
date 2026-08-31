@@ -414,7 +414,7 @@ export const SignupFormSchema = z.object({
 
 /** Create assessment form */
 export const CreateAssessmentFormSchema = z.object({
-  name: z.string().min(2, 'Assessment name required'),
+  name: z.string().min(2, 'Evaluation name required'),
   sport: z.enum(SPORTS),
   sportOther: z.string().optional(),
   eventType: z.enum(EVENT_TYPES),
