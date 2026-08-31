@@ -1234,7 +1234,7 @@ export class SupabaseDataSource implements DataSource {
     // another just stacked three round trips — measured at 1262ms + 755ms +
     // 384ms, in front of *every* login and every cold boot, since this sits on
     // the path from "signed in" to the first screen having a session at all.
-    const [profileRes, membershipRes, userRes] = await Promise.all([
+    const [profileRes, membershipRes, userRes, guardianRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).single(),
       supabase
         .from('memberships')
@@ -1244,6 +1244,10 @@ export class SupabaseDataSource implements DataSource {
         .limit(1)
         .maybeSingle(),
       supabase.auth.getUser(),
+      // Guardians never get a membership row (see below), so the only way to
+      // tell "a guardian we haven't heard from yet" apart from "genuinely
+      // nobody" is to check whether any athlete is actually linked to them.
+      supabase.from('athletes').select('id').eq('guardian_user_id', userId).limit(1).maybeSingle(),
     ]);
 
     // Unwrapped after the wave rather than inside it. A PostgREST call resolves
@@ -1265,7 +1269,7 @@ export class SupabaseDataSource implements DataSource {
       ? membership.accounts[0]
       : (membership?.accounts as Row | undefined);
 
-    const rawRole = membership?.role;
+    const rawRole = membership?.role ?? (guardianRes.data ? 'guardian' : undefined);
     const role = rawRole === 'owner' ? 'admin' : rawRole;
 
     const { data: uData } = userRes;

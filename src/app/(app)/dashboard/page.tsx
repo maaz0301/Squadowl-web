@@ -199,6 +199,22 @@ export default function DashboardPage() {
   // count badge, so waiting for it held the whole screen hostage to the slower
   // of two independent requests; it now fills in where it lands.
   if (tryoutsQuery.isError) {
+    // A signup with zero membership rows — not invited to any organization
+    // yet, and not a linked guardian either. The raw "No account for user"
+    // reads as a crash; tell the user what's actually going on instead.
+    if (/No account for user/i.test(tryoutsQuery.error?.message ?? '')) {
+      return (
+        <EmptyState
+          title="Account not linked yet"
+          message="Your account isn't linked to an organization yet. Ask a coach or admin to invite you, then try again."
+          actionLabel="Try Again"
+          onAction={() => {
+            tryoutsQuery.refetch();
+            teamsQuery.refetch();
+          }}
+        />
+      );
+    }
     return (
       <ErrorState
         message={`Could not load dashboard data: ${tryoutsQuery.error?.message || 'Unknown error'}`}

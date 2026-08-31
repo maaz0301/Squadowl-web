@@ -53,7 +53,7 @@ import { queryKeys } from '@/lib/queryClient';
 import { useUser, usePermissions } from '@/state/authStore';
 import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
-import { CreateEventFormSchema, EVENT_KINDS, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
+import { CreateEventFormSchema, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamManagersCard } from '@/components/TeamManagersCard';
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
@@ -230,7 +230,7 @@ export default function TeamDetailPage() {
 
   const eventForm = useForm<CreateEventForm>({
     resolver: zodResolver(CreateEventFormSchema),
-    defaultValues: { type: 'Practice', title: '', date: '', endDate: '', startTime: '', location: '', playerIds: [] },
+    defaultValues: { type: 'Event', title: '', date: '', endDate: '', startTime: '', location: '', playerIds: [] },
   });
   const eventType = eventForm.watch('type');
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
@@ -700,8 +700,7 @@ export default function TeamDetailPage() {
         <PlanGate feature="seasonHub" title="Season Hub" tierOverride={effectiveTier}>
         <div>
           <div className="mb-4 flex flex-wrap gap-2">
-            <Button label="+ Practice" size="sm" onClick={() => openEventModal('Practice')} />
-            <Button label="+ Game" size="sm" variant="secondary" onClick={() => openEventModal('Game')} />
+            <Button label="+ Event" size="sm" onClick={() => openEventModal('Event')} />
           </div>
 
           {seasonsQuery.isLoading || seasonQuery.isLoading ? (
@@ -714,8 +713,7 @@ export default function TeamDetailPage() {
                 No events yet
               </span>
               <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
-                Add a practice or game — everyone on the roster is invited and their guardians can RSVP from
-                the portal.
+                Add an event — everyone on the roster is invited and their guardians can RSVP from the portal.
               </span>
             </Card>
           ) : (
@@ -1279,11 +1277,6 @@ export default function TeamDetailPage() {
       >
         <div className="flex flex-col gap-3">
           <FormLock busy={addEvent.isPending || updateEvent.isPending} className="flex flex-col gap-3">
-            <div className="flex flex-wrap gap-2">
-              {EVENT_KINDS.map((t) => (
-                <Chip key={t} label={t} active={eventType === t} onClick={() => eventForm.setValue('type', t)} />
-              ))}
-            </div>
             <Controller
               control={eventForm.control}
               name="title"
