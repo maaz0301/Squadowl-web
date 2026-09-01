@@ -84,6 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         ...(canManageOrganization
           ? ([{ href: '/organization/members', label: 'Members', icon: 'members' }] as NavItem[])
           : []),
+        { href: '/loyalty', label: 'Loyalty Program', icon: 'gift' },
         { href: '/upgrade', label: 'Plans & Billing', icon: 'upgrade' },
         { href: '/feedback', label: 'Feedback', icon: 'feedback' },
       ];
