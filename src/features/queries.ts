@@ -1540,6 +1540,28 @@ export function useOrgQuery() {
 }
 
 /**
+ * Loyalty code, credit balance and ledger. Guardians have no tenant account, so
+ * the underlying RPC would raise for them — the screen is coach-only and the
+ * query stays disabled rather than surfacing that as an error.
+ */
+export function useReferralSummaryQuery(enabled = true) {
+  const userId = useAuthStore((s) => s.session?.user?.id);
+  return useQuery({
+    queryKey: queryKeys.referralSummary,
+    queryFn: () => getDataSource().getReferralSummary(),
+    enabled: !!userId && enabled,
+  });
+}
+
+export function useApplyReferralCodeMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) => getDataSource().applyReferralCode(code),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.referralSummary }),
+  });
+}
+
+/**
  * @param includeTeamManagers  Adds the coaches a club has delegated a team to.
  *   Manage Organization asks for them; the every-route permission read does
  *   not, because they cost a read per team — see listOrgMembers().

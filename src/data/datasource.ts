@@ -16,6 +16,7 @@ import type {
   Org,
   OrgMember,
   OrgRole,
+  ReferralSummary,
   Player,
   Registration,
   RegistrationSubmit,
@@ -182,9 +183,22 @@ export interface DataSource {
   getAdminStats(): Promise<AdminStats>;
   listAdminUsers(): Promise<AdminUserRow[]>;
   overrideUserPlan(userId: string, planTier: UserProfile['planTier']): Promise<void>;
-  createCheckoutSession(planTier: string, interval: 'year' | 'month'): Promise<{ url: string }>;
+  createCheckoutSession(
+    planTier: string,
+    interval: 'year' | 'month',
+    options?: { applyCredits?: boolean },
+  ): Promise<{ url: string }>;
   /** Checkout for add-on team licenses beyond the plan's included teams (Club: CAD$10/team/year). */
-  createTeamLicenseCheckoutSession(quantity: number): Promise<{ url: string }>;
+  createTeamLicenseCheckoutSession(
+    quantity: number,
+    options?: { applyCredits?: boolean },
+  ): Promise<{ url: string }>;
+
+  // Loyalty program
+  /** Code, balance and ledger for the loyalty screen. Mints the code on first read. */
+  getReferralSummary(): Promise<ReferralSummary>;
+  /** Attach this account to a referrer. One-time, and only before the first paid plan. */
+  applyReferralCode(code: string): Promise<void>;
   createPortalSession(): Promise<{ url: string }>;
   /** Stripe Connect Standard onboarding for coaches collecting registration fees. */
   createConnectAccountLink(): Promise<{ url: string }>;

@@ -459,6 +459,8 @@ export const SignupFormSchema = z.object({
   password: PasswordSchema,
   confirmPassword: z.string().min(1, 'Please confirm your password'),
   accountType: z.enum(['coach', 'guardian']).default('coach'),
+  /** Optional loyalty referral code, entered right at signup. */
+  referralCode: z.string().optional(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: 'Passwords do not match',
   path: ['confirmPassword'],
@@ -853,6 +855,33 @@ export interface ConnectAccountStatus {
   payoutsEnabled?: boolean;
   /** e.g. 0.005 for 0.5% — TryoutHQ's cut of every registration fee collected via Connect. */
   platformFeeRate: number;
+}
+
+/** One line of an account's loyalty ledger — money earned or spent. */
+export interface ReferralLedgerEntry {
+  id: string;
+  kind: 'earned' | 'redeemed' | 'adjustment';
+  /** Positive credits the account, negative debits it. */
+  amountCents: number;
+  note?: string | null;
+  created_at: string;
+}
+
+/** Everything the Loyalty Program screen renders, from get_referral_summary(). */
+export interface ReferralSummary {
+  /** The account's own 9-character code, minted on first visit to the screen. */
+  code: string | null;
+  balanceCents: number;
+  /** Earned in the trailing 365 days — what the annual cap is measured against. */
+  earnedLastYearCents: number;
+  annualCapCents: number;
+  /** Signed up with this code, whether or not they've subscribed yet. */
+  referredCount: number;
+  /** Of those, how many converted to paid and actually paid out. */
+  convertedCount: number;
+  /** The code this account itself signed up with, if any. */
+  redeemedByCode: string | null;
+  entries: ReferralLedgerEntry[];
 }
 
 export const DatabaseSchema = z.object({

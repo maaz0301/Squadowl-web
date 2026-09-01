@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Badge, Button, Card, PageHeader, useAlert } from '@/components/ui';
+import { Badge, Button, Card, Input, PageHeader, Switch, useAlert } from '@/components/ui';
 import {
   PLAN_DEFINITIONS,
   formatCad,
@@ -13,6 +13,7 @@ import {
 } from '@/data/plans';
 import { useUser } from '@/state/authStore';
 import { getDataSource } from '@/data';
+import { useApplyReferralCodeMutation, useReferralSummaryQuery } from '@/features/queries';
 
 const TIER_RANKS: Record<string, number> = {
   free: 0,
@@ -33,6 +34,31 @@ export default function UpgradePage() {
   // matching the mobile app.
   const billingInterval = 'year' as const;
 
+  // Loyalty program: spend existing credit, and enter someone else's code.
+  const referralQuery = useReferralSummaryQuery();
+  const applyCodeMut = useApplyReferralCodeMutation();
+  const [referralCode, setReferralCode] = useState('');
+  const [applyCredits, setApplyCredits] = useState(true);
+
+  const creditCents = referralQuery.data?.balanceCents ?? 0;
+  const hasCredit = creditCents > 0;
+  // The discount is sized server-side against the real line total; this is
+  // only whether to ask for it at all.
+  const useCredits = hasCredit && applyCredits;
+
+  const submitReferralCode = async () => {
+    const codeValue = referralCode.trim();
+    if (!codeValue) return;
+    try {
+      await applyCodeMut.mutateAsync(codeValue);
+      setReferralCode('');
+      await alert('Code Applied', 'Thanks! The coach who referred you earns credit once your subscription is paid.');
+    } catch (e) {
+      // apply_referral_code raises customer-facing wording, so show it as-is.
+      await alert('Referral Code', e instanceof Error ? e.message : 'That code could not be applied.');
+    }
+  };
+
   const openPortal = async () => {
     try {
       setLoadingPortal(true);
@@ -50,7 +76,9 @@ export default function UpgradePage() {
   const upgrade = async (tier: typeof PLAN_DEFINITIONS[number]['tier']) => {
     try {
       setLoadingTier(tier);
-      const res = await getDataSource().createCheckoutSession(tier, billingInterval);
+      const res = await getDataSource().createCheckoutSession(tier, billingInterval, {
+        applyCredits: useCredits,
+      });
       if (res?.url) {
         // Full-page navigation to Stripe Checkout, not component state — the
         // compiler's immutability check flags any window.location write, but
@@ -77,7 +105,9 @@ export default function UpgradePage() {
   const buyTeams = async () => {
     try {
       setBuyingTeams(true);
-      const res = await getDataSource().createTeamLicenseCheckoutSession(extraTeams);
+      const res = await getDataSource().createTeamLicenseCheckoutSession(extraTeams, {
+        applyCredits: useCredits,
+      });
       if (res?.url) window.location.href = res.url;
     } catch (err) {
       await alert('Checkout Error', err instanceof Error ? err.message : 'Something went wrong.');
@@ -94,6 +124,55 @@ export default function UpgradePage() {
         showBack
         backHref="/profile"
       />
+
+      {/* Loyalty credit — applied to whichever checkout is started below. */}
+      {hasCredit ? (
+        <Card accent className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+              {formatCad(creditCents)} loyalty credit
+            </h3>
+            <p className="text-xs" style={{ color: colors.inkMuted }}>
+              {applyCredits ? 'Will be applied to your next payment below.' : 'Saved for a later payment.'}
+            </p>
+          </div>
+          <Switch checked={applyCredits} onChange={setApplyCredits} />
+        </Card>
+      ) : null}
+
+      {/* Referral code entry — only meaningful before the first paid plan, and
+          only once, so it disappears as soon as one has been attached. */}
+      {referralQuery.data &&
+      !referralQuery.data.redeemedByCode &&
+      user?.subscriptionStatus !== 'active' &&
+      user?.subscriptionStatus !== 'trialing' ? (
+        <Card className="mb-6 flex flex-col gap-2">
+          <h3 className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+            Have a referral code?
+          </h3>
+          <p className="text-xs" style={{ color: colors.inkMuted }}>
+            Enter the 9-character code a coach shared with you. They earn credit once your subscription is paid.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              placeholder="e.g. K7M2QX9BD"
+              value={referralCode}
+              onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              maxLength={11}
+              className="flex-1"
+            />
+            <Button
+              label="Apply Code"
+              variant="secondary"
+              onClick={submitReferralCode}
+              loading={applyCodeMut.isPending}
+              disabled={!referralCode.trim()}
+            />
+          </div>
+        </Card>
+      ) : null}
 
       {canBuyTeams ? (
         <Card className="mb-6 flex flex-col gap-2">

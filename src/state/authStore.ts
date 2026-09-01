@@ -6,6 +6,7 @@ import { zustandStorage } from '@/lib/storage';
 import { queryClient } from '@/lib/queryClient';
 import { warmAfterAuth } from '@/features/prefetch';
 import { useSessionStore } from './sessionStore';
+import { flushPendingReferralCode } from '@/lib/pendingReferral';
 
 /**
  * Set while logout() tears the session down. The SDK fires SIGNED_OUT during
@@ -61,6 +62,10 @@ export const useAuthStore = create<AuthState>()(
       login: async (email, password) => {
         const session = await getDataSource().login(email, password);
         get().setSession(session);
+        // The e-mail-confirmation path lands here: signup couldn't attach the
+        // referral code because it had no session, so this is the first chance
+        // to. No-ops when nothing is pending, and never throws.
+        void flushPendingReferralCode();
       },
       signup: async (displayName, email, password, accountType) => {
         const session = await getDataSource().signup(displayName, email, password, accountType);
@@ -121,6 +126,9 @@ export const useAuthStore = create<AuthState>()(
           // cache starts empty, and this fires while the screen behind
           // AuthGate is still being mounted rather than after it.
           warmAfterAuth(session?.user);
+          // Covers the user who verifies their e-mail in another tab and comes
+          // back to a page that already holds a session, so login() never runs.
+          if (session) void flushPendingReferralCode();
         } catch (e) {
           console.error('Failed to restore session:', e);
           set({ session: null, isHydrated: true, sessionExpired: hadSession });
