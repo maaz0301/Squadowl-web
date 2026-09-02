@@ -5,7 +5,12 @@ import Link from 'next/link';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, EmptyState, ErrorState, Input, LoadingState, Modal, useAlert } from '@/components/ui';
-import { useSeasonQuery, useAddSeasonPlayerMutation, useImportSeasonPlayersFromTeamMutation } from '@/features/queries';
+import {
+  useSeasonQuery,
+  useSeasonRosterPagesQuery,
+  useAddSeasonPlayerMutation,
+  useImportSeasonPlayersFromTeamMutation,
+} from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
 
 export default function SeasonRosterPage() {
@@ -13,6 +18,11 @@ export default function SeasonRosterPage() {
   const colors = useThemeColors();
   const { alert } = useAlert();
   const seasonQuery = useSeasonQuery(id);
+  // The list reads its own paged query rather than season.roster: a season with
+  // a club-sized roster took several round trips to assemble that array, and
+  // this page shows a screenful at a time. Both live under the same cache key,
+  // so a write that invalidates the season refreshes these pages too.
+  const rosterPages = useSeasonRosterPagesQuery(id);
   const addPlayer = useAddSeasonPlayerMutation();
   const importTeam = useImportSeasonPlayersFromTeamMutation();
   const [showAdd, setShowAdd] = useState(false);
@@ -28,6 +38,7 @@ export default function SeasonRosterPage() {
   }
 
   const season = seasonQuery.data;
+  const players = rosterPages.data?.pages.flatMap((p) => p.players) ?? [];
 
   const handleAdd = async () => {
     if (!firstName.trim() || !lastName.trim() || !id) return;
@@ -68,7 +79,13 @@ export default function SeasonRosterPage() {
         ) : null}
       </div>
 
-      {season.roster.length === 0 ? (
+      {/* An empty first page can mean "still loading", which must not read as
+          "no players" — least of all with an Import button under it. */}
+      {rosterPages.isLoading ? (
+        <LoadingState message="Loading roster..." />
+      ) : rosterPages.isError ? (
+        <ErrorState message="Could not load the roster." onRetry={() => rosterPages.refetch()} />
+      ) : players.length === 0 ? (
         <EmptyState
           title="No roster players"
           message={season.teamId ? 'Import players from the linked team evaluations or add them manually.' : 'Add players manually to get started.'}
@@ -77,7 +94,7 @@ export default function SeasonRosterPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {season.roster.map((item) => (
+          {players.map((item) => (
             <Link key={item.id} href={`/season/${id}/player/${item.id}`}>
               <Card interactive className="flex items-center justify-between gap-3">
                 <span className="min-w-0">
@@ -98,6 +115,17 @@ export default function SeasonRosterPage() {
           ))}
         </div>
       )}
+
+      {rosterPages.hasNextPage ? (
+        <div className="mt-3 flex justify-center">
+          <Button
+            label="Load more players"
+            variant="secondary"
+            loading={rosterPages.isFetchingNextPage}
+            onClick={() => rosterPages.fetchNextPage()}
+          />
+        </div>
+      ) : null}
 
       <Modal visible={showAdd} title="Add Season Player" onClose={() => setShowAdd(false)} hideDefaultFooter>
         <div className="flex flex-col gap-3">

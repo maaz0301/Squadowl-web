@@ -23,6 +23,13 @@ export default function SeasonAvailabilityPage() {
     return <ErrorState message="Could not load availability." onRetry={() => seasonQuery.refetch()} />;
   }
   const season = seasonQuery.data;
+  // getSeason() publishes events and roster ahead of the RSVP read, which the
+  // schedule benefits from — but every row on this page *is* an RSVP, and
+  // rendering the partial would show a roster of 'pending' badges that quietly
+  // become real answers a second later. Nothing to show early here.
+  if (season.events.some((e) => e.availabilityPending)) {
+    return <LoadingState message="Loading availability..." />;
+  }
 
   if (season.events.length === 0) {
     return <EmptyState title="No events" message="Add an event to track availability." />;

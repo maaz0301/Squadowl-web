@@ -152,6 +152,13 @@ export default function SeasonSchedulePage() {
   );
 
   const sendReminder = async (event: SeasonEvent) => {
+    // Same trap as a failed read, one step earlier: a season's events now
+    // arrive before their RSVPs do, so until the second pass lands this event's
+    // invite list is empty because it hasn't loaded, not because it's empty.
+    if (event.availabilityPending) {
+      await alert('Loading RSVPs', "This event's invite list is still loading. Try again in a moment.");
+      return;
+    }
     // Recipients are derived from the RSVP rows, so a failed availability read
     // would otherwise look like an event with nobody on it and report "no
     // guardians with emails" — while the invited roster sits there unreminded.
@@ -298,8 +305,17 @@ export default function SeasonSchedulePage() {
             {editingEventId ? null : (
               <>
                 <p className="mt-2 text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
-                  Roster Assignment ({selectedPlayerIds.length}/{season.roster.length})
+                  Roster Assignment{' '}
+                  {season.rosterPending ? '' : `(${selectedPlayerIds.length}/${season.roster.length})`}
                 </p>
+                {/* The season's events arrive before its roster, so the picker
+                    can open on a roster that hasn't loaded. Saying so beats an
+                    empty list that looks like a team with no players — and the
+                    save is blocked below, since an event saved here invites
+                    exactly who is selected. */}
+                {season.rosterPending ? (
+                  <p className="text-sm" style={{ color: colors.inkMuted }}>Loading roster...</p>
+                ) : null}
 
                 <div className="max-h-[150px] overflow-y-auto">
                   {season.roster.map((player) => {
@@ -348,6 +364,7 @@ export default function SeasonSchedulePage() {
             label={editingEventId ? 'Update Event' : 'Save Event'}
             onClick={onSubmit}
             loading={addEvent.isPending || updateEvent.isPending}
+            disabled={!editingEventId && !!season.rosterPending}
           />
         </div>
       </Modal>

@@ -38,6 +38,12 @@ export default function SeasonAttendancePage() {
   }
 
   const season = seasonQuery.data;
+  // Every number on this page is computed from the RSVP rows, so the partial
+  // season getSeason() publishes first would render a full roster at 0%
+  // attendance before correcting itself. Wait for the second pass.
+  if (season.events.some((e) => e.availabilityPending)) {
+    return <LoadingState message="Loading attendance..." />;
+  }
 
   return (
     <>
