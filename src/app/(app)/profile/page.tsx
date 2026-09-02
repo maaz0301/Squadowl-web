@@ -23,7 +23,7 @@ const QUICK_LINKS = [
   { href: '/shared-athletes', label: 'Shared Athletes' },
   { href: '/archived-assessments', label: 'Archived Evaluations' },
   { href: '/feedback', label: 'Send Feedback' },
-  { href: '/friend-packages', label: 'Gift a Coach' },
+  { href: '/loyalty', label: 'Loyalty Program' },
 ];
 
 export default function ProfilePage() {

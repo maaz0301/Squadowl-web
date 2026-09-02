@@ -1000,6 +1000,15 @@ export function useSeasonRealtimeSync(id: string | undefined) {
     const channel = getSupabase()
       .channel(`realtime:season_${id}_${uniqueId}`)
       .on(
+        // A coach deleting the season itself — the case this was missing.
+        // Without it a guardian's cached roster/season data only went stale
+        // whenever something else happened to touch season_events/
+        // event_availability on a season they still (per the cache) belonged to.
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'seasons', filter: `id=eq.${id}` },
+        () => triggerInvalidate()
+      )
+      .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'season_events', filter: `season_id=eq.${id}` },
         () => triggerInvalidate()
@@ -1540,6 +1549,28 @@ export function useOrgQuery() {
 }
 
 /**
+ * Loyalty code, credit balance and ledger. Guardians have no tenant account, so
+ * the underlying RPC would raise for them — the screen is coach-only and the
+ * query stays disabled rather than surfacing that as an error.
+ */
+export function useReferralSummaryQuery(enabled = true) {
+  const userId = useAuthStore((s) => s.session?.user?.id);
+  return useQuery({
+    queryKey: queryKeys.referralSummary,
+    queryFn: () => getDataSource().getReferralSummary(),
+    enabled: !!userId && enabled,
+  });
+}
+
+export function useApplyReferralCodeMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) => getDataSource().applyReferralCode(code),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.referralSummary }),
+  });
+}
+
+/**
  * @param includeTeamManagers  Adds the coaches a club has delegated a team to.
  *   Manage Organization asks for them; the every-route permission read does
  *   not, because they cost a read per team — see listOrgMembers().
@@ -1639,6 +1670,22 @@ export function useGuardianRostersQuery(enabled = true) {
   });
 }
 
+/** Takes the guardian's athlete off the team entirely — see DataSource.leaveSeason. */
+export function useLeaveSeasonMutation() {
+  const qc = useQueryClient();
+  const userId = useAuthStore((s) => s.session?.user?.id);
+  return useMutation({
+    mutationFn: (seasonRosterId: string) => getDataSource().leaveSeason(seasonRosterId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.guardianRosters(userId) });
+      // The team roster row goes too, so anything showing that team's roster or
+      // season is now a player out of date.
+      qc.invalidateQueries({ queryKey: queryKeys.seasons });
+      qc.invalidateQueries({ queryKey: queryKeys.teams });
+    },
+  });
+}
+
 const familyContactsKey = (athleteId: string) => ['athletes', athleteId, 'familyContacts'] as const;
 
 export function useFamilyContactsQuery(athleteId: string | undefined) {
@@ -1694,6 +1741,16 @@ export function useGuardianRealtimeSync() {
     const uniqueId = Math.random().toString(36).slice(2, 9);
     const channel = getSupabase()
       .channel(`realtime:guardian_${uniqueId}`)
+      // No season_id filter possible here — a guardian's portal spans every
+      // season across every linked athlete, not one id — so this catches a
+      // coach deleting ANY season, not just the one currently on screen.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seasons' }, () => triggerInvalidate())
+      // Enrollment itself — a coach adding the athlete to a team (which enrolls
+      // them on its season via the team_roster_season_enrollment trigger) is what
+      // flips this portal from "isn't assigned to any tryouts or seasons yet" to a
+      // live schedule and chat, and nothing else here fires on it. Without this the
+      // guardian sat on the empty state until they reloaded the portal.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'season_roster' }, () => triggerInvalidate())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'season_events' }, () => triggerInvalidate())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'event_availability' }, () => triggerInvalidate())
       .subscribe();

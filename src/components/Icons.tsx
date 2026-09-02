@@ -31,6 +31,7 @@ export const ICON_PATHS = {
   share: 'M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13',
   ai: 'M12 2l2.4 6.2L21 10.6l-5.4 4.2L17 21l-5-3.4L7 21l1.4-6.2L3 10.6l6.6-2.4z',
   payments: 'M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zM2 10h20',
+  gift: 'M20 12v10H4V12M2 7h20v5H2V7zM12 22V7M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z',
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

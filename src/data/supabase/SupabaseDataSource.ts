@@ -62,6 +62,7 @@ import type {
   PlayerProfile,
   PlayerProfileAssessment,
   Recommendation,
+  ReferralSummary,
   Registration,
   RegistrationSubmit,
   ScoreForm,
@@ -5671,10 +5672,14 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
-  async createCheckoutSession(planTier: string, interval: 'year' | 'month'): Promise<{ url: string }> {
+  async createCheckoutSession(
+    planTier: string,
+    interval: 'year' | 'month',
+    options?: { applyCredits?: boolean },
+  ): Promise<{ url: string }> {
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-      body: { planTier, interval, origin: webOrigin() }
+      body: { planTier, interval, origin: webOrigin(), applyCredits: options?.applyCredits === true }
     });
     if (error) {
       let detail = '';
@@ -5705,10 +5710,19 @@ export class SupabaseDataSource implements DataSource {
     return data;
   }
 
-  async createTeamLicenseCheckoutSession(quantity: number): Promise<{ url: string }> {
+  async createTeamLicenseCheckoutSession(
+    quantity: number,
+    options?: { applyCredits?: boolean },
+  ): Promise<{ url: string }> {
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-      body: { addOn: 'team_licenses', quantity: Math.max(1, Math.round(quantity)), interval: 'year', origin: webOrigin() },
+      body: {
+        addOn: 'team_licenses',
+        quantity: Math.max(1, Math.round(quantity)),
+        interval: 'year',
+        origin: webOrigin(),
+        applyCredits: options?.applyCredits === true,
+      },
     });
     if (error) {
       let detail = '';
@@ -5720,6 +5734,44 @@ export class SupabaseDataSource implements DataSource {
     }
     if (data?.error) throw new Error(data.error);
     return data;
+  }
+
+  async getReferralSummary(): Promise<ReferralSummary> {
+    const { supabase } = await this.ctx();
+
+    // Minting the code is its own call so the summary can stay `stable` and be
+    // safely re-read on every navigation. It's a no-op once a code exists, and
+    // a failure here is not fatal — the screen still shows the balance and
+    // just can't offer a code to share yet.
+    try {
+      await supabase.rpc('ensure_referral_code');
+    } catch (e) {
+      console.warn('Could not mint a referral code:', e);
+    }
+
+    const { data, error } = await supabase.rpc('get_referral_summary');
+    if (error) throw new Error(error.message);
+
+    const raw = (data ?? {}) as Partial<ReferralSummary>;
+    return {
+      code: raw.code ?? null,
+      balanceCents: raw.balanceCents ?? 0,
+      earnedLastYearCents: raw.earnedLastYearCents ?? 0,
+      annualCapCents: raw.annualCapCents ?? 6000,
+      referredCount: raw.referredCount ?? 0,
+      convertedCount: raw.convertedCount ?? 0,
+      redeemedByCode: raw.redeemedByCode ?? null,
+      entries: raw.entries ?? [],
+    };
+  }
+
+  async applyReferralCode(code: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('apply_referral_code', { p_code: code });
+    // The RPC raises with customer-facing wording ("You can't refer yourself",
+    // "already been applied"), so pass it straight through rather than
+    // flattening every failure into one generic message.
+    if (error) throw new Error(error.message);
   }
 
   async createConnectAccountLink(): Promise<{ url: string }> {
@@ -6581,6 +6633,20 @@ export class SupabaseDataSource implements DataSource {
   async removeFamilyContact(id: string): Promise<void> {
     const { supabase } = await this.ctx();
     unwrap(await supabase.from('athlete_family_contacts').delete().eq('id', id));
+  }
+
+  async leaveSeason(seasonRosterId: string): Promise<void> {
+    // Removes the team roster row as well as the season one — see the interface
+    // doc and 20260902140000_guardian_leave_team_roster.sql.
+    //
+    // Not this.ctx() — that resolves a *staff* tenant account via memberships,
+    // which a guardian doesn't have. A plain user-scoped client is enough; the
+    // RPC does its own authorization against the roster row.
+    const supabase = getSupabase();
+    const { error } = await supabase.rpc('guardian_leave_season', { p_season_roster_id: seasonRosterId });
+    // The RPC raises customer-facing wording ("Not authorized to leave this
+    // team", "Could not leave this team"), so pass it straight through.
+    if (error) throw new Error(error.message);
   }
 
   // One statement, authorized per tryout/season instead of per leaf row — the nested

@@ -12,6 +12,7 @@ import {
   useFamilyContactsQuery,
   useGuardianRealtimeSync,
   useGuardianRostersQuery,
+  useLeaveSeasonMutation,
   useRemoveFamilyContactMutation,
   useSetAvailabilityMutation,
 } from '@/features/queries';
@@ -61,6 +62,42 @@ function SeasonFeeRow({ season, playerId }: { season: GuardianSeason; playerId: 
       ) : (
         <Badge label={season.feeStatus === 'waived' ? 'Waived' : 'Paid'} variant="success" />
       )}
+    </div>
+  );
+}
+
+function LeaveTeamRow({ season }: { season: GuardianSeason }) {
+  const colors = useThemeColors();
+  const { alert, confirm } = useAlert();
+  const leaveSeasonMutation = useLeaveSeasonMutation();
+
+  const confirmLeave = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ok = await confirm({
+      title: 'Leave Team',
+      message: `Remove this athlete from ${season.teamName ?? 'this team'} (${season.name})? You'll need a new invite to rejoin.`,
+      confirmLabel: 'Leave',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await leaveSeasonMutation.mutateAsync(season.seasonRosterId);
+    } catch (err) {
+      await alert('Could Not Leave', err instanceof Error ? err.message : 'Something went wrong.');
+    }
+  };
+
+  return (
+    <div className="mt-3 flex justify-end border-t pt-3" style={{ borderColor: colors.border }}>
+      <Button
+        label="Leave Team"
+        size="sm"
+        variant="ghost"
+        loading={leaveSeasonMutation.isPending}
+        onClick={confirmLeave}
+        style={{ color: colors.danger }}
+      />
     </div>
   );
 }
@@ -332,6 +369,7 @@ export default function GuardianPortalPage() {
                   {item._type === 'season' && item.collectsFees ? (
                     <SeasonFeeRow season={item} playerId={playerId} />
                   ) : null}
+                  {item._type === 'season' ? <LeaveTeamRow season={item} /> : null}
                 </Card>
               );
               return item._type === 'tryout' ? (

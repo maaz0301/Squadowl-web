@@ -16,6 +16,7 @@ import type {
   Org,
   OrgMember,
   OrgRole,
+  ReferralSummary,
   Player,
   Registration,
   RegistrationSubmit,
@@ -182,9 +183,22 @@ export interface DataSource {
   getAdminStats(): Promise<AdminStats>;
   listAdminUsers(): Promise<AdminUserRow[]>;
   overrideUserPlan(userId: string, planTier: UserProfile['planTier']): Promise<void>;
-  createCheckoutSession(planTier: string, interval: 'year' | 'month'): Promise<{ url: string }>;
+  createCheckoutSession(
+    planTier: string,
+    interval: 'year' | 'month',
+    options?: { applyCredits?: boolean },
+  ): Promise<{ url: string }>;
   /** Checkout for add-on team licenses beyond the plan's included teams (Club: CAD$10/team/year). */
-  createTeamLicenseCheckoutSession(quantity: number): Promise<{ url: string }>;
+  createTeamLicenseCheckoutSession(
+    quantity: number,
+    options?: { applyCredits?: boolean },
+  ): Promise<{ url: string }>;
+
+  // Loyalty program
+  /** Code, balance and ledger for the loyalty screen. Mints the code on first read. */
+  getReferralSummary(): Promise<ReferralSummary>;
+  /** Attach this account to a referrer. One-time, and only before the first paid plan. */
+  applyReferralCode(code: string): Promise<void>;
   createPortalSession(): Promise<{ url: string }>;
   /** Stripe Connect Standard onboarding for coaches collecting registration fees. */
   createConnectAccountLink(): Promise<{ url: string }>;
@@ -251,6 +265,13 @@ export interface DataSource {
   sendTeamRosterInvites(teamId: string, athleteIds?: string[]): Promise<import('./types').TeamInviteResult>;
   importScanScores(tryoutId: string, scores: { playerId: string; rubricKey: string; value: number }[]): Promise<void>;
   getGuardianRosters(): Promise<GuardianRosterAthlete[]>;
+  /**
+   * Takes the guardian's own athlete off a team: the season roster entry, the
+   * team roster row behind it, and any other live season of the same team
+   * (guardian_leave_season RPC). Removing the team roster row is what makes it
+   * stick — anything less and the team's next event save re-enrolls them.
+   */
+  leaveSeason(seasonRosterId: string): Promise<void>;
 
   // Extra family contacts a guardian keeps on their own athlete's profile
   // (see athlete_family_contacts migration for the access model).
