@@ -6635,6 +6635,17 @@ export class SupabaseDataSource implements DataSource {
     unwrap(await supabase.from('athlete_family_contacts').delete().eq('id', id));
   }
 
+  async leaveSeason(seasonRosterId: string): Promise<void> {
+    // Not this.ctx() — that resolves a *staff* tenant account via memberships,
+    // which a guardian doesn't have. A plain user-scoped client is enough; the
+    // RPC does its own authorization against the roster row.
+    const supabase = getSupabase();
+    const { error } = await supabase.rpc('guardian_leave_season', { p_season_roster_id: seasonRosterId });
+    // The RPC raises customer-facing wording ("Not authorized to leave this
+    // team", "Could not leave this team"), so pass it straight through.
+    if (error) throw new Error(error.message);
+  }
+
   // One statement, authorized per tryout/season instead of per leaf row — the nested
   // PostgREST embed this replaces made RLS run on every evaluation score and every
   // RSVP row, which blew the statement timeout (57014) for coaches and guardians

@@ -265,6 +265,8 @@ export interface DataSource {
   sendTeamRosterInvites(teamId: string, athleteIds?: string[]): Promise<import('./types').TeamInviteResult>;
   importScanScores(tryoutId: string, scores: { playerId: string; rubricKey: string; value: number }[]): Promise<void>;
   getGuardianRosters(): Promise<GuardianRosterAthlete[]>;
+  /** Removes the guardian's own athlete from a season's roster (guardian_leave_season RPC). */
+  leaveSeason(seasonRosterId: string): Promise<void>;
 
   // Extra family contacts a guardian keeps on their own athlete's profile
   // (see athlete_family_contacts migration for the access model).

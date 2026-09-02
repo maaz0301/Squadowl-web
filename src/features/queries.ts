@@ -1000,6 +1000,15 @@ export function useSeasonRealtimeSync(id: string | undefined) {
     const channel = getSupabase()
       .channel(`realtime:season_${id}_${uniqueId}`)
       .on(
+        // A coach deleting the season itself — the case this was missing.
+        // Without it a guardian's cached roster/season data only went stale
+        // whenever something else happened to touch season_events/
+        // event_availability on a season they still (per the cache) belonged to.
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'seasons', filter: `id=eq.${id}` },
+        () => triggerInvalidate()
+      )
+      .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'season_events', filter: `season_id=eq.${id}` },
         () => triggerInvalidate()
@@ -1661,6 +1670,16 @@ export function useGuardianRostersQuery(enabled = true) {
   });
 }
 
+/** Removes the guardian's athlete from a season's roster (guardian_leave_season RPC). */
+export function useLeaveSeasonMutation() {
+  const qc = useQueryClient();
+  const userId = useAuthStore((s) => s.session?.user?.id);
+  return useMutation({
+    mutationFn: (seasonRosterId: string) => getDataSource().leaveSeason(seasonRosterId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.guardianRosters(userId) }),
+  });
+}
+
 const familyContactsKey = (athleteId: string) => ['athletes', athleteId, 'familyContacts'] as const;
 
 export function useFamilyContactsQuery(athleteId: string | undefined) {
@@ -1716,6 +1735,10 @@ export function useGuardianRealtimeSync() {
     const uniqueId = Math.random().toString(36).slice(2, 9);
     const channel = getSupabase()
       .channel(`realtime:guardian_${uniqueId}`)
+      // No season_id filter possible here — a guardian's portal spans every
+      // season across every linked athlete, not one id — so this catches a
+      // coach deleting ANY season, not just the one currently on screen.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seasons' }, () => triggerInvalidate())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'season_events' }, () => triggerInvalidate())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'event_availability' }, () => triggerInvalidate())
       .subscribe();
