@@ -38,7 +38,10 @@ export default function SeasonHubPage() {
 
         <div className="mt-2 flex flex-wrap gap-2">
           <Link href={`/season/${id}/roster`}>
-            <Badge label={`${season.roster.length} players`} variant="brand" />
+            <Badge
+              label={season.rosterPending ? 'Players...' : `${season.roster.length} players`}
+              variant="brand"
+            />
           </Link>
           <Link href={`/season/${id}/schedule`}>
             <Badge label={`${season.events.length} events`} />

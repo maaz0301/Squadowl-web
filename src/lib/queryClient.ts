@@ -90,6 +90,13 @@ export const queryKeys = {
   /** Same superset trick as tryoutSummaries, against `seasons`. */
   seasonSummaries: ['seasons', { view: 'summary' }] as const,
   season: (id: string) => ['season', id] as const,
+  /**
+   * The paged roster read behind the Season Roster page. Deliberately a
+   * *suffix* of `season(id)`: react-query matches key prefixes, so every write
+   * path that already invalidates the season refreshes these pages too, and
+   * none of them had to learn a second key.
+   */
+  seasonRosterPages: (id: string) => ['season', id, 'roster'] as const,
   org: ['org'] as const,
   /**
    * `includeTeamManagers` is a suffix rather than a separate key so the plain

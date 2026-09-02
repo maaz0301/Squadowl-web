@@ -35,13 +35,14 @@ import {
   useUpdateTeamMutation,
   useDeleteTeamMutation,
   useSetTryoutTeamMutation,
-  useTeamRosterQuery,
+  useTeamRosterPagesQuery,
+  useTeamRosterAthleteIdsQuery,
   useAddTeamRosterPlayersMutation,
   useAddManualTeamPlayerMutation,
   useUploadTeamPlayerPhotoMutation,
   useRemoveTeamRosterPlayerMutation,
   useTeamRosterInvitesMutation,
-  useSeasonsQuery,
+  useSeasonSummariesQuery,
   useSeasonQuery,
   useSeasonRealtimeSync,
   useAddTeamEventMutation,
@@ -51,6 +52,7 @@ import {
   useSetAvailabilityMutation,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
+import { useDebouncedValue } from '@/lib/hooks';
 import { useUser, usePermissions } from '@/state/authStore';
 import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -70,6 +72,9 @@ function feeCentsFromInput(feeInput: string): number {
 }
 
 type Rsvp = 'yes' | 'maybe' | 'no' | 'pending';
+
+/** Matches listTeamRosterPage's own page size — see TEAM_ROSTER_SCREEN_PAGE. */
+const TEAM_ROSTER_PAGE = 50;
 
 const RSVP_LABEL: Record<Rsvp, string> = {
   yes: 'Yes',
@@ -172,7 +177,18 @@ export default function TeamDetailPage() {
     current: Rsvp;
   } | null>(null);
 
-  const rosterQuery = useTeamRosterQuery(id);
+  // Server-side, so it searches the whole roster rather than only the pages
+  // already pulled down — debounced because every distinct term is a read.
+  const debouncedPlayerSearch = useDebouncedValue(playerSearch);
+  // The Players tab's list: one page (50) per read, the rest on demand. The
+  // full roster read this replaces is several 200-row pages on a club-sized
+  // team, each paying can_access_athlete() per row, and this page opens on the
+  // schedule — so it is no longer on the path to anything the coach sees first.
+  const rosterPages = useTeamRosterPagesQuery(id, debouncedPlayerSearch);
+  // Team membership and headcount, without an athlete row per player: what the
+  // stat tile, the tab badge, the plan's player limit, the picker's "already on
+  // this team" flags and the RSVP narrowing all actually need.
+  const rosterAthleteIdsQuery = useTeamRosterAthleteIdsQuery(id);
   const [addPlayersProgress, setAddPlayersProgress] = useState<{ done: number; total: number } | null>(null);
   const addRosterPlayers = useAddTeamRosterPlayersMutation(id, (done, total) => setAddPlayersProgress({ done, total }));
   const addManualPlayer = useAddManualTeamPlayerMutation(id);
@@ -213,7 +229,12 @@ export default function TeamDetailPage() {
 
   // Events live on the season attached to this team, but that's an implementation
   // detail — the team screen is the only place a coach touches them.
-  const seasonsQuery = useSeasonsQuery();
+  // Summaries, not the full seasons: all this needs is which season is attached
+  // to this team, and listSeasons() assembles every season in the account —
+  // every event and every roster entry joined to its athlete row — to answer
+  // it. That read used to stand in front of the schedule before the season's
+  // own read had even started.
+  const seasonsQuery = useSeasonSummariesQuery();
   const teamSeasonId = (seasonsQuery.data ?? []).find((s) => s.teamId === id)?.id;
   const seasonQuery = useSeasonQuery(teamSeasonId);
   // The Season Hub tab renders this season's schedule and RSVPs inline, so it
@@ -285,18 +306,23 @@ export default function TeamDetailPage() {
   const unlinkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => !t.teamId);
   const canCollectFees = canUseFeature(effectiveTier, 'payments');
 
-  const teamPlayers = rosterQuery.data ?? [];
-  const onRoster = new Set(teamPlayers.map((p) => p.athleteId));
-  const filteredTeamPlayers = playerSearch.trim()
-    ? teamPlayers.filter((p) => `${p.first} ${p.last}`.toLowerCase().includes(playerSearch.trim().toLowerCase()))
-    : teamPlayers;
+  const onRoster = new Set(rosterAthleteIdsQuery.data ?? []);
+  // The rows on screen, flattened out of however many pages have been pulled
+  // down. The search that used to filter this array is part of the read itself
+  // now (see useTeamRosterPagesQuery), so a name on a page nobody has scrolled
+  // to is still found.
+  const listedPlayers = rosterPages.data?.pages.flatMap((page) => page.players) ?? [];
+  // Falls back to what is on screen while that read is in flight, so the badge
+  // and the empty-state checks never read as "no players" on a team that has
+  // them.
+  const playerCount = rosterAthleteIdsQuery.data?.length ?? listedPlayers.length;
 
   // The team_roster row carries the roster-scoped fields plus everything that
   // lives on the athlete itself — name, jersey, position, and the player/guardian
   // contact details. Only the assessment-scoped extras (medical notes, jersey
   // colour, registration source) still need the Player record, which the modal
   // looks up by athleteId across every assessment.
-  const viewingRosterEntry = viewPlayerId ? teamPlayers.find((p) => p.athleteId === viewPlayerId) : undefined;
+  const viewingRosterEntry = viewPlayerId ? listedPlayers.find((p) => p.athleteId === viewPlayerId) : undefined;
   const viewingFullPlayer = viewPlayerId
     ? (tryoutsQuery.data ?? []).flatMap((t) => t.roster ?? []).find((p) => p.athleteId === viewPlayerId)
     : undefined;
@@ -372,7 +398,7 @@ export default function TeamDetailPage() {
     // The roster lives on the owning club's account for a delegated team, so its
     // player cap is the club's, not the delegate's own — same reasoning as
     // effectiveTier everywhere else on this screen.
-    if (isAtPlayerLimit(effectiveTier, teamPlayers.length + picked.length - 1)) {
+    if (isAtPlayerLimit(effectiveTier, playerCount + picked.length - 1)) {
       setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
       return;
     }
@@ -476,7 +502,7 @@ export default function TeamDetailPage() {
     const ok = await confirm({
       title: 'Send Invites',
       message:
-        `Invite all ${teamPlayers.length} ${teamPlayers.length === 1 ? 'player' : 'players'} on ${team.name} to the portal? ` +
+        `Invite all ${playerCount} ${playerCount === 1 ? 'player' : 'players'} on ${team.name} to the portal? ` +
         'Each invite goes to the player\u2019s own email and their guardian\u2019s, wherever those are on file.',
       confirmLabel: 'Send',
     });
@@ -522,7 +548,7 @@ export default function TeamDetailPage() {
   // briefly claim nobody was invited.
   const rsvpSummary = (ev: SeasonEvent) => {
     const seasonRoster = teamSeason?.roster ?? [];
-    const invited = rosterQuery.isSuccess
+    const invited = rosterAthleteIdsQuery.isSuccess
       ? seasonRoster.filter((p) => p.athleteId && onRoster.has(p.athleteId))
       : seasonRoster;
     const byId = new Map(invited.map((p) => [p.id, p]));
@@ -735,7 +761,7 @@ export default function TeamDetailPage() {
       />
 
       <div className="mb-5 flex gap-2">
-        <StatTile label="Players" value={teamPlayers.length} colors={colors} />
+        <StatTile label="Players" value={playerCount} colors={colors} />
         <StatTile label="Upcoming" value={upcomingEvents.length} colors={colors} />
         <StatTile label="Evaluations" value={tryoutsLoading ? undefined : linkedTryouts.length} colors={colors} />
       </div>
@@ -743,7 +769,7 @@ export default function TeamDetailPage() {
       <Tabs
         tabs={[
           { key: 'schedule', label: 'Schedule', badge: upcomingEvents.length },
-          { key: 'players', label: 'Players', badge: teamPlayers.length },
+          { key: 'players', label: 'Players', badge: playerCount },
           { key: 'assessments', label: 'Evaluations', badge: tryoutsLoading ? undefined : linkedTryouts.length },
           { key: 'chat', label: 'Chat' },
           { key: 'settings', label: 'Settings' },
@@ -823,7 +849,11 @@ export default function TeamDetailPage() {
                           />
                         ) : null}
                         <div className="overflow-hidden rounded-xl border" style={{ borderColor: colors.border }}>
-                          {ev.availabilityUnavailable && rsvp.rows.length === 0 ? (
+                          {ev.availabilityPending ? (
+                            <p className="p-3 text-xs" style={{ color: colors.inkMuted }}>
+                              Loading RSVPs...
+                            </p>
+                          ) : ev.availabilityUnavailable && rsvp.rows.length === 0 ? (
                             <p className="p-3 text-xs" style={{ color: colors.warning }}>
                               RSVPs couldn&apos;t be loaded for this event. Everyone invited is still
                               invited — reload to try again.
@@ -917,7 +947,7 @@ export default function TeamDetailPage() {
               variant="secondary"
               onClick={() => setShowAddManualPlayer(true)}
             />
-            {canManageTeam && teamPlayers.length > 0 ? (
+            {canManageTeam && playerCount > 0 ? (
               <Button
                 label="Send Invites"
                 size="sm"
@@ -927,7 +957,7 @@ export default function TeamDetailPage() {
               />
             ) : null}
           </div>
-          {teamPlayers.length > 0 ? (
+          {playerCount > 0 ? (
             <Input
               containerClassName="mb-3"
               placeholder="Search players by name"
@@ -935,11 +965,24 @@ export default function TeamDetailPage() {
               onChange={(e) => setPlayerSearch(e.target.value)}
             />
           ) : null}
-          {rosterQuery.isLoading ? (
+          {rosterPages.isLoading ? (
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               Loading roster...
             </p>
-          ) : teamPlayers.length === 0 ? (
+          ) : rosterPages.isError ? (
+            // Distinct from "No players yet": an errored read rendered as a
+            // genuinely empty roster reads as "this team has no players" when
+            // it may well have hundreds.
+            <Card className="flex flex-col items-center gap-2 py-8 text-center">
+              <span className="font-bold" style={{ color: colors.warning }}>
+                Couldn&apos;t load the roster
+              </span>
+              <span className="text-sm" style={{ color: colors.inkMuted }}>
+                This team&apos;s players are still on the roster — reload to try again.
+              </span>
+              <Button label="Retry" variant="secondary" size="sm" onClick={() => rosterPages.refetch()} />
+            </Card>
+          ) : listedPlayers.length === 0 && !playerSearch.trim() ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
                 No players yet
@@ -948,7 +991,7 @@ export default function TeamDetailPage() {
                 Pull players in from any evaluation roster to build this team.
               </span>
             </Card>
-          ) : filteredTeamPlayers.length === 0 ? (
+          ) : listedPlayers.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
                 No players match &quot;{playerSearch}&quot;.
@@ -957,7 +1000,7 @@ export default function TeamDetailPage() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {filteredTeamPlayers.map((p) => (
+              {listedPlayers.map((p) => (
                 <Card key={p.id} className="flex items-center gap-3">
                   <button
                     type="button"
@@ -985,6 +1028,16 @@ export default function TeamDetailPage() {
               ))}
             </div>
           )}
+          {rosterPages.hasNextPage ? (
+            <div className="mt-3 flex justify-center">
+              <Button
+                label={`Load ${TEAM_ROSTER_PAGE} more players`}
+                variant="secondary"
+                loading={rosterPages.isFetchingNextPage}
+                onClick={() => rosterPages.fetchNextPage()}
+              />
+            </div>
+          ) : null}
         </div>
       ) : tab === 'assessments' ? (
         <div>

@@ -621,6 +621,14 @@ export const SeasonEventSchema = z.object({
    * full roster is told nobody was invited.
    */
   availabilityUnavailable: z.boolean().optional(),
+  /**
+   * Set while the season's RSVP read is still in flight — getSeason() hands
+   * back the events and roster first so the schedule can draw, then replaces
+   * them with the same events carrying their RSVPs. An empty `availability`
+   * alongside this means "still loading", so a view that shows RSVPs can wait
+   * rather than claim nobody was invited.
+   */
+  availabilityPending: z.boolean().optional(),
   createdAt: z.number(),
   updatedAt: z.number().optional(),
 });
@@ -639,6 +647,12 @@ export const SeasonSchema = z.object({
   orgId: z.string().optional(),
   events: z.array(SeasonEventSchema).default([]),
   roster: z.array(SeasonPlayerSchema).default([]),
+  /**
+   * Set on the first pass getSeason() publishes, where only the events have
+   * loaded. An empty `roster` alongside this means "still loading", not "no
+   * players" — see assembleSeasons.
+   */
+  rosterPending: z.boolean().optional(),
   scheduleShareToken: z.string().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -660,6 +674,13 @@ export type Season = z.infer<typeof SeasonSchema>;
  * is a different set that only grows, and reading it here is what made the
  * card's number wrong.
  */
+/**
+ * A place in a team roster's (created_at, id) order — see listTeamRosterPage.
+ * Both halves are needed: created_at ties are the norm (a bulk add writes a
+ * whole chunk on one timestamp), so the primary key breaks them.
+ */
+export type TeamRosterCursor = { createdAt: string; id: string };
+
 export interface SeasonSummary {
   id: string;
   teamId?: string;

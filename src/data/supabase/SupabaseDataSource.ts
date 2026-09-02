@@ -75,6 +75,7 @@ import type {
   TeamBuilderResult,
   TeamInviteResult,
   TeamMessage,
+  TeamRosterCursor,
   TeamRosterPlayer,
   Tryout,
   TryoutSummary,
@@ -240,6 +241,33 @@ function toMs(iso: string | null | undefined): number {
 const TEAM_ROSTER_PAGE = 200;
 
 /**
+ * Rows per page for the Players tab's own read — see listTeamRosterPage. One
+ * statement, one screenful: the list paints off the first round trip however
+ * many players are on the team, and the rest are read only when the coach asks
+ * for them. Same size as SEASON_ROSTER_SCREEN_PAGE.
+ */
+const TEAM_ROSTER_SCREEN_PAGE = 50;
+
+/**
+ * The columns both team-roster reads select. `inner` is for the paged read's
+ * name search only: filtering on an embedded resource narrows the embed by
+ * default, so without an inner join a search comes back as the whole roster
+ * with most rows carrying an empty `athletes`.
+ */
+function teamRosterSelect(inner = false): string {
+  return `*, athletes${inner ? '!inner' : ''}(*), tryouts:source_tryout_id(name)`;
+}
+
+/**
+ * Strips the characters PostgREST's filter grammar gives meaning to before a
+ * search term goes into an `or(...)`. A stray comma or paren would otherwise be
+ * read as filter syntax and the request would come back as a 400 mid-typing.
+ */
+function likeTerm(raw: string): string {
+  return raw.replace(/[,()."\\*%]/g, ' ').trim();
+}
+
+/**
  * Rows per request when reading event RSVPs, and how many events' worth to ask
  * for at a time. Same shape of problem as TEAM_ROSTER_PAGE: the read policy on
  * event_availability is evaluated per row, so one unbounded
@@ -290,6 +318,61 @@ const PARTICIPANTS_PAGE = 200;
  * PARTICIPANTS_PAGE. Mirrors the mobile app's constant of the same name.
  */
 const SEASON_ROSTER_PAGE = 200;
+
+/**
+ * Rows per page for the roster *screen* — smaller than SEASON_ROSTER_PAGE
+ * because nothing is waiting on the whole roster here. A page only has to
+ * outrun the scroll, and a shorter one is a cheaper statement: the `athletes`
+ * embed runs can_access_athlete() once per row either way, so 50 rows is a
+ * quarter of the work before the first name appears.
+ */
+const SEASON_ROSTER_SCREEN_PAGE = 50;
+
+/**
+ * Exactly the columns rowToSeasonPlayer reads. `*, athletes(*)` shipped every
+ * column of every athlete — medical notes, avatars, timestamps, guardian
+ * bookkeeping — to render a name, a jersey and two contact addresses, over a
+ * read whose `athletes` embed already costs a per-row can_access_athlete()
+ * (five OR'd EXISTS branches). Keep it in sync with the mapper: a column
+ * dropped here silently becomes `undefined` there. `season_id` rides along
+ * because assembleSeasons groups on it. Mirrors the mobile app's constant of
+ * the same name.
+ */
+/** The two reads assembleSeasons() always starts from — see seasonBaseReads(). */
+type SeasonBaseReads = { events: Promise<Row[]>; roster: Promise<Row[]> };
+
+/**
+ * Issues the two reads every season assembly starts from.
+ *
+ * Separate from assembleSeasons() so getSeason() can start them *before* it
+ * knows the season row exists: nothing about reading a season's events or
+ * roster depends on that row's own columns, only on its id, which the caller
+ * already has. Waiting for the `seasons` select first cost a full round trip of
+ * pure latency — with can_access_season() evaluated on it — before the schedule
+ * read was even issued.
+ *
+ * The rejection handlers keep an abandoned read (no such season, or a caller
+ * that throws before awaiting) from surfacing as an unhandled rejection; the
+ * promises still reject for whoever awaits them.
+ */
+function seasonBaseReads(supabase: SupabaseClient, ids: string[]): SeasonBaseReads {
+  const events = fetchAllByIn(supabase, 'season_events', '*', 'season_id', ids);
+  const roster = fetchAllByIn(
+    supabase,
+    'season_roster',
+    SEASON_ROSTER_SELECT,
+    'season_id',
+    ids,
+    SEASON_ROSTER_PAGE,
+  );
+  events.catch(() => {});
+  roster.catch(() => {});
+  return { events, roster };
+}
+
+const SEASON_ROSTER_SELECT =
+  'id, season_id, athlete_id, jersey, player_email, ' +
+  'athletes(id, first_name, last_name, guardian_email, guardian_phone, player_email)';
 
 /**
  * Headcount statements in flight at once for the list screens — see
@@ -1714,6 +1797,88 @@ export class SupabaseDataSource implements DataSource {
       if (batch.length < TEAM_ROSTER_PAGE) break;
     }
     return rows.map((r) => this.rowToTeamRosterPlayer(r));
+  }
+
+  /**
+   * One page of a team's roster, in the same (created_at, id) order
+   * listTeamRoster returns.
+   *
+   * The screen-facing counterpart to listTeamRoster(), which reads every player
+   * on the team before the Players tab can draw a row — on a club-sized team
+   * that's several 200-row pages, each paying can_access_athlete() per row
+   * through the `athletes` embed, to fill a list the coach scrolls a screenful
+   * of. Here the first page is one statement and the rest are read only if the
+   * coach asks for them.
+   *
+   * Keyset rather than offset, for the reason fetchAllByIn gives: an OFFSET
+   * re-authorizes every row it skips, so the last page of a big roster would
+   * cost the whole roster again. `nextCursor` is undefined once a short page
+   * says the server had nothing left to give.
+   *
+   * `search` is applied server-side, so it searches the whole roster rather
+   * than only the pages already pulled down.
+   *
+   * The flows that genuinely need everyone — the "already on this team" flags
+   * in the player picker, plan-limit checks — still read the whole roster.
+   */
+  async listTeamRosterPage(
+    teamId: string,
+    opts?: { after?: TeamRosterCursor; limit?: number; search?: string },
+  ): Promise<{ players: TeamRosterPlayer[]; nextCursor?: TeamRosterCursor }> {
+    const { supabase } = await this.ctx();
+    const limit = opts?.limit ?? TEAM_ROSTER_SCREEN_PAGE;
+    const search = likeTerm(opts?.search ?? '');
+
+    let q = supabase
+      .from('team_roster')
+      .select(teamRosterSelect(!!search))
+      .eq('team_id', teamId)
+      // Total order, so pages can neither overlap nor skip rows, and the same
+      // order listTeamRoster reads in so the list doesn't reshuffle against the
+      // rest of the app.
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(limit);
+    if (opts?.after) {
+      const { createdAt, id } = opts.after;
+      // "strictly after (created_at, id)": a later timestamp, or the same
+      // timestamp and a later id. Quoted because a timestamptz carries `+` and
+      // `:`, which the filter grammar would otherwise read as syntax.
+      q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
+    }
+    if (search) {
+      q = q.or(`first_name.ilike.*${search}*,last_name.ilike.*${search}*`, {
+        referencedTable: 'athletes',
+      });
+    }
+    const rows = ((unwrap(await q) ?? []) as unknown) as Row[];
+
+    const last = rows[rows.length - 1];
+    return {
+      players: rows.map((r) => this.rowToTeamRosterPlayer(r)),
+      // A short page means there is nothing after it.
+      nextCursor:
+        rows.length === limit && last
+          ? { createdAt: last.created_at as string, id: last.id as string }
+          : undefined,
+    };
+  }
+
+  /**
+   * Just the athlete ids on a team's roster.
+   *
+   * What "is this athlete already on the team?" and "how many players are on
+   * it?" actually need — the picker's flags, the tab badge, the plan's per-team
+   * limit and the RSVP list's narrowing to current team members — without the
+   * `athletes` embed that makes the full roster read expensive (one
+   * can_access_athlete() per row). One column, and the answer stays correct for
+   * a player on a page of the list nobody has scrolled to.
+   */
+  async listTeamRosterAthleteIds(teamId: string): Promise<string[]> {
+    const { supabase } = await this.ctx();
+    // `id` rides along only because keyset paging orders by it.
+    const rows = await fetchAllByIn(supabase, 'team_roster', 'id, athlete_id', 'team_id', [teamId]);
+    return rows.map((r) => r.athlete_id as string).filter(Boolean);
   }
 
   private rowToTeamRosterPlayer(r: Row): TeamRosterPlayer {
@@ -4290,10 +4455,14 @@ export class SupabaseDataSource implements DataSource {
     ev: Row,
     availability: Record<string, string>,
     availabilityUnavailable = false,
+    availabilityPending = false,
   ): SeasonEvent {
     return {
       id: ev.id,
       availabilityUnavailable: availabilityUnavailable || undefined,
+      // The RSVP read hasn't finished yet — an empty `availability` here means
+      // "not loaded", not "nobody invited". Absent once the full season lands.
+      availabilityPending: availabilityPending || undefined,
       type: EVENT_KIND_FROM_DB[ev.kind] ?? 'Game',
       title: ev.title,
       date: ev.event_date,
@@ -4516,7 +4685,33 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
-  private async assembleSeasons(seasonRows: Row[], withDetail: boolean): Promise<Season[]> {
+  /**
+   * Turns season rows into Seasons, fetching everything that hangs off them.
+   *
+   * `onPartial` (detail reads only) is called more than once, each time with a
+   * more complete season, because the four reads behind a season differ in cost
+   * by orders of magnitude and the schedule only needs the cheapest one:
+   *
+   *   1. `season_events` — one indexed page. This is the schedule.
+   *   2. `season_roster` + its athletes — per-row can_access_athlete(), which
+   *      is five OR'd EXISTS branches, over the whole roster.
+   *   3. RSVPs — per-row can_access_season() over every invite on every event.
+   *   4. portal invites.
+   *
+   * Waiting for 2-4 before handing anything back is what left a coach watching
+   * a loading spinner for seconds after their events were already in memory. So
+   * the events go out on their own first (`rosterPending` and
+   * `availabilityPending` set), the roster follows, and the resolved value is
+   * the complete season. A view that needs a later stage checks the flags and
+   * waits; the schedule doesn't have to. Mirrors the mobile app's
+   * assembleSeasons().
+   */
+  private async assembleSeasons(
+    seasonRows: Row[],
+    withDetail: boolean,
+    onPartial?: (seasons: Season[]) => void,
+    preload?: SeasonBaseReads,
+  ): Promise<Season[]> {
     if (seasonRows.length === 0) return [];
     const supabase = getSupabase();
     const ids = seasonRows.map((s) => s.id);
@@ -4531,75 +4726,117 @@ export class SupabaseDataSource implements DataSource {
     // roster on an event the whole team was invited to. It also fed
     // addSeasonEvent(), which builds an event's invites from this roster.
     //
-    // `.order()` isn't available through the paged helper — it keysets on `id` —
-    // so the event_date ordering callers rely on is restored client-side.
-    const [eventRowsUnsorted, rosterRows] = await Promise.all([
-      fetchAllByIn(supabase, 'season_events', '*', 'season_id', ids),
-      fetchAllByIn(supabase, 'season_roster', '*, athletes(*)', 'season_id', ids, SEASON_ROSTER_PAGE),
-    ]);
-    // Dates are ISO `YYYY-MM-DD`, so a string compare is the date compare the
-    // server was doing. Undated rows go last, where PostgREST's `.order()` put
-    // them, rather than sorting ahead of everything as an empty string would.
-    const eventRows = [...eventRowsUnsorted].sort((a, b) => {
-      const ad = (a.event_date as string | null) ?? '';
-      const bd = (b.event_date as string | null) ?? '';
-      if (!ad || !bd) return (ad ? 0 : 1) - (bd ? 0 : 1);
-      return ad.localeCompare(bd);
-    });
+    // Both reads start together — the staging below only changes when each one
+    // is *awaited*, never when it is issued, so the roster is already in flight
+    // while the events are being handed to the UI. getSeason() starts them
+    // earlier still and passes them in.
+    const { events: eventsPromise, roster: rosterPromise } =
+      preload ?? seasonBaseReads(supabase, ids);
 
-    let availabilityRows: Row[] = [];
-    let availabilityFailed = false;
-    let inviteRows: Row[] = [];
-    if (withDetail) {
-      const eventIds = eventRows.map((e) => e.id as string);
-      const [avail, invites] = await Promise.all([
-        this.fetchEventAvailability(supabase, eventIds),
-        fetchAllByIn(supabase, 'portal_invites', '*', 'season_id', ids),
-      ]);
-      availabilityRows = avail.rows;
-      availabilityFailed = avail.failed;
-      inviteRows = invites;
-    }
-
-    const eventsBySeason: Record<string, Row[]> = {};
-    for (const e of eventRows) (eventsBySeason[e.season_id] ??= []).push(e);
-    const rosterBySeason: Record<string, Row[]> = {};
-    for (const r of rosterRows) (rosterBySeason[r.season_id] ??= []).push(r);
-    const availByEvent: Record<string, Record<string, string>> = {};
-    // Indexed once rather than a .find() per availability row — that scan was
-    // O(roster × RSVPs), which for a full-roster event on a large team is a
-    // million comparisons on the main thread before anything renders.
-    const rosterById = new Map(rosterRows.map((r) => [r.id, r]));
-    for (const a of availabilityRows) {
-      const rosterItem = rosterById.get(a.roster_id);
-      if (rosterItem) {
-        if (rosterItem.athlete_id) {
-          (availByEvent[a.season_event_id] ??= {})[rosterItem.athlete_id] = a.response;
+    /**
+     * The mapping half, run once per stage. Everything it needs from the
+     * network is a parameter, so the stages can't drift apart.
+     */
+    const build = (
+      eventRowsUnsorted: Row[],
+      rosterRows: Row[],
+      availabilityRows: Row[],
+      inviteRows: Row[],
+      flags: { availabilityFailed?: boolean; availabilityPending?: boolean; rosterPending?: boolean },
+    ): Season[] => {
+      // `.order()` isn't available through the paged helper — it keysets on
+      // `id` — so the event_date ordering callers rely on is restored here.
+      // Dates are ISO `YYYY-MM-DD`, so a string compare is the date compare the
+      // server was doing. Undated rows go last, where PostgREST's `.order()`
+      // put them, rather than sorting ahead of everything as an empty string
+      // would.
+      const eventRows = [...eventRowsUnsorted].sort((a, b) => {
+        const ad = (a.event_date as string | null) ?? '';
+        const bd = (b.event_date as string | null) ?? '';
+        if (!ad || !bd) return (ad ? 0 : 1) - (bd ? 0 : 1);
+        return ad.localeCompare(bd);
+      });
+      const eventsBySeason: Record<string, Row[]> = {};
+      for (const e of eventRows) (eventsBySeason[e.season_id] ??= []).push(e);
+      const rosterBySeason: Record<string, Row[]> = {};
+      for (const r of rosterRows) (rosterBySeason[r.season_id] ??= []).push(r);
+      // Indexed once rather than a .find() per availability row — that scan was
+      // O(roster × RSVPs), which for a full-roster event on a large team is a
+      // million comparisons on the main thread before anything renders.
+      const rosterById = new Map(rosterRows.map((r) => [r.id, r]));
+      const availByEvent: Record<string, Record<string, string>> = {};
+      for (const a of availabilityRows) {
+        const rosterItem = rosterById.get(a.roster_id);
+        if (rosterItem) {
+          if (rosterItem.athlete_id) {
+            (availByEvent[a.season_event_id] ??= {})[rosterItem.athlete_id] = a.response;
+          }
+          (availByEvent[a.season_event_id] ??= {})[rosterItem.id] = a.response;
+        } else {
+          (availByEvent[a.season_event_id] ??= {})[a.roster_id] = a.response;
         }
-        (availByEvent[a.season_event_id] ??= {})[rosterItem.id] = a.response;
-      } else {
-        (availByEvent[a.season_event_id] ??= {})[a.roster_id] = a.response;
       }
+
+      return seasonRows.map((s) => ({
+        id: s.id,
+        name: s.name,
+        teamName: s.team_name,
+        sport: s.sport,
+        year: s.year ?? undefined,
+        division: s.division ?? undefined,
+        coach: s.coach ?? undefined,
+        teamId: s.team_id ?? undefined,
+        events: (eventsBySeason[s.id] ?? []).map((ev) =>
+          this.rowToSeasonEvent(
+            ev,
+            availByEvent[ev.id] ?? {},
+            flags.availabilityFailed ?? false,
+            flags.availabilityPending ?? false,
+          ),
+        ),
+        roster: (rosterBySeason[s.id] ?? []).map((r) => this.rowToSeasonPlayer(r, inviteRows)),
+        rosterPending: flags.rosterPending || undefined,
+        scheduleShareToken: s.schedule_share_token ?? undefined,
+        createdAt: toMs(s.created_at),
+        updatedAt: toMs(s.updated_at),
+        archived: s.archived || undefined,
+      })) as Season[];
+    };
+
+    if (!withDetail || !onPartial) {
+      const [eventRows, rosterRows] = await Promise.all([eventsPromise, rosterPromise]);
+      if (!withDetail) return build(eventRows, rosterRows, [], [], {});
+      return build(eventRows, rosterRows, ...(await this.fetchSeasonDetail(supabase, eventRows, ids)));
     }
 
-    return seasonRows.map((s) => ({
-      id: s.id,
-      name: s.name,
-      teamName: s.team_name,
-      sport: s.sport,
-      year: s.year ?? undefined,
-      division: s.division ?? undefined,
-      coach: s.coach ?? undefined,
-      teamId: s.team_id ?? undefined,
-      events: (eventsBySeason[s.id] ?? []).map((ev) =>
-        this.rowToSeasonEvent(ev, availByEvent[ev.id] ?? {}, availabilityFailed),
-      ),
-      roster: (rosterBySeason[s.id] ?? []).map((r) => this.rowToSeasonPlayer(r, inviteRows)),
-      scheduleShareToken: s.schedule_share_token ?? undefined,
-      createdAt: toMs(s.created_at),
-      updatedAt: toMs(s.updated_at),
-      archived: s.archived || undefined,
-    })) as Season[];
+    // Stage 1: the schedule, on its own, as soon as it lands.
+    const eventRows = await eventsPromise;
+    onPartial(build(eventRows, [], [], [], { rosterPending: true, availabilityPending: true }));
+
+    // Stage 2: the roster, which the RSVP read below is keyed against anyway.
+    const rosterRows = await rosterPromise;
+    onPartial(build(eventRows, rosterRows, [], [], { availabilityPending: true }));
+
+    return build(eventRows, rosterRows, ...(await this.fetchSeasonDetail(supabase, eventRows, ids)));
+  }
+
+  /**
+   * The two reads only the detail path makes: every RSVP on every event, and
+   * the season's portal invites. On a large season they're the heaviest part of
+   * the assembly by far. Returns the tail of build()'s argument list, so both
+   * callers can spread it.
+   */
+  private async fetchSeasonDetail(
+    supabase: SupabaseClient,
+    eventRows: Row[],
+    ids: string[],
+  ): Promise<[Row[], Row[], { availabilityFailed: boolean }]> {
+    const eventIds = eventRows.map((e) => e.id as string);
+    const [avail, invites] = await Promise.all([
+      this.fetchEventAvailability(supabase, eventIds),
+      fetchAllByIn(supabase, 'portal_invites', '*', 'season_id', ids),
+    ]);
+    return [avail.rows, invites, { availabilityFailed: avail.failed }];
   }
 
   async listSeasons(): Promise<Season[]> {
@@ -4620,7 +4857,7 @@ export class SupabaseDataSource implements DataSource {
     const { data: managedRows, error: managedErr } = await supabase.rpc('list_seasons_for_managed_teams');
     if (managedErr) {
       console.log('list_seasons_for_managed_teams unavailable:', managedErr.message);
-      return this.assembleSeasons(rows, true);
+      return this.assembleSeasons(rows, false);
     }
     const { data: ownedTeamRows, error: ownedErr } = await supabase.rpc('list_seasons_on_my_owned_teams');
     if (ownedErr) {
@@ -4633,7 +4870,14 @@ export class SupabaseDataSource implements DataSource {
       (s) => !ownIds.has(s.id) && !managed.some((m) => m.id === s.id),
     );
 
-    return this.assembleSeasons([...rows, ...managed, ...onOwnedTeams], true);
+    // `false`: the list's consumers (the Seasons grid, search, the team hub's
+    // season lookup, the enterprise count) read names, events and roster —
+    // never RSVPs or portal invites. Fetching detail here meant every RSVP row
+    // of every event of every season in the account came down before the
+    // Seasons page could paint a single card. The season pages that do need
+    // RSVPs call getSeason() for the one season they show. Matches the mobile
+    // app's listSeasons().
+    return this.assembleSeasons([...rows, ...managed, ...onOwnedTeams], false);
   }
 
   /**
@@ -4691,13 +4935,89 @@ export class SupabaseDataSource implements DataSource {
     }));
   }
 
-  async getSeason(id: string): Promise<Season | null> {
+  async getSeason(id: string, onPartial?: (season: Season) => void): Promise<Season | null> {
     await this.ctx();
     const supabase = getSupabase();
+    // In flight while the season row itself is being read, not after it: the
+    // schedule is what the caller is waiting for and it needs nothing from that
+    // row but the id.
+    const preload = seasonBaseReads(supabase, [id]);
     const row = (await supabase.from('seasons').select('*').eq('id', id).maybeSingle()).data as Row | null;
     if (!row) return null;
-    const [assembled] = await this.assembleSeasons([row], true);
+    const [assembled] = await this.assembleSeasons(
+      [row],
+      true,
+      ([partial]) => {
+        if (partial) onPartial?.(partial);
+      },
+      preload,
+    );
     return assembled ?? null;
+  }
+
+  /**
+   * One keyset page of a season's roster, with the portal invites for exactly
+   * the players on it.
+   *
+   * The screen-facing counterpart to getSeason(), which reads every enrolled
+   * player before the roster renders — on a club-sized season that's several
+   * 200-row pages, each paying can_access_athlete() per row through the
+   * `athletes` embed, to fill a list the coach scrolls a screenful of. Here the
+   * first page is one statement and the rest are fetched only if the coach asks
+   * for them.
+   *
+   * `after` is the last id of the previous page (keyset rather than offset for
+   * the reason fetchAllByIn gives: an OFFSET re-authorizes every row it skips).
+   * `nextCursor` is undefined once a short page says the server had nothing
+   * left to give.
+   *
+   * The flows that genuinely need everyone — inviting a roster to an event, the
+   * availability grid, attendance rates — still read the whole roster.
+   */
+  async listSeasonRosterPage(
+    seasonId: string,
+    opts?: { after?: string; limit?: number },
+  ): Promise<{ players: SeasonPlayer[]; nextCursor?: string }> {
+    await this.ctx();
+    const supabase = getSupabase();
+    const limit = opts?.limit ?? SEASON_ROSTER_SCREEN_PAGE;
+
+    let q = supabase
+      .from('season_roster')
+      .select(SEASON_ROSTER_SELECT)
+      .eq('season_id', seasonId)
+      // `id` is the primary key, so this order is total — pages can neither
+      // overlap nor skip rows, and it matches the order assembleSeasons()
+      // produces so the list doesn't reshuffle against the rest of the app.
+      .order('id')
+      .limit(limit);
+    if (opts?.after) q = q.gt('id', opts.after);
+    const rows = (unwrap(await q) ?? []) as Row[];
+
+    // Scoped to this page's athletes rather than the season's whole invite
+    // history: the badge only ever renders for a player on screen.
+    let inviteRows: Row[] = [];
+    const athleteIds = rows.map((r) => r.athlete_id as string | null).filter(Boolean) as string[];
+    if (athleteIds.length > 0) {
+      try {
+        inviteRows = (unwrap(
+          await supabase
+            .from('portal_invites')
+            .select('*')
+            .eq('season_id', seasonId)
+            .in('athlete_id', athleteIds),
+        ) ?? []) as Row[];
+      } catch (e) {
+        // A missing invite badge is not worth failing a page of the roster for.
+        console.warn('Portal-invite read failed for a roster page:', e);
+      }
+    }
+
+    return {
+      players: rows.map((r) => this.rowToSeasonPlayer(r, inviteRows)),
+      // A short page means there is nothing after it.
+      nextCursor: rows.length === limit ? (rows[rows.length - 1].id as string) : undefined,
+    };
   }
 
   async createSeason(form: CreateSeasonForm): Promise<Season> {

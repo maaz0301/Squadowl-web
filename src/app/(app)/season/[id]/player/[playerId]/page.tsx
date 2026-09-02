@@ -24,6 +24,9 @@ export default function SeasonPlayerPage() {
   const tier = useEffectivePlanTier(seasonQuery.data?.teamId);
 
   if (seasonQuery.isLoading) return <LoadingState />;
+  // The season arrives in stages (events, then roster, then RSVPs), so until
+  // the roster stage lands every player is "not found".
+  if (seasonQuery.data?.rosterPending) return <LoadingState />;
   const player = seasonQuery.data?.roster.find((p) => p.id === playerId);
   if (!player) {
     return (

@@ -141,7 +141,15 @@ export interface DataSource {
   listSeasons(): Promise<Season[]>;
   /** The Teams list's read — see SeasonSummary. */
   listSeasonSummaries(): Promise<SeasonSummary[]>;
-  getSeason(id: string): Promise<Season | null>;
+  /**
+   * A season with its events, roster, RSVPs and portal invites.
+   *
+   * `onPartial` is called with the season's events and roster the moment they
+   * land, ahead of the RSVP/invite reads that dominate the wait on a big
+   * roster — so a schedule can render off the first callback while the rest
+   * fills in. Events from that first call carry `availabilityPending`.
+   */
+  getSeason(id: string, onPartial?: (season: Season) => void): Promise<Season | null>;
   createSeason(form: CreateSeasonForm): Promise<Season>;
   updateSeason(id: string, updates: Partial<Season>): Promise<Season>;
   deleteSeason(id: string): Promise<void>;
@@ -236,11 +244,37 @@ export interface DataSource {
   addSeasonPlayer(seasonId: string, player: Omit<import('./types').SeasonPlayer, 'id'>): Promise<import('./types').SeasonPlayer>;
   deleteSeasonPlayer(seasonId: string, playerId: string): Promise<void>;
   importSeasonPlayersFromTeam(seasonId: string): Promise<import('./types').SeasonPlayer[]>;
+  /**
+   * One page of a season's roster, for the views that only display it.
+   *
+   * `after` is the previous page's last id; `nextCursor` comes back undefined
+   * on the last page. Lets a roster list paint off one statement instead of
+   * every enrolled player — see the implementation for why the whole-roster
+   * read still exists alongside it.
+   */
+  listSeasonRosterPage(
+    seasonId: string,
+    opts?: { after?: string; limit?: number },
+  ): Promise<{ players: import('./types').SeasonPlayer[]; nextCursor?: string }>;
   emailScheduleToPlayers(seasonId: string): Promise<void>;
   updateTeam(id: string, updates: Partial<Team>): Promise<Team>;
 
   // Team roster: a team's own players, selectable from any assessment's roster.
   listTeamRoster(teamId: string): Promise<import('./types').TeamRosterPlayer[]>;
+  /**
+   * One page of a team's roster for the Players tab — see listTeamRosterPage.
+   * `after` is the previous page's cursor; `nextCursor` is undefined once there
+   * is nothing left. `search` is matched server-side, over the whole roster.
+   */
+  listTeamRosterPage(
+    teamId: string,
+    opts?: { after?: import('./types').TeamRosterCursor; limit?: number; search?: string },
+  ): Promise<{
+    players: import('./types').TeamRosterPlayer[];
+    nextCursor?: import('./types').TeamRosterCursor;
+  }>;
+  /** Just the athlete ids on a team's roster — see listTeamRosterAthleteIds(). */
+  listTeamRosterAthleteIds(teamId: string): Promise<string[]>;
   /** Players per team for the Teams list cards — see countTeamPlayers(). */
   countTeamPlayers(teamIds: string[]): Promise<Record<string, number>>;
   addTeamRosterPlayers(
