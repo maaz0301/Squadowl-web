@@ -66,7 +66,7 @@ function SeasonFeeRow({ season, playerId }: { season: GuardianSeason; playerId: 
   );
 }
 
-function LeaveTeamRow({ season, playerId }: { season: GuardianSeason; playerId: string }) {
+function LeaveTeamRow({ season }: { season: GuardianSeason }) {
   const colors = useThemeColors();
   const { alert, confirm } = useAlert();
   const leaveSeasonMutation = useLeaveSeasonMutation();
@@ -369,7 +369,7 @@ export default function GuardianPortalPage() {
                   {item._type === 'season' && item.collectsFees ? (
                     <SeasonFeeRow season={item} playerId={playerId} />
                   ) : null}
-                  {item._type === 'season' ? <LeaveTeamRow season={item} playerId={playerId} /> : null}
+                  {item._type === 'season' ? <LeaveTeamRow season={item} /> : null}
                 </Card>
               );
               return item._type === 'tryout' ? (

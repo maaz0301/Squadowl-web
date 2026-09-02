@@ -116,7 +116,7 @@ export default function LoyaltyPage() {
             </p>
           </button>
         ) : (
-          <p style={{ color: colors.inkMuted }}>Your code couldn't be set up just now. Try again in a moment.</p>
+          <p style={{ color: colors.inkMuted }}>Your code couldn&apos;t be set up just now. Try again in a moment.</p>
         )}
         {code ? (
           <Button label="Share My Code" onClick={shareCode} />
@@ -212,7 +212,7 @@ export default function LoyaltyPage() {
               </p>
               <p style={{ color: colors.inkMuted }}>
                 Your balance can be applied to any subscription payment from the Upgrade Plan screen. Whatever you
-                don't use stays on your account for next time.
+                don&apos;t use stays on your account for next time.
               </p>
             </div>
           </div>
