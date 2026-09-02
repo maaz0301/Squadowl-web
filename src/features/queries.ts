@@ -1670,13 +1670,19 @@ export function useGuardianRostersQuery(enabled = true) {
   });
 }
 
-/** Removes the guardian's athlete from a season's roster (guardian_leave_season RPC). */
+/** Takes the guardian's athlete off the team entirely — see DataSource.leaveSeason. */
 export function useLeaveSeasonMutation() {
   const qc = useQueryClient();
   const userId = useAuthStore((s) => s.session?.user?.id);
   return useMutation({
     mutationFn: (seasonRosterId: string) => getDataSource().leaveSeason(seasonRosterId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.guardianRosters(userId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.guardianRosters(userId) });
+      // The team roster row goes too, so anything showing that team's roster or
+      // season is now a player out of date.
+      qc.invalidateQueries({ queryKey: queryKeys.seasons });
+      qc.invalidateQueries({ queryKey: queryKeys.teams });
+    },
   });
 }
 
@@ -1739,6 +1745,12 @@ export function useGuardianRealtimeSync() {
       // season across every linked athlete, not one id — so this catches a
       // coach deleting ANY season, not just the one currently on screen.
       .on('postgres_changes', { event: '*', schema: 'public', table: 'seasons' }, () => triggerInvalidate())
+      // Enrollment itself — a coach adding the athlete to a team (which enrolls
+      // them on its season via the team_roster_season_enrollment trigger) is what
+      // flips this portal from "isn't assigned to any tryouts or seasons yet" to a
+      // live schedule and chat, and nothing else here fires on it. Without this the
+      // guardian sat on the empty state until they reloaded the portal.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'season_roster' }, () => triggerInvalidate())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'season_events' }, () => triggerInvalidate())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'event_availability' }, () => triggerInvalidate())
       .subscribe();

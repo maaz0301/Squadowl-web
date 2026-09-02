@@ -6636,6 +6636,9 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async leaveSeason(seasonRosterId: string): Promise<void> {
+    // Removes the team roster row as well as the season one — see the interface
+    // doc and 20260902140000_guardian_leave_team_roster.sql.
+    //
     // Not this.ctx() — that resolves a *staff* tenant account via memberships,
     // which a guardian doesn't have. A plain user-scoped client is enough; the
     // RPC does its own authorization against the roster row.
