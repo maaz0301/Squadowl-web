@@ -16,6 +16,7 @@ import {
   isGoaliePosition,
   mapLegacyScores,
   normalizeScore,
+  resolveWeights,
   playerDisplayName,
   playerInitials,
   weightedOverall,
@@ -351,5 +352,88 @@ describe('playerDisplayName / playerInitials', () => {
   it('tolerates a missing name half', () => {
     expect(playerInitials({ first: 'Jane' })).toBe('J');
     expect(playerInitials({})).toBe('');
+  });
+});
+
+describe('observation and two-state scoring', () => {
+  it('maps a 1-100 observation onto the 1-5 scale', () => {
+    expect(normalizeScore(1, '1-5', 'observation')).toBe(1);
+    expect(normalizeScore(100, '1-5', 'observation')).toBe(5);
+    expect(normalizeScore(50, '1-5', 'observation')).toBeCloseTo(2.98, 2);
+  });
+
+  it('flips the observation scale when the lowest number ranks highest', () => {
+    expect(normalizeScore(1, '1-5', 'observation', undefined, undefined, 'lower_is_better')).toBe(5);
+    expect(normalizeScore(100, '1-5', 'observation', undefined, undefined, 'lower_is_better')).toBe(1);
+  });
+
+  it('clamps observation marks outside 1-100', () => {
+    expect(normalizeScore(0, '1-5', 'observation')).toBe(1);
+    expect(normalizeScore(140, '1-5', 'observation')).toBe(5);
+  });
+
+  it('scores Yes / Effective as 5 and No / Not Effective as 1', () => {
+    expect(normalizeScore(1, '1-5', 'yes_no')).toBe(5);
+    expect(normalizeScore(0, '1-5', 'yes_no')).toBe(1);
+    expect(normalizeScore(1, '1-5', 'effectiveness')).toBe(5);
+    expect(normalizeScore(0, '1-5', 'effectiveness')).toBe(1);
+  });
+
+  it('honours a distance rubric that ranks the lowest value highest', () => {
+    expect(normalizeScore(10, '1-5', 'distance', 10, 20, 'lower_is_better')).toBe(5);
+    expect(normalizeScore(20, '1-5', 'distance', 10, 20, 'lower_is_better')).toBe(1);
+  });
+});
+
+describe('resolveWeights', () => {
+  it('splits evenly when no rubric carries a weight', () => {
+    expect(resolveWeights([undefined, undefined, undefined, undefined])).toEqual([25, 25, 25, 25]);
+  });
+
+  it('keeps explicit weights as given', () => {
+    expect(resolveWeights([30, 25, 20, 15, 10])).toEqual([30, 25, 20, 15, 10]);
+  });
+
+  it('splits the leftover percentage across the unweighted rubrics', () => {
+    expect(resolveWeights([60, undefined, undefined])).toEqual([60, 20, 20]);
+  });
+
+  it('falls back to the average weight when nothing is left over', () => {
+    expect(resolveWeights([60, 40, undefined])).toEqual([60, 40, 50]);
+  });
+});
+
+describe('weighted overall with per-rubric weights', () => {
+  const categories: RubricCategory[] = [
+    { key: 'a', label: 'A', role: 'skater', subskills: [{ key: 'a', label: 'A', scale: '1-5', scoringType: 'skill', weight: 80 }] },
+    { key: 'b', label: 'B', role: 'skater', subskills: [{ key: 'b', label: 'B', scale: '1-5', scoringType: 'skill', weight: 20 }] },
+  ];
+
+  it('weights each rubric by its own percentage', () => {
+    // 5 * 0.8 + 1 * 0.2 = 4.2, not the 3.0 an equal split would give.
+    expect(weightedOverall({ a: 5, b: 1 }, categories, {})).toBe(4.2);
+  });
+
+  it('still splits equally when no rubric sets a weight', () => {
+    const unweighted: RubricCategory[] = categories.map((c) => ({
+      ...c,
+      subskills: c.subskills.map((s) => ({ ...s, weight: undefined })),
+    }));
+    expect(weightedOverall({ a: 5, b: 1 }, unweighted, {})).toBe(3);
+  });
+
+  it('weights sub-skills inside one grouped category', () => {
+    const grouped: RubricCategory[] = [
+      {
+        key: 'skating',
+        label: 'Skating',
+        role: 'skater',
+        subskills: [
+          { key: 'x', label: 'X', scale: '1-5', scoringType: 'skill', weight: 75 },
+          { key: 'y', label: 'Y', scale: '1-5', scoringType: 'skill', weight: 25 },
+        ],
+      },
+    ];
+    expect(categoryAverage({ x: 4, y: 8 }, grouped[0].subskills)).toBe(4.25);
   });
 });

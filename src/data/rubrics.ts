@@ -12,6 +12,8 @@ export interface SubSkill {
   minVal?: number;
   maxVal?: number;
   rankingDirection?: RankingDirection;
+  /** Share of the overall score this rubric carries, 1–100%. Unset = an equal share of whatever weight the explicitly weighted rubrics leave over. */
+  weight?: number;
 }
 
 /** A weighted group of sub-skills, e.g. "Skating" → 5 sub-skills. */
@@ -20,6 +22,40 @@ export interface RubricCategory {
   label: string;
   role: 'skater' | 'goalie';
   subskills: SubSkill[];
+}
+
+/** Highest observation mark — an observation rubric is scored 1–100. */
+export const OBSERVATION_MAX = 100;
+
+/** Scoring types that already produce a 1–5 rating without needing benchmarks, so they always count toward the weighted overall. */
+export function isRatingScoringType(type: ScoringType | undefined): boolean {
+  return !type || type === 'skill' || type === 'observation' || type === 'yes_no' || type === 'effectiveness';
+}
+
+/** Two-state rubrics (Yes/No, Effective/Not Effective) stored as 1 or 0. */
+export function isBinaryScoringType(type: ScoringType | undefined): boolean {
+  return type === 'yes_no' || type === 'effectiveness';
+}
+
+/** Scoring types entered as a raw measurement against min/max benchmarks. */
+export function isMetricScoringType(type: ScoringType | undefined): boolean {
+  return type === 'time' || type === 'distance' || type === 'speed';
+}
+
+/** Builder-facing name for each scoring type, shared by every "add a rubric" form. */
+export const SCORING_TYPE_LABELS: Record<ScoringType, string> = {
+  skill: 'Skill / Technique',
+  time: 'Time-based',
+  distance: 'Distance-based',
+  speed: 'Speed-based',
+  observation: 'Observation (1-100)',
+  yes_no: 'Yes / No',
+  effectiveness: 'Effective / Not Effective',
+};
+
+/** The two button labels of a binary rubric, positive one first. */
+export function binaryLabels(type: ScoringType | undefined): [string, string] {
+  return type === 'effectiveness' ? ['Effective', 'Not Effective'] : ['Yes', 'No'];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for signature parity with callers/mobile; sport-specific rubrics were removed in 7.1
@@ -67,6 +103,8 @@ export interface CustomRubricInput {
   minVal?: number;
   maxVal?: number;
   rankingDirection?: RankingDirection;
+  /** Share of the overall score this rubric carries, 1–100%. */
+  weight?: number;
   role?: string;
 }
 
@@ -74,7 +112,8 @@ function toSubSkill(r: CustomRubricInput): SubSkill {
   const scale: Scale = r.scale === '1-10' ? '1-10' : '1-5';
   const scoringType: ScoringType = r.scoringType ?? 'skill';
   const rankingDirection: RankingDirection = r.rankingDirection ?? (scoringType === 'time' ? 'lower_is_better' : 'higher_is_better');
-  return { key: r.key, label: r.label, scale, scoringType, unit: r.unit, minVal: r.minVal, maxVal: r.maxVal, rankingDirection };
+  const weight = r.weight != null && isFinite(r.weight) && r.weight > 0 ? r.weight : undefined;
+  return { key: r.key, label: r.label, scale, scoringType, unit: r.unit, minVal: r.minVal, maxVal: r.maxVal, rankingDirection, weight };
 }
 
 /**
@@ -132,26 +171,42 @@ export function buildDefaultWeights(categories: RubricCategory[]): Record<string
 
 // ─── Scoring math (matches the web prototype) ────────────────────────────────
 
-/** 1–10 scores or metric benchmarks normalize onto the 1–5 scale. */
+/** 1–10 scores, 1–100 observations, yes/no calls and metric benchmarks all normalize onto the 1–5 scale. */
 export function normalizeScore(
   value: number | undefined,
   scale: Scale = '1-5',
   scoringType: ScoringType = 'skill',
   minVal?: number,
   maxVal?: number,
+  rankingDirection?: RankingDirection,
 ): number | null {
   if (value == null || Number.isNaN(value)) return null;
 
+  // Yes / Effective = a full 5, No / Not Effective = the floor of 1.
+  if (isBinaryScoringType(scoringType)) return value > 0 ? 5 : 1;
+
+  if (scoringType === 'observation') {
+    const clamped = Math.max(1, Math.min(OBSERVATION_MAX, value));
+    const ratio = (clamped - 1) / (OBSERVATION_MAX - 1);
+    const scored = rankingDirection === 'lower_is_better' ? 5 - ratio * 4 : 1 + ratio * 4;
+    return Math.round(scored * 100) / 100;
+  }
+
   if (scoringType !== 'skill') {
     if (minVal != null && maxVal != null && maxVal !== minVal) {
-      if (scoringType === 'time') {
-        // Lower is better (minVal = best = 5, maxVal = worst = 1)
+      // The rubric's own ranking rule wins; time defaults to lower-is-better,
+      // distance / speed to higher-is-better, as they always have.
+      const lowerIsBetter = rankingDirection
+        ? rankingDirection === 'lower_is_better'
+        : scoringType === 'time';
+      if (lowerIsBetter) {
+        // minVal = best = 5, maxVal = worst = 1
         if (value <= minVal) return 5;
         if (value >= maxVal) return 1;
         const ratio = (value - minVal) / (maxVal - minVal);
         return Math.round((5 - ratio * 4) * 100) / 100;
       } else {
-        // Distance or Speed: Higher is better (maxVal = best = 5, minVal = worst = 1)
+        // maxVal = best = 5, minVal = worst = 1
         if (value >= maxVal) return 5;
         if (value <= minVal) return 1;
         const ratio = (value - minVal) / (maxVal - minVal);
@@ -167,9 +222,25 @@ export function normalizeScore(
   return scale === '1-10' ? clamped / 2 : clamped;
 }
 
-function mean(nums: number[]): number | null {
-  if (!nums.length) return null;
-  return nums.reduce((a, b) => a + b, 0) / nums.length;
+/**
+ * Turn a list of optional 1–100 weights into concrete ones. Rubrics with no
+ * weight of their own split whatever percentage the weighted rubrics leave
+ * over (and, when nothing is left over, take the average of the weights that
+ * were set) — so a set of rubrics where nobody chose a weight stays exactly
+ * equal-weighted, as before weights existed.
+ */
+export function resolveWeights(weights: Array<number | undefined>): number[] {
+  const n = weights.length;
+  if (!n) return [];
+  const isSet = (w: number | undefined): w is number => w != null && isFinite(w) && w > 0;
+  const set = weights.filter(isSet);
+  if (!set.length) return weights.map(() => 100 / n);
+  const unsetCount = n - set.length;
+  if (!unsetCount) return weights.map((w) => w as number);
+  const total = set.reduce((a, b) => a + b, 0);
+  const leftover = 100 - total;
+  const share = leftover > 0 ? leftover / unsetCount : total / set.length;
+  return weights.map((w) => (isSet(w) ? w : share));
 }
 
 /** Maps legacy rubric keys (e.g. 'SK1') to current keys (e.g. 'SK1 Accel') */
@@ -190,32 +261,64 @@ export function mapLegacyScores(
   return mapped;
 }
 
-/** Average of all scored sub-skills in a category, from a single score map. */
+/** One sub-skill's score, normalized onto the 1–5 scale. */
+function subskillScore(scores: Record<string, number> | undefined, s: SubSkill): number | null {
+  return normalizeScore(
+    scores?.[s.key],
+    s.scale ?? '1-5',
+    s.scoringType ?? 'skill',
+    s.minVal,
+    s.maxVal,
+    s.rankingDirection,
+  );
+}
+
+function weightedMean(vals: number[], weights: number[]): number | null {
+  let sum = 0;
+  let wsum = 0;
+  for (let i = 0; i < vals.length; i++) {
+    const w = weights[i];
+    if (!w) continue;
+    sum += vals[i] * w;
+    wsum += w;
+  }
+  return wsum ? sum / wsum : null;
+}
+
+/** Weighted average of all scored sub-skills in a category, from a single score map. */
 export function categoryAverage(
   scores: Record<string, number>,
   subskills: SubSkill[],
 ): number | null {
+  const resolved = resolveWeights(subskills.map((s) => s.weight));
   const vals: number[] = [];
-  for (const s of subskills) {
-    const v = normalizeScore(scores[s.key], s.scale ?? '1-5', s.scoringType ?? 'skill', s.minVal, s.maxVal);
-    if (v !== null) vals.push(v);
-  }
-  return mean(vals);
+  const ws: number[] = [];
+  subskills.forEach((s, i) => {
+    const v = subskillScore(scores, s);
+    if (v === null) return;
+    vals.push(v);
+    ws.push(resolved[i]);
+  });
+  return weightedMean(vals, ws);
 }
 
-/** Average of all scored sub-skills in a category, pooled across every evaluation. */
+/** Weighted average of all scored sub-skills in a category, pooled across every evaluation. */
 export function categoryAverageAcrossEvals(
   evals: Evaluation[],
   subskills: SubSkill[],
 ): number | null {
+  const resolved = resolveWeights(subskills.map((s) => s.weight));
   const vals: number[] = [];
+  const ws: number[] = [];
   for (const e of evals) {
-    for (const s of subskills) {
-      const v = normalizeScore(e.scores?.[s.key], s.scale ?? '1-5', s.scoringType ?? 'skill', s.minVal, s.maxVal);
-      if (v !== null) vals.push(v);
-    }
+    subskills.forEach((s, i) => {
+      const v = subskillScore(e.scores, s);
+      if (v === null) return;
+      vals.push(v);
+      ws.push(resolved[i]);
+    });
   }
-  return mean(vals);
+  return weightedMean(vals, ws);
 }
 
 function weightOf(
@@ -228,6 +331,32 @@ function weightOf(
   return 1 / (categories.length || 1);
 }
 
+/**
+ * Weight per category, keyed by category key. When any rubric carries its own
+ * 1–100% weight, those percentages drive the overall (a category's weight is
+ * the sum of its rubrics'); otherwise the assessment's stored category weights
+ * are used exactly as before.
+ */
+export function categoryWeightMap(
+  categories: RubricCategory[],
+  weights: Record<string, number>,
+): Map<string, number> {
+  const flat = categories.flatMap((c) => c.subskills);
+  const map = new Map<string, number>();
+  if (!flat.some((s) => s.weight != null)) {
+    for (const cat of categories) map.set(cat.key, weightOf(cat.key, weights, categories));
+    return map;
+  }
+  const resolved = resolveWeights(flat.map((s) => s.weight));
+  let i = 0;
+  for (const cat of categories) {
+    let total = 0;
+    for (let n = 0; n < cat.subskills.length; n++) total += resolved[i++];
+    map.set(cat.key, total);
+  }
+  return map;
+}
+
 /** Weighted overall from a single score map (used live while scoring). */
 export function weightedOverall(
   scores: Record<string, number>,
@@ -236,15 +365,14 @@ export function weightedOverall(
 ): number {
   let sum = 0;
   let wsum = 0;
-  const skillCats = categories.filter((cat) =>
-    cat.subskills.some((s) => !s.scoringType || s.scoringType === 'skill'),
-  );
+  const skillCats = categories.filter((cat) => cat.subskills.some((s) => isRatingScoringType(s.scoringType)));
   const targetCats = skillCats.length > 0 ? skillCats : categories;
+  const catWeights = categoryWeightMap(categories, weights);
 
   for (const cat of targetCats) {
     const avg = categoryAverage(scores, cat.subskills);
     if (avg === null) continue;
-    const w = weightOf(cat.key, weights, categories);
+    const w = catWeights.get(cat.key) ?? 0;
     if (!w) continue;
     sum += avg * w;
     wsum += w;
@@ -260,15 +388,14 @@ export function weightedOverallAcrossEvals(
 ): number {
   let sum = 0;
   let wsum = 0;
-  const skillCats = categories.filter((cat) =>
-    cat.subskills.some((s) => !s.scoringType || s.scoringType === 'skill'),
-  );
+  const skillCats = categories.filter((cat) => cat.subskills.some((s) => isRatingScoringType(s.scoringType)));
   const targetCats = skillCats.length > 0 ? skillCats : categories;
+  const catWeights = categoryWeightMap(categories, weights);
 
   for (const cat of targetCats) {
     const avg = categoryAverageAcrossEvals(evals, cat.subskills);
     if (avg === null) continue;
-    const w = weightOf(cat.key, weights, categories);
+    const w = catWeights.get(cat.key) ?? 0;
     if (!w) continue;
     sum += avg * w;
     wsum += w;

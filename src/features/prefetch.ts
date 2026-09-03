@@ -66,6 +66,22 @@ export function prefetchTryout(id: string): void {
   warm(queryKeys.tryout(id), () => getDataSource().getTryout(id));
 }
 
+/**
+ * The "+ New Evaluation" form. It renders straight away, but its team picker
+ * and the count behind its plan-limit check are both round trips it starts on
+ * mount — warmed on the button's hover, they are usually answered by the time
+ * the route's chunk has loaded.
+ */
+export function prefetchNewAssessment(): void {
+  warm(queryKeys.teams, () => getDataSource().listTeams());
+  warm(queryKeys.assessmentCount, () => getDataSource().countAssessments());
+}
+
+/** The "+ New Team" form — the count its plan-limit check reads on mount. */
+export function prefetchNewTeam(): void {
+  warm(queryKeys.teamCount, () => getDataSource().countTeams());
+}
+
 /** What /team/[id] opens with. The team itself already comes from the cached list. */
 export function prefetchTeamDetail(teamId: string): void {
   warm(queryKeys.teamRoster(teamId), () => getDataSource().listTeamRoster(teamId));
@@ -80,6 +96,8 @@ const BY_ROUTE: Record<string, () => void> = {
   '/teams': prefetchTeams,
   '/search': prefetchSearch,
   '/archived-assessments': prefetchArchivedAssessments,
+  '/assessment/new': prefetchNewAssessment,
+  '/team/new': prefetchNewTeam,
 };
 
 /** Called from nav items on hover/focus/touch, keyed by href. */

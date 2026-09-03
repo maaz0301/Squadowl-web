@@ -66,7 +66,18 @@ export const AssessorSchema = z.object({
 
 export type Assessor = z.infer<typeof AssessorSchema>;
 
-export const SCORING_TYPES = ['skill', 'time', 'distance', 'speed'] as const;
+export const SCORING_TYPES = [
+  'skill',
+  'time',
+  'distance',
+  'speed',
+  /** Free 1–100 observation score; `rankingDirection` decides whether 1 or 100 is the best mark. */
+  'observation',
+  /** Two-state pass/fail — stored as 1 (yes) or 0 (no). */
+  'yes_no',
+  /** Two-state effectiveness call — stored as 1 (effective) or 0 (not effective). */
+  'effectiveness',
+] as const;
 export type ScoringType = (typeof SCORING_TYPES)[number];
 
 export const RANKING_DIRECTIONS = ['higher_is_better', 'lower_is_better'] as const;
@@ -83,6 +94,8 @@ export const CustomRubricSchema = z.object({
   minVal: z.number().optional(),
   maxVal: z.number().optional(),
   rankingDirection: z.enum(RANKING_DIRECTIONS).default('higher_is_better'),
+  /** Share of the overall score this rubric carries, 1–100%. Unset rubrics split whatever weight is left over equally, so existing assessments keep their equal-weight behaviour. */
+  weight: z.number().min(1).max(100).optional(),
   role: z.enum(['skater', 'goalie', 'all']).optional(),
 });
 

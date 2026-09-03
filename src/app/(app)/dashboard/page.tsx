@@ -36,7 +36,7 @@ import {
   useDeleteTryoutMutation,
 } from '@/features/queries';
 import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
-import { prefetchTryout } from '@/features/prefetch';
+import { prefetchNewAssessment, prefetchTryout } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 
 export default function DashboardPage() {
@@ -231,6 +231,14 @@ export default function DashboardPage() {
   const teams = teamsQuery.data ?? [];
   const planTier = user?.planTier ?? 'free';
 
+  // Hover / keyboard focus / the touch before the tap: a few hundred ms of
+  // warning, spent loading the form's route chunk and starting the two reads it
+  // mounts with, so the screen is ready when the click lands.
+  const warmNewAssessment = () => {
+    router.prefetch('/assessment/new');
+    prefetchNewAssessment();
+  };
+
   const newAssessment = () => {
     if (isAtAssessmentLimit(planTier, tryouts.length)) {
       setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'evaluations'));
@@ -246,7 +254,13 @@ export default function DashboardPage() {
         right={
           <>
             <Button label="Search" variant="secondary" onClick={() => router.push('/search')} />
-            <Button label="+ New Evaluation" onClick={newAssessment} />
+            <Button
+              label="+ New Evaluation"
+              onClick={newAssessment}
+              onMouseEnter={warmNewAssessment}
+              onFocus={warmNewAssessment}
+              onTouchStart={warmNewAssessment}
+            />
           </>
         }
       />

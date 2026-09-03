@@ -52,6 +52,7 @@ import {
   useSetAvailabilityMutation,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
+import { prefetchNewAssessment } from '@/features/prefetch';
 import { useDebouncedValue } from '@/lib/hooks';
 import { useUser, usePermissions } from '@/state/authStore';
 import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
@@ -130,6 +131,12 @@ export default function TeamDetailPage() {
   const id = Array.isArray(routeParams?.id) ? routeParams.id[0] : (routeParams?.id as string);
   const colors = useThemeColors();
   const router = useRouter();
+  // The Assessments tab's Create button: warm the form's route chunk and the
+  // reads it mounts with on hover, so the click opens an already-loaded screen.
+  const warmNewAssessment = () => {
+    router.prefetch('/assessment/new');
+    prefetchNewAssessment();
+  };
   const searchParams = useSearchParams();
   const { alert, confirm } = useAlert();
   const teamsQuery = useTeamsQuery();
@@ -1046,6 +1053,9 @@ export default function TeamDetailPage() {
               label="Create"
               size="sm"
               onClick={() => router.push(`/assessment/new?teamId=${team.id}`)}
+              onMouseEnter={warmNewAssessment}
+              onFocus={warmNewAssessment}
+              onTouchStart={warmNewAssessment}
             />
             <Button
               label="Attach Existing"

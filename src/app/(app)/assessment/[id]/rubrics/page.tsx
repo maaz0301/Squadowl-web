@@ -20,7 +20,14 @@ import { useTryoutQuery, useUpdateTryoutMutation } from '@/features/queries';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { getPlanDefinition } from '@/data/plans';
-import type { ScoringType, RankingDirection } from '@/data/types';
+import {
+  SCORING_TYPE_LABELS,
+  binaryLabels,
+  isBinaryScoringType,
+  isMetricScoringType,
+  resolveWeights,
+} from '@/data/rubrics';
+import { SCORING_TYPES, type ScoringType, type RankingDirection } from '@/data/types';
 
 export default function RubricsPage() {
   const id = useAssessmentId();
@@ -42,6 +49,7 @@ export default function RubricsPage() {
   const [minValStr, setMinValStr] = useState('');
   const [maxValStr, setMaxValStr] = useState('');
   const [rankingDirection, setRankingDirection] = useState<RankingDirection>('higher_is_better');
+  const [weightStr, setWeightStr] = useState('');
 
   const handleScoringTypeChange = (type: ScoringType) => {
     setScoringType(type);
@@ -51,6 +59,9 @@ export default function RubricsPage() {
       setRankingDirection('higher_is_better');
     }
   };
+
+  const weightNum = weightStr.trim() !== '' ? parseFloat(weightStr) : undefined;
+  const weightValid = weightNum == null || (!isNaN(weightNum) && weightNum >= 1 && weightNum <= 100);
 
   if (tryoutQuery.isLoading || !id) return <LoadingState message="Loading rubrics..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -65,7 +76,7 @@ export default function RubricsPage() {
   const atCustomLimit = customLimit !== 'unlimited' && custom.length >= (customLimit as number);
 
   const addCustom = async () => {
-    if (!label.trim() || atCustomLimit) return;
+    if (!label.trim() || atCustomLimit || !weightValid) return;
     const key = label.trim().toLowerCase().replace(/\s+/g, '_');
 
     let defaultUnit = unit.trim();
@@ -81,6 +92,8 @@ export default function RubricsPage() {
     const minNum = minValStr.trim() !== '' ? parseFloat(minValStr) : undefined;
     const maxNum = maxValStr.trim() !== '' ? parseFloat(maxValStr) : undefined;
 
+    const isMetric = isMetricScoringType(scoringType);
+
     const next = [
       ...custom,
       {
@@ -89,10 +102,11 @@ export default function RubricsPage() {
         category: category.trim() || undefined,
         scoringType,
         scale: scoringType === 'skill' ? scale : ('1-5' as const),
-        unit: scoringType !== 'skill' ? defaultUnit : undefined,
-        minVal: minNum != null && !isNaN(minNum) ? minNum : undefined,
-        maxVal: maxNum != null && !isNaN(maxNum) ? maxNum : undefined,
+        unit: isMetric ? defaultUnit : undefined,
+        minVal: isMetric && minNum != null && !isNaN(minNum) ? minNum : undefined,
+        maxVal: isMetric && maxNum != null && !isNaN(maxNum) ? maxNum : undefined,
         rankingDirection,
+        weight: weightNum != null && !isNaN(weightNum) ? weightNum : undefined,
       },
     ];
 
@@ -108,6 +122,7 @@ export default function RubricsPage() {
     setUnit('');
     setMinValStr('');
     setMaxValStr('');
+    setWeightStr('');
   };
 
   const removeCustom = async (keyToRemove: string) => {
@@ -138,6 +153,13 @@ export default function RubricsPage() {
     }
   };
 
+  // What each rubric actually contributes: its own weight, or an even share of
+  // whatever the weighted rubrics leave over.
+  const effectiveWeights = resolveWeights(custom.map((r) => r.weight));
+  const weightedCount = custom.filter((r) => r.weight != null).length;
+  const unweightedCount = custom.length - weightedCount;
+  const explicitTotal = custom.reduce((sum, r) => sum + (r.weight ?? 0), 0);
+
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
       <div className="flex flex-col gap-5">
@@ -158,14 +180,33 @@ export default function RubricsPage() {
             {customLimit !== 'unlimited' ? ` / ${customLimit}` : ''})
           </span>
 
-          {custom.map((r) => {
-            const typeLabel = r.scoringType ?? 'skill';
-            const ruleText = r.rankingDirection === 'lower_is_better' ? 'Shortest wins' : 'Highest wins';
-            let details =
-              r.scoringType === 'skill' || !r.scoringType
-                ? `${r.scale ?? '1-5'} scale`
-                : `${r.unit ?? ''} (${ruleText})`;
+          {custom.length > 0 ? (
+            <p className="text-xs" style={{ color: explicitTotal > 100 ? colors.danger : colors.inkMuted }}>
+              Weights: {formatPct(explicitTotal)} assigned across {weightedCount}{' '}
+              {weightedCount === 1 ? 'rubric' : 'rubrics'}
+              {unweightedCount > 0
+                ? ` · the remaining ${unweightedCount} split ${formatPct(Math.max(0, 100 - explicitTotal))} evenly`
+                : ''}
+              {explicitTotal > 100 ? ' · over 100% — weights are scaled to their share of the total.' : ''}
+            </p>
+          ) : null}
+
+          {custom.map((r, i) => {
+            const type = r.scoringType ?? 'skill';
+            const ruleText = r.rankingDirection === 'lower_is_better' ? 'Lowest wins' : 'Highest wins';
+            let details: string;
+            if (isBinaryScoringType(type)) {
+              const [positive, negative] = binaryLabels(type);
+              details = `${positive} / ${negative} · ${positive} scores 5.0`;
+            } else if (type === 'observation') {
+              details = `1-100 observation (${ruleText})`;
+            } else if (type === 'skill') {
+              details = `${r.scale ?? '1-5'} scale`;
+            } else {
+              details = `${r.unit ?? ''} (${ruleText})`;
+            }
             if (r.minVal != null && r.maxVal != null) details += ` · Range: ${r.minVal} to ${r.maxVal}`;
+            details += ` · Weight: ${formatPct(effectiveWeights[i])}${r.weight == null ? ' (auto)' : ''}`;
 
             return (
               <div
@@ -178,8 +219,9 @@ export default function RubricsPage() {
                     <span className="text-base font-bold" style={{ color: colors.ink }}>
                       {r.label}
                     </span>
-                    <Badge label={typeLabel.toUpperCase()} variant="brand" />
+                    <Badge label={SCORING_TYPE_LABELS[type]} variant="brand" />
                     {r.category ? <Badge label={r.category} /> : null}
+                    <Badge label={`${formatPct(effectiveWeights[i])}`} />
                   </div>
                   <p className="text-xs" style={{ color: colors.inkMuted }}>
                     {details}
@@ -239,14 +281,60 @@ export default function RubricsPage() {
           <div>
             <SectionLabel className="mb-2">3. Scoring Type</SectionLabel>
             <div className="flex flex-wrap gap-2">
-              <Chip label="Skill / Technique" active={scoringType === 'skill'} onClick={() => handleScoringTypeChange('skill')} />
-              <Chip label="Time-based" active={scoringType === 'time'} onClick={() => handleScoringTypeChange('time')} />
-              <Chip label="Distance-based" active={scoringType === 'distance'} onClick={() => handleScoringTypeChange('distance')} />
-              <Chip label="Speed-based" active={scoringType === 'speed'} onClick={() => handleScoringTypeChange('speed')} />
+              {SCORING_TYPES.map((t) => (
+                <Chip
+                  key={t}
+                  label={SCORING_TYPE_LABELS[t]}
+                  active={scoringType === t}
+                  onClick={() => handleScoringTypeChange(t)}
+                />
+              ))}
             </div>
           </div>
 
-          {scoringType === 'skill' ? (
+          {isBinaryScoringType(scoringType) ? (
+            <div className="flex flex-col gap-2">
+              <SectionLabel>4. Answer Buttons</SectionLabel>
+              <div className="flex flex-wrap gap-2">
+                <Badge label={binaryLabels(scoringType)[0]} variant="brand" />
+                <Badge label={binaryLabels(scoringType)[1]} />
+              </div>
+              <p className="text-xs italic" style={{ color: colors.inkMuted }}>
+                Assessors tap {binaryLabels(scoringType)[0]} / {binaryLabels(scoringType)[1]} — or flip the slide switch.
+                {' '}{binaryLabels(scoringType)[0]} scores 5.0, {binaryLabels(scoringType)[1]} scores 1.0.
+              </p>
+            </div>
+          ) : scoringType === 'observation' ? (
+            <div className="flex flex-col gap-2">
+              <SectionLabel>4. Ranking Rule</SectionLabel>
+              <button
+                type="button"
+                onClick={() => setRankingDirection(rankingDirection === 'lower_is_better' ? 'higher_is_better' : 'lower_is_better')}
+                className="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors hover:opacity-90"
+                style={{ borderColor: colors.border, backgroundColor: colors.field }}
+              >
+                <div className="flex-1 pr-3">
+                  <span className="text-sm font-bold" style={{ color: colors.ink }}>
+                    Lowest number is highest ranked: {rankingDirection === 'lower_is_better' ? 'Yes' : 'No'}
+                  </span>
+                  <p className="mt-0.5 text-xs" style={{ color: colors.inkMuted }}>
+                    {rankingDirection === 'lower_is_better'
+                      ? 'Scored 1-100 · 1 = best (5.0), 100 = worst (1.0)'
+                      : 'Scored 1-100 · 100 = best (5.0), 1 = worst (1.0)'}
+                  </p>
+                </div>
+                <div
+                  className="relative h-6 w-11 rounded-full transition-colors"
+                  style={{ backgroundColor: rankingDirection === 'lower_is_better' ? colors.primary : colors.border }}
+                >
+                  <div
+                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                    style={{ transform: rankingDirection === 'lower_is_better' ? 'translateX(22px)' : 'translateX(2px)' }}
+                  />
+                </div>
+              </button>
+            </div>
+          ) : scoringType === 'skill' ? (
             <div className="flex flex-col gap-2">
               <SectionLabel>4. Scale Choice</SectionLabel>
               <div className="flex flex-wrap gap-2">
@@ -325,14 +413,41 @@ export default function RubricsPage() {
             </div>
           )}
 
+          <div className="flex flex-col gap-1">
+            <Input
+              label="Weight (% of the overall score)"
+              value={weightStr}
+              onChange={(e) => setWeightStr(e.target.value)}
+              inputMode="numeric"
+              placeholder="e.g. 25 — leave blank for an even share"
+            />
+            {!weightValid ? (
+              <p className="text-xs font-bold" style={{ color: colors.danger }}>
+                Weight must be a number between 1 and 100.
+              </p>
+            ) : (
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                {weightNum != null
+                  ? `This rubric carries ${weightNum}% of the overall score.`
+                  : 'Left blank, this rubric shares whatever percentage the weighted rubrics leave over.'}
+              </p>
+            )}
+          </div>
+
           <Button
             label="Add Rubric Category"
             onClick={addCustom}
             loading={updateTryout.isPending}
-            disabled={atCustomLimit || !label.trim()}
+            disabled={atCustomLimit || !label.trim() || !weightValid}
           />
         </Card>
       </PlanGate>
     </div>
   );
+}
+
+/** Weights print as whole percentages where they are whole, e.g. "25%" / "16.7%". */
+function formatPct(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%`;
 }

@@ -29,7 +29,7 @@ import {
 import { useUser } from '@/state/authStore';
 import { isAtTeamLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
-import { prefetchTeamDetail } from '@/features/prefetch';
+import { prefetchNewTeam, prefetchTeamDetail } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 
 export default function TeamsPage() {
@@ -63,6 +63,13 @@ export default function TeamsPage() {
   const teams = teamsQuery.data ?? [];
   const seasons = seasonsQuery.data ?? [];
   const playerCounts = playerCountsQuery.data;
+
+  // Same warm-on-intent as the team cards below: the route's chunk and the
+  // count the form checks on mount, both started before the click.
+  const warmNewTeam = () => {
+    router.prefetch('/team/new');
+    prefetchNewTeam();
+  };
 
   const newTeam = () => {
     // Delegated teams belong to the club that pays for them, not to this plan.
@@ -99,7 +106,15 @@ export default function TeamsPage() {
       <PageHeader
         title="Teams"
         subtitle="Rosters, schedules and season events"
-        right={<Button label="+ New Team" onClick={newTeam} />}
+        right={
+          <Button
+            label="+ New Team"
+            onClick={newTeam}
+            onMouseEnter={warmNewTeam}
+            onFocus={warmNewTeam}
+            onTouchStart={warmNewTeam}
+          />
+        }
       />
 
       <UsageNudgeBanner

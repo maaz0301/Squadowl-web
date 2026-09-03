@@ -1,6 +1,14 @@
-import type { Evaluation, RankingDirection, Tryout } from './types';
+import type { Evaluation, RankingDirection, ScoringType, Tryout } from './types';
 import { computePlayerResults } from './scoring';
-import { getPlayerCategories, getPlayerSubskills, isGoaliePosition, playerDisplayName, weightedOverall } from './rubrics';
+import {
+  binaryLabels,
+  getPlayerCategories,
+  getPlayerSubskills,
+  isBinaryScoringType,
+  isGoaliePosition,
+  playerDisplayName,
+  weightedOverall,
+} from './rubrics';
 
 /** One rubric column shared by the summary table and a player's eval-history table. */
 export interface ResultsExportColumn {
@@ -100,13 +108,16 @@ function formatScore2(value: number | undefined): string {
   return value == null ? '' : value.toFixed(2);
 }
 
-/** A single evaluation's raw entered value — carries its unit, e.g. "44 km/h", when the rubric has one. */
+/** A single evaluation's raw entered value — carries its unit, e.g. "44 km/h", when the rubric has one, and reads back a two-state rubric as its own wording, e.g. "Effective". */
 function formatEvalScore(value: number | undefined, column: ResultsExportColumn): string {
   if (value == null) return '';
+  const type = column.scoringType as ScoringType | undefined;
+  if (isBinaryScoringType(type)) {
+    const [positive, negative] = binaryLabels(type);
+    return value > 0 ? positive : negative;
+  }
   const rounded = round2(value);
-  return column.scoringType && column.scoringType !== 'skill' && column.unit
-    ? `${rounded} ${column.unit}`
-    : String(rounded);
+  return type && type !== 'skill' && column.unit ? `${rounded} ${column.unit}` : String(rounded);
 }
 
 function sportLabel(tryout: Tryout): string {

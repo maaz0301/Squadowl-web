@@ -9,6 +9,7 @@ import {
   CreateAssessmentFormSchema,
   SPORTS,
   EVENT_TYPES,
+  SCORING_TYPES,
   type CreateAssessmentForm,
   type Assessor,
   type CustomRubric,
@@ -43,13 +44,7 @@ import { isAtAssessmentLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { getDataSource } from '@/data';
-
-const SCORING_TYPE_LABEL: Record<ScoringType, string> = {
-  skill: 'Skill / Technique',
-  time: 'Time-based',
-  distance: 'Distance-based',
-  speed: 'Speed-based',
-};
+import { SCORING_TYPE_LABELS, binaryLabels, isBinaryScoringType, isMetricScoringType } from '@/data/rubrics';
 
 function NewAssessmentForm() {
   const colors = useThemeColors();
@@ -85,6 +80,7 @@ function NewAssessmentForm() {
   const [rubricMinStr, setRubricMinStr] = useState('');
   const [rubricMaxStr, setRubricMaxStr] = useState('');
   const [rubricRankingDirection, setRubricRankingDirection] = useState<RankingDirection>('higher_is_better');
+  const [rubricWeightStr, setRubricWeightStr] = useState('');
 
   const handleRubricTypeChange = (type: ScoringType) => {
     setRubricType(type);
@@ -123,6 +119,10 @@ function NewAssessmentForm() {
     setPendingAssessors((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const rubricWeightNum = rubricWeightStr.trim() !== '' ? parseFloat(rubricWeightStr) : undefined;
+  const rubricWeightValid =
+    rubricWeightNum == null || (!isNaN(rubricWeightNum) && rubricWeightNum >= 1 && rubricWeightNum <= 100);
+
   const addRubricToList = () => {
     const label = rubricLabel.trim();
     if (!label) return;
@@ -142,6 +142,12 @@ function NewAssessmentForm() {
     }
     const minNum = rubricMinStr.trim() !== '' ? parseFloat(rubricMinStr) : undefined;
     const maxNum = rubricMaxStr.trim() !== '' ? parseFloat(rubricMaxStr) : undefined;
+    const isMetric = isMetricScoringType(rubricType);
+
+    if (!rubricWeightValid) {
+      alert('Invalid Weight', 'Weight must be a number between 1 and 100 percent.');
+      return;
+    }
 
     setPendingRubrics((prev) => [
       ...prev,
@@ -150,10 +156,11 @@ function NewAssessmentForm() {
         label,
         scoringType: rubricType,
         scale: rubricType === 'skill' ? rubricScale : '1-5',
-        unit: rubricType !== 'skill' ? defaultUnit : undefined,
-        minVal: minNum != null && !isNaN(minNum) ? minNum : undefined,
-        maxVal: maxNum != null && !isNaN(maxNum) ? maxNum : undefined,
+        unit: isMetric ? defaultUnit : undefined,
+        minVal: isMetric && minNum != null && !isNaN(minNum) ? minNum : undefined,
+        maxVal: isMetric && maxNum != null && !isNaN(maxNum) ? maxNum : undefined,
         rankingDirection: rubricRankingDirection,
+        weight: rubricWeightNum != null && !isNaN(rubricWeightNum) ? rubricWeightNum : undefined,
       },
     ]);
     setRubricLabel('');
@@ -163,6 +170,7 @@ function NewAssessmentForm() {
     setRubricMinStr('');
     setRubricMaxStr('');
     setRubricRankingDirection('higher_is_better');
+    setRubricWeightStr('');
     setShowRubricForm(false);
   };
 
@@ -360,7 +368,12 @@ function NewAssessmentForm() {
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {pendingRubrics.map((r) => (
-                    <Chip key={r.key} label={`${r.label} ✕`} active onClick={() => removeRubricFromList(r.key)} />
+                    <Chip
+                      key={r.key}
+                      label={`${r.label}${r.weight != null ? ` · ${r.weight}%` : ''} ✕`}
+                      active
+                      onClick={() => removeRubricFromList(r.key)}
+                    />
                   ))}
                 </div>
               )}
@@ -416,13 +429,53 @@ function NewAssessmentForm() {
           <div>
             <SectionLabel className="mb-2">2. Scoring Type</SectionLabel>
             <div className="flex flex-wrap gap-2">
-              {(Object.keys(SCORING_TYPE_LABEL) as ScoringType[]).map((t) => (
-                <Chip key={t} label={SCORING_TYPE_LABEL[t]} active={rubricType === t} onClick={() => handleRubricTypeChange(t)} />
+              {SCORING_TYPES.map((t) => (
+                <Chip key={t} label={SCORING_TYPE_LABELS[t]} active={rubricType === t} onClick={() => handleRubricTypeChange(t)} />
               ))}
             </div>
           </div>
 
-          {rubricType === 'skill' ? (
+          {isBinaryScoringType(rubricType) ? (
+            <div className="flex flex-col gap-2">
+              <SectionLabel>3. Answer Buttons</SectionLabel>
+              <p className="text-xs italic" style={{ color: colors.inkMuted }}>
+                Assessors tap {binaryLabels(rubricType)[0]} / {binaryLabels(rubricType)[1]} — or flip the slide switch.
+                {' '}{binaryLabels(rubricType)[0]} scores 5.0, {binaryLabels(rubricType)[1]} scores 1.0.
+              </p>
+            </div>
+          ) : rubricType === 'observation' ? (
+            <div className="flex flex-col gap-2">
+              <SectionLabel>3. Ranking Rule</SectionLabel>
+              <button
+                type="button"
+                onClick={() =>
+                  setRubricRankingDirection(rubricRankingDirection === 'lower_is_better' ? 'higher_is_better' : 'lower_is_better')
+                }
+                className="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors hover:opacity-90"
+                style={{ borderColor: colors.border, backgroundColor: colors.field }}
+              >
+                <div className="flex-1 pr-3">
+                  <span className="text-sm font-bold" style={{ color: colors.ink }}>
+                    Lowest number is highest ranked: {rubricRankingDirection === 'lower_is_better' ? 'Yes' : 'No'}
+                  </span>
+                  <p className="mt-0.5 text-xs" style={{ color: colors.inkMuted }}>
+                    {rubricRankingDirection === 'lower_is_better'
+                      ? 'Scored 1-100 · 1 = best (5.0), 100 = worst (1.0)'
+                      : 'Scored 1-100 · 100 = best (5.0), 1 = worst (1.0)'}
+                  </p>
+                </div>
+                <div
+                  className="relative h-6 w-11 rounded-full transition-colors"
+                  style={{ backgroundColor: rubricRankingDirection === 'lower_is_better' ? colors.primary : colors.border }}
+                >
+                  <div
+                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                    style={{ transform: rubricRankingDirection === 'lower_is_better' ? 'translateX(22px)' : 'translateX(2px)' }}
+                  />
+                </div>
+              </button>
+            </div>
+          ) : rubricType === 'skill' ? (
             <div className="flex flex-col gap-2">
               <SectionLabel>3. Scale Choice</SectionLabel>
               <div className="flex flex-wrap gap-2">
@@ -503,7 +556,26 @@ function NewAssessmentForm() {
             </div>
           )}
 
-          <Button label="Add Rubric Category" onClick={addRubricToList} disabled={!rubricLabel.trim()} />
+          <div className="flex flex-col gap-1">
+            <Input
+              label="Weight (% of the overall score)"
+              value={rubricWeightStr}
+              onChange={(e) => setRubricWeightStr(e.target.value)}
+              inputMode="numeric"
+              placeholder="e.g. 25 — leave blank for an even share"
+            />
+            <p className="text-xs" style={{ color: rubricWeightValid ? colors.inkMuted : colors.danger }}>
+              {rubricWeightValid
+                ? 'Weighted rubrics take their percentage of the overall; the rest split what is left over evenly.'
+                : 'Weight must be a number between 1 and 100.'}
+            </p>
+          </div>
+
+          <Button
+            label="Add Rubric Category"
+            onClick={addRubricToList}
+            disabled={!rubricLabel.trim() || !rubricWeightValid}
+          />
         </div>
       </Modal>
 
