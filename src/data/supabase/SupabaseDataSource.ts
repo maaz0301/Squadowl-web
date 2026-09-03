@@ -14,9 +14,13 @@ import {
   isGoaliePosition,
   weightedOverallAcrossEvals,
 } from '../rubrics';
-import { computePlayerResults } from '../scoring';
 import type { TeamBuilderConfig, TeamBuilderState } from '../teamBuilder';
-import { buildTeams, formatExportCsv } from '../teamBuilder';
+import {
+  buildTeams,
+  formatExportCsv,
+  parseTeamCountFromPrompt,
+  parseTiersFromPrompt,
+} from '../teamBuilder';
 import {
   POSITIONS_BY_SPORT,
   TEST_DATA_TAG,
@@ -4249,82 +4253,100 @@ export class SupabaseDataSource implements DataSource {
 
     let result: TeamBuilderState;
     if (config.prompt) {
-      // Map UUIDs to short IDs to drastically reduce token usage and prevent truncation
-      const idMap = new Map<string, string>(); // shortId -> realId
-      const realToShort = new Map<string, string>(); // realId -> shortId
+      // The model reads the instructions; this code does the maths.
+      //
+      // It used to be handed the whole roster and asked for the split itself,
+      // which is a numeric partition over every score at once — the one thing a
+      // language model is worst at. On a 142-player roster the instruction
+      // "build 10 evenly ranked teams" came back with team averages from 1.5 to
+      // 4.9, and nothing downstream checked balance, so that shipped as the
+      // answer. Now the call returns only the *rules* it found in the sentence
+      // (how many teams, what size, per-position counts, whether to keep friend
+      // groups) and buildTeams() applies them deterministically, which is what
+      // makes the result both level and reproducible.
+      const positions = [
+        ...new Set(tryout.roster.map((p) => p.pos).filter((p): p is string => !!p && !!p.trim())),
+      ];
 
-      // Pool every evaluation down to one weighted overall + per-category average
-      // per player (matches the ranking shown in Roster/Export). Sending this instead
-      // of raw eval records (strengths/improve text, dates, evaluator names, one row
-      // per session) keeps the payload flat as roster size and eval count grow —
-      // otherwise a large roster with multiple sessions per player blows past the
-      // model's input token limit.
-      const results = computePlayerResults(tryout);
-      const resultByPlayerId = new Map(results.map((r) => [r.player.id, r]));
-
-      const shortTryout = {
-        ...tryout,
-        roster: tryout.roster.map((p, i) => {
-          const shortId = `p${i}`;
-          idMap.set(shortId, p.id);
-          realToShort.set(p.id, shortId);
-          return { ...p, id: shortId };
-        }),
-        rankings: tryout.roster.map((p) => {
-          const r = resultByPlayerId.get(p.id);
-          return {
-            id: realToShort.get(p.id) || p.id,
-            overall: r?.overall ?? 0,
-            categoryScores: r?.categoryScores ?? {},
-            recommendation: r?.latestRecommendation || undefined,
-          };
-        }),
-      };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `evals` isn't optional on Tryout; deleting it here (post-spread) needs a loose cast
-      delete (shortTryout as any).evals;
-
-      // Call Claude via edge function
       const { supabase } = await this.ctx();
       const { data, error } = await supabase.functions.invoke('generate-ai-insights', {
-        body: { action: 'team_builder', tryout: shortTryout, prompt: config.prompt }
-      });
-      if (error) {
-        throw new Error(error.message);
-      }
-      if (data?.error) {
-        throw new Error(data.message || data.error);
-      }
-
-      // Restore real UUIDs
-      const restoreIds = (arr: string[] = []) => arr.map((short) => idMap.get(short) || short);
-      const posById = new Map(tryout.roster.map((p) => [p.id, p.pos]));
-
-      // Merge Claude's response with local state structure
-      result = {
-        generatedAt: Date.now(),
-        sortMethod: config.sortMethod ?? 'balanced',
-        config: {
-          teamCount: data.teams?.length || config.teamCount,
-          teamNames: data.teams?.map((t: Row) => t.name) || [],
-          keepFriendPackages: config.keepFriendPackages ?? true,
-          splitGoalies: config.splitGoalies ?? true,
+        body: {
+          action: 'team_builder_constraints',
+          // Only what the extraction needs to interpret positions — never the roster.
+          tryout: { id: tryout.id, sport: tryout.sport, sportOther: tryout.sportOther },
+          prompt: config.prompt,
+          positions,
+          playerCount: tryout.roster.length,
         },
-        ranks: [], // We can omit full rankings or compute them locally if needed
-        warnings: data.warnings || [],
-        explanation: data.explanation,
-        teams: (data.teams || []).map((t: Row, i: number) => {
-          const players = restoreIds(t.players);
-          return {
-            index: i,
-            id: `ai-team-${i}`,
-            name: t.name || `Team ${i + 1}`,
-            players,
-            skaters: players.filter((id) => !isGoaliePosition(posById.get(id))),
-            goalies: players.filter((id) => isGoaliePosition(posById.get(id))),
-          };
-        }),
-        unassigned: restoreIds(data.unassigned),
-      };
+      });
+
+      // A failed extraction must not cost the coach their split. The team count
+      // is the one instruction that is unambiguous in plain text, so it is read
+      // locally and the rest of the request is reported as not applied — a
+      // balanced split of the right shape beats an error message.
+      const extractionFailed = !!error || !!data?.error;
+      if (extractionFailed) {
+        console.warn('Could not read the team-builder instructions:', error?.message ?? data?.error);
+      }
+      const parsed = extractionFailed ? null : data;
+
+      const teamCount = parsed?.teamCount ?? parseTeamCountFromPrompt(config.prompt) ?? config.teamCount;
+      // Bands come from the AI when it is reachable, and are read out of the
+      // sentence directly when it is not — so tiering works without a deploy.
+      const tiers = parsed?.tiers ?? parseTiersFromPrompt(config.prompt);
+
+      result = buildTeams(tryout, {
+        ...config,
+        teamCount,
+        teamSize: parsed?.teamSize ?? undefined,
+        teamNames: parsed?.teamNames ?? config.teamNames,
+        positionQuotas: parsed?.positionQuotas ?? undefined,
+        positionCap: parsed?.positionCap ?? undefined,
+        tiers,
+        keepFriendPackages: parsed?.keepFriendPackages ?? config.keepFriendPackages,
+        splitGoalies: parsed?.splitGoalies ?? config.splitGoalies,
+        // Balancing is the whole point of this path; a snake draft is only ever
+        // an explicit choice made with an empty prompt.
+        sortMethod: 'balanced',
+      });
+
+      // Say plainly which words didn't match a position on this roster, rather
+      // than silently returning teams that ignore part of the instruction.
+      const unmatched: string[] = Array.isArray(parsed?.unmatchedPositions)
+        ? parsed.unmatchedPositions
+        : [];
+      if (unmatched.length > 0) {
+        result.warnings = [
+          ...result.warnings,
+          `"${unmatched.join('", "')}" didn't match any position on this roster, so that part of your instructions wasn't applied. This roster's positions are: ${positions.join(', ') || 'none set'}.`,
+        ];
+      }
+      if (extractionFailed) {
+        result.warnings = [
+          ...result.warnings,
+          'Your instructions could not be read this time, so the teams were balanced by rating using only the team count. Try again, or simplify the wording.',
+        ];
+      }
+
+      // Describes what was actually applied, from the split itself — the card
+      // above the teams used to show the model's own prose about a split this
+      // code no longer takes from it.
+      const applied: string[] = tiers
+        ? [
+            `${result.teams.length} teams in ${tiers.length} skill tiers, balanced within each tier`,
+          ]
+        : [`${result.teams.length} teams balanced by weighted overall rating`];
+      if (parsed?.teamSize) applied.push(`${parsed.teamSize} players per team`);
+      if (parsed?.positionQuotas) {
+        applied.push(
+          Object.entries(parsed.positionQuotas as Record<string, number>)
+            .map(([pos, n]) => `${n} ${pos} per team`)
+            .join(', '),
+        );
+      }
+      if (parsed?.positionCap) applied.push(`at most ${parsed.positionCap} of any one position per team`);
+      if (result.config.keepFriendPackages) applied.push('friend groups kept together');
+      result.explanation = `${applied.join('; ')}.`;
     } else {
       result = buildTeams(tryout, config);
     }

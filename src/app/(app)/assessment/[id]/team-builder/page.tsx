@@ -206,7 +206,15 @@ export default function TeamBuilderPage() {
   // below, instead of re-filtering `results` against each team twice per render.
   const teamStats = (teamBuilder?.teams ?? []).map((team) => {
     const playerIds = new Set(team.players);
-    const teamPlayerResults = results.filter((r) => playerIds.has(r.player.id) && r.evalCount > 0);
+    // `overall > 0` as well as having evaluations: a player scored only against
+    // rubrics that no longer exist comes back with evaluations and an overall of
+    // 0, and 0 is the absence of a rating rather than a very low one. Counting
+    // those zeros pulled a team's average toward nothing — a band of genuine
+    // 3-rated players reading 0.2 — and made the bar disagree with the split
+    // buildTeams() had actually produced.
+    const teamPlayerResults = results.filter(
+      (r) => playerIds.has(r.player.id) && r.evalCount > 0 && r.overall > 0,
+    );
     const avgScore =
       teamPlayerResults.length > 0
         ? teamPlayerResults.reduce((sum, r) => sum + r.overall, 0) / teamPlayerResults.length
