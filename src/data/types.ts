@@ -75,6 +75,8 @@ export type RankingDirection = (typeof RANKING_DIRECTIONS)[number];
 export const CustomRubricSchema = z.object({
   key: z.string(),
   label: z.string(),
+  /** Groups several rubrics under one shared heading (e.g. several drills under "Skating") for the ranked summary and printed reports. Unset rubrics stay ungrouped, each its own category — fully backward compatible. */
+  category: z.string().optional(),
   scoringType: z.enum(SCORING_TYPES).default('skill'),
   scale: z.enum(['1-5', '1-10']).optional().default('1-5'),
   unit: z.string().optional(),

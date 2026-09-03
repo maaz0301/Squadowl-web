@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { cn } from '@/lib/cn';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import {
   Avatar,
@@ -25,7 +26,7 @@ import {
   useDeleteTeamBuilderResultMutation,
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
-import { getPlayerNameMap, type TeamBuilderState } from '@/data/teamBuilder';
+import { movePlayerToTeam, type TeamBuilderState, type TeamBuilderTeam } from '@/data/teamBuilder';
 import { computePlayerResults } from '@/data/scoring';
 import { playerDisplayName } from '@/data/rubrics';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
@@ -33,12 +34,24 @@ import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 
 const TB_LOADING_TEXTS = ['Analyzing players...', 'Balancing rosters...', 'Optimizing lines...', 'Finalizing teams...'];
 
+/** Drop-zone id for the "Unassigned" bucket, which has no team id of its own. */
+const UNASSIGNED = 'unassigned';
+
+/** Membership-only fingerprint, so manual drag edits count as unsaved changes too. */
+function rosterSnapshot(state: TeamBuilderState) {
+  return JSON.stringify({
+    generatedAt: state.generatedAt,
+    teams: state.teams.map((t) => [t.id, [...t.players].sort()]),
+    unassigned: [...state.unassigned].sort(),
+  });
+}
+
 export default function TeamBuilderPage() {
   const id = useAssessmentId();
   const href = useAssessmentHref();
   const router = useRouter();
   const colors = useThemeColors();
-  const { confirm } = useAlert();
+  const { confirm, alert, toast } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   const generate = useGenerateTeamBuilderMutation(id!);
   const savedResultsQuery = useTeamBuilderResultsQuery(id!);
@@ -50,7 +63,7 @@ export default function TeamBuilderPage() {
   // Set by "New" to hide the current live draft without touching the DB record —
   // the next successful Generate produces a fresh generatedAt that un-hides it.
   const [hiddenGeneratedAt, setHiddenGeneratedAt] = useState<number | null>(null);
-  const [lastSavedGeneratedAt, setLastSavedGeneratedAt] = useState<number | null>(null);
+  const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState<'xlsx' | 'pdf' | null>(null);
 
   const results = useMemo(
@@ -60,12 +73,8 @@ export default function TeamBuilderPage() {
 
   // Rebuilding these from a 1000-player roster is expensive; without memoizing
   // them here, typing in the prompt textarea below (which only changes local
-  // `textPrompt` state) was re-deriving all three maps and re-rendering every
+  // `textPrompt` state) was re-deriving both maps and re-rendering every
   // player row on each keystroke.
-  const nameMap = useMemo(
-    () => (tryoutQuery.data ? getPlayerNameMap(tryoutQuery.data) : {}),
-    [tryoutQuery.data],
-  );
   const playerById = useMemo(
     () => new Map((tryoutQuery.data?.roster ?? []).map((p) => [p.id, p])),
     [tryoutQuery.data],
@@ -95,6 +104,34 @@ export default function TeamBuilderPage() {
   // gates against the owning club's tier, not the viewer's own.
   const tier = useEffectivePlanTier(tryoutQuery.data?.teamId);
 
+  // Which split the drag edits below belong to. Derived here rather than from
+  // `teamBuilder` further down because the state that tracks it has to be
+  // declared above the loading/error guards to keep hook order stable.
+  const liveForKey = tryoutQuery.data?.teamBuilder as TeamBuilderState | undefined;
+  const selectedForKey = selectedResultId
+    ? (savedResultsQuery.data ?? []).find((r) => r.id === selectedResultId)
+    : undefined;
+  const splitKey = selectedForKey
+    ? `saved:${selectedForKey.id}`
+    : liveForKey && liveForKey.generatedAt !== hiddenGeneratedAt
+      ? `live:${liveForKey.generatedAt}`
+      : 'none';
+
+  const [editedTeams, setEditedTeams] = useState<TeamBuilderTeam[] | null>(null);
+  const [editedUnassigned, setEditedUnassigned] = useState<string[] | null>(null);
+  const [draggedPlayer, setDraggedPlayer] = useState<{ id: string; from: string } | null>(null);
+  const [dragOverZone, setDragOverZone] = useState<string | null>(null);
+  const [lastSplitKey, setLastSplitKey] = useState(splitKey);
+  // Regenerating or switching splits drops the manual edits, since they belong
+  // to the split they were made on.
+  if (splitKey !== lastSplitKey) {
+    setLastSplitKey(splitKey);
+    setEditedTeams(null);
+    setEditedUnassigned(null);
+    setDraggedPlayer(null);
+    setDragOverZone(null);
+  }
+
   if (tryoutQuery.isLoading) return <LoadingState message="Loading..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
     return (
@@ -113,7 +150,15 @@ export default function TeamBuilderPage() {
   const teamBuilder: TeamBuilderState | undefined = selectedResult
     ? (selectedResult.state as TeamBuilderState)
     : liveHidden ? undefined : liveTeamBuilder;
-  const isUnsaved = !selectedResult && !!teamBuilder && teamBuilder.generatedAt !== lastSavedGeneratedAt;
+  const effectiveTeams = editedTeams ?? teamBuilder?.teams ?? [];
+  const effectiveUnassigned = editedUnassigned ?? teamBuilder?.unassigned ?? [];
+  const editedTeamBuilder: TeamBuilderState | undefined = teamBuilder
+    ? { ...teamBuilder, teams: effectiveTeams, unassigned: effectiveUnassigned }
+    : undefined;
+  // Called on demand rather than derived per render — fingerprinting a
+  // 1000-player split on every keystroke in the prompt box isn't free.
+  const isUnsaved = () =>
+    !selectedResult && !!editedTeamBuilder && rosterSnapshot(editedTeamBuilder) !== lastSavedSnapshot;
 
   const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
   const allowedFormats = getPlanDefinition(tier).limits.exports;
@@ -135,7 +180,7 @@ export default function TeamBuilderPage() {
       setSelectedResultId(null);
       if (liveTeamBuilder) setHiddenGeneratedAt(liveTeamBuilder.generatedAt);
     };
-    if (isUnsaved) {
+    if (isUnsaved()) {
       const ok = await confirm({
         title: 'Discard this team split?',
         message: "This team split hasn't been saved. Starting a new one will discard it unless you save it first.",
@@ -149,24 +194,25 @@ export default function TeamBuilderPage() {
   };
 
   const handleSave = () => {
-    if (!teamBuilder) return;
+    if (!editedTeamBuilder) return;
     const label = window.prompt('Name this split (e.g. "Option A — friend packages kept")');
     if (!label?.trim()) return;
-    const generatedAt = teamBuilder.generatedAt;
+    const snapshot = rosterSnapshot(editedTeamBuilder);
     saveResult.mutate(
-      { label: label.trim(), state: teamBuilder },
-      { onSuccess: () => setLastSavedGeneratedAt(generatedAt) },
+      { label: label.trim(), state: editedTeamBuilder },
+      { onSuccess: () => setLastSavedSnapshot(snapshot) },
     );
   };
 
   const handleExport = async (format: 'xlsx' | 'pdf') => {
-    if (!teamBuilder) return;
+    if (!editedTeamBuilder) return;
     setIsExporting(format);
     try {
       const { exportTeamBuilderData } = await import('@/lib/exportData');
-      await exportTeamBuilderData(tryout, teamBuilder, format);
+      await exportTeamBuilderData(tryout, editedTeamBuilder, format);
+      toast(`${format.toUpperCase()} downloaded`, 'success');
     } catch (e) {
-      console.error(e);
+      await alert('Export failed', e instanceof Error ? e.message : 'Could not build the export file.');
     } finally {
       setIsExporting(null);
     }
@@ -176,7 +222,43 @@ export default function TeamBuilderPage() {
     router.push(href(`player/${playerId}`));
   };
 
-  const renderPlayerRow = (playerId: string) => {
+  const canReorder = !!editedTeamBuilder;
+
+  const movePlayer = (playerId: string, from: string, to: string) => {
+    if (from === to || !editedTeamBuilder) return;
+    const isGoalie = playerById.get(playerId)?.pos?.toUpperCase() === 'GTL';
+    const next = movePlayerToTeam(editedTeamBuilder, playerId, to === UNASSIGNED ? null : to, isGoalie);
+    setEditedTeams(next.teams);
+    setEditedUnassigned(next.unassigned);
+  };
+
+  const dropZoneProps = (zoneId: string) =>
+    canReorder
+      ? {
+          onDragOver: (e: DragEvent<HTMLDivElement>) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            setDragOverZone(zoneId);
+          },
+          onDragLeave: (e: DragEvent<HTMLDivElement>) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+            setDragOverZone((z) => (z === zoneId ? null : z));
+          },
+          onDrop: (e: DragEvent<HTMLDivElement>) => {
+            e.preventDefault();
+            setDragOverZone(null);
+            if (!draggedPlayer) return;
+            movePlayer(draggedPlayer.id, draggedPlayer.from, zoneId);
+            setDraggedPlayer(null);
+          },
+          style:
+            dragOverZone === zoneId && draggedPlayer?.from !== zoneId
+              ? { outline: `2px dashed ${colors.primary}`, outlineOffset: -2 }
+              : undefined,
+        }
+      : {};
+
+  const renderPlayerRow = (playerId: string, zoneId: string) => {
     const p = playerById.get(playerId);
     if (!p) return null;
     const overall = overallByPlayerId.get(playerId);
@@ -184,9 +266,26 @@ export default function TeamBuilderPage() {
       <button
         type="button"
         key={playerId}
+        draggable={canReorder}
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', playerId);
+          setDraggedPlayer({ id: playerId, from: zoneId });
+        }}
+        onDragEnd={() => {
+          setDraggedPlayer(null);
+          setDragOverZone(null);
+        }}
         onClick={() => openPlayer(playerId)}
-        className="flex w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-transform hover:-translate-y-0.5"
-        style={{ backgroundColor: colors.tile, borderColor: colors.border }}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-transform hover:-translate-y-0.5',
+          canReorder && 'cursor-grab active:cursor-grabbing',
+        )}
+        style={{
+          backgroundColor: colors.tile,
+          borderColor: colors.border,
+          opacity: draggedPlayer?.id === playerId ? 0.4 : 1,
+        }}
       >
         <Avatar first={p.first} last={p.last} pos={p.pos} uri={p.avatarUrl} size={36} />
         <span className="min-w-0 flex-1">
@@ -204,7 +303,7 @@ export default function TeamBuilderPage() {
 
   // Computed once and reused by both the balance overview and the team cards
   // below, instead of re-filtering `results` against each team twice per render.
-  const teamStats = (teamBuilder?.teams ?? []).map((team) => {
+  const teamStats = effectiveTeams.map((team) => {
     const playerIds = new Set(team.players);
     // `overall > 0` as well as having evaluations: a player scored only against
     // rubrics that no longer exist comes back with evaluations and an overall of
@@ -355,6 +454,7 @@ export default function TeamBuilderPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm" style={{ color: colors.inkMuted }}>
                   {selectedResult ? `Viewing saved split: ${selectedResult.label}` : 'Latest generation'}
+                  <span className="block text-xs">Drag a player onto another team to move them.</span>
                 </span>
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -458,7 +558,7 @@ export default function TeamBuilderPage() {
 
             {teamStats.map(({ team, avgScore }) => {
               return (
-                <Card key={team.id} accent className="flex flex-col gap-2">
+                <Card key={team.id} accent className="flex flex-col gap-2" {...dropZoneProps(team.id)}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span
                       className="text-lg font-bold"
@@ -476,7 +576,7 @@ export default function TeamBuilderPage() {
                       <span className="text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>
                         Skaters
                       </span>
-                      {team.skaters.map(renderPlayerRow)}
+                      {team.skaters.map((pid) => renderPlayerRow(pid, team.id))}
                     </div>
                   ) : null}
                   {team.goalies.length > 0 ? (
@@ -484,34 +584,45 @@ export default function TeamBuilderPage() {
                       <span className="text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>
                         Goalies
                       </span>
-                      {team.goalies.map(renderPlayerRow)}
+                      {team.goalies.map((pid) => renderPlayerRow(pid, team.id))}
                     </div>
+                  ) : null}
+                  {team.players.length === 0 ? (
+                    <span className="text-sm" style={{ color: colors.inkMuted }}>
+                      {canReorder ? 'Drop players here to add them to this team.' : 'No players.'}
+                    </span>
                   ) : null}
                 </Card>
               );
             })}
 
-            {teamBuilder?.unassigned?.length ? (
-              <Card
-                className="flex flex-col gap-2"
-                style={{ borderLeftWidth: 3, borderLeftColor: colors.warning }}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span
-                    className="text-lg font-bold"
-                    style={{ color: colors.inkMuted, fontFamily: 'var(--font-space-grotesk)' }}
+            {teamBuilder ? (
+              (() => {
+                const { style: dropStyle, ...dropHandlers } = dropZoneProps(UNASSIGNED);
+                return (
+                  <Card
+                    className="flex flex-col gap-2"
+                    style={{ borderLeftWidth: 3, borderLeftColor: colors.warning, ...dropStyle }}
+                    {...dropHandlers}
                   >
-                    Unassigned
-                  </span>
-                  <Badge label={`${teamBuilder.unassigned.length} players`} />
-                </div>
-                <p className="text-sm" style={{ color: colors.inkMuted }}>
-                  These players didn&apos;t fit within the requested team count and size, so they were left out instead of being added to a team.
-                </p>
-                <p className="text-sm" style={{ color: colors.ink }}>
-                  {teamBuilder.unassigned.map((pid) => nameMap[pid] ?? pid).join(', ')}
-                </p>
-              </Card>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span
+                        className="text-lg font-bold"
+                        style={{ color: colors.inkMuted, fontFamily: 'var(--font-space-grotesk)' }}
+                      >
+                        Unassigned
+                      </span>
+                      <Badge label={`${effectiveUnassigned.length} players`} />
+                    </div>
+                    <p className="text-sm" style={{ color: colors.inkMuted }}>
+                      {effectiveUnassigned.length > 0
+                        ? "These players didn't fit within the requested team count and size, so they were left out instead of being added to a team."
+                        : 'Drop players here to leave them off every team.'}
+                    </p>
+                    {effectiveUnassigned.map((pid) => renderPlayerRow(pid, UNASSIGNED))}
+                  </Card>
+                );
+              })()
             ) : null}
           </div>
         </div>

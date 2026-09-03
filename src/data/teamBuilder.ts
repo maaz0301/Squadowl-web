@@ -683,6 +683,39 @@ function refineBalance(
   }
 }
 
+/**
+ * Moves one player into `toTeamId` (or out of every team when it is null),
+ * for the Team Builder's manual drag-and-drop adjustments. Which of the
+ * target's skater/goalie lists the player lands in follows their position,
+ * not where they were dropped.
+ */
+export function movePlayerToTeam(
+  state: TeamBuilderState,
+  playerId: string,
+  toTeamId: string | null,
+  isGoalie: boolean,
+): TeamBuilderState {
+  const teams = state.teams.map((t) => ({
+    ...t,
+    players: t.players.filter((id) => id !== playerId),
+    skaters: t.skaters.filter((id) => id !== playerId),
+    goalies: t.goalies.filter((id) => id !== playerId),
+  }));
+  const unassigned = state.unassigned.filter((id) => id !== playerId);
+
+  if (toTeamId === null) {
+    unassigned.push(playerId);
+  } else {
+    const target = teams.find((t) => t.id === toTeamId);
+    if (!target) return state;
+    target.players.push(playerId);
+    if (isGoalie) target.goalies.push(playerId);
+    else target.skaters.push(playerId);
+  }
+
+  return { ...state, teams, unassigned };
+}
+
 export function getPlayerNameMap(tryout: Tryout): Record<string, string> {
   return Object.fromEntries(
     tryout.roster.map((p) => [p.id, playerDisplayName(p)]),

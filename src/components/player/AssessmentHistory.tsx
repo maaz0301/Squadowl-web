@@ -20,18 +20,6 @@ function csvCell(value: string | number | null | undefined): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function downloadCsv(fileName: string, content: string) {
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', fileName);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
 // Point labels (full assessment/season names) are never drawn for every point
 // at once — with more than a couple of points, real names always overlap into
 // an unreadable pile. Instead, click a point to see its name + score in a small
@@ -222,7 +210,7 @@ export function AssessmentHistory({
     return points.sort((a, b) => a.earliestDate.localeCompare(b.earliestDate));
   }, [scoredAssessments]);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const header = 'tryout,event_type,sport,date,team,season,score,recommendation,evaluations';
     const rows = assessments.map((a) =>
       [
@@ -239,7 +227,13 @@ export function AssessmentHistory({
         .map(csvCell)
         .join(','),
     );
-    downloadCsv(`${exportFileName || 'player'}-development-history.csv`, `${header}\n${rows.join('\n')}`);
+    const { download } = await import('@/lib/exportData');
+    download(
+      `${exportFileName || 'player'}-development-history.csv`,
+      `${header}\n${rows.join('\n')}`,
+      'utf8',
+      'text/csv',
+    );
   };
 
   if (assessments.length === 0) {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildTeams, parseTeamCountFromPrompt, parseTiersFromPrompt } from './teamBuilder';
+import {
+  buildTeams,
+  movePlayerToTeam,
+  parseTeamCountFromPrompt,
+  parseTiersFromPrompt,
+  type TeamBuilderState,
+} from './teamBuilder';
 import { computePlayerResults } from './scoring';
 import type { Evaluation, Player, Tryout } from './types';
 
@@ -412,5 +418,61 @@ describe('buildTeams', () => {
     const b = buildTeams(tryout, { teamCount: 8, positionQuotas: { GTL: 1 } });
 
     expect(a.teams.map((t) => t.players)).toEqual(b.teams.map((t) => t.players));
+  });
+});
+
+function movableState(): TeamBuilderState {
+  return {
+    generatedAt: 1,
+    sortMethod: 'snake',
+    config: { teamCount: 2, teamNames: ['A', 'B'], keepFriendPackages: true, splitGoalies: true },
+    ranks: [],
+    warnings: [],
+    teams: [
+      { index: 0, id: 'a', name: 'A', players: ['p1', 'g1'], skaters: ['p1'], goalies: ['g1'] },
+      { index: 1, id: 'b', name: 'B', players: ['p2'], skaters: ['p2'], goalies: [] },
+    ],
+    unassigned: ['p3'],
+  };
+}
+
+describe('movePlayerToTeam', () => {
+  it('moves a skater to another team', () => {
+    const next = movePlayerToTeam(movableState(), 'p1', 'b', false);
+    expect(next.teams[0].players).toEqual(['g1']);
+    expect(next.teams[0].skaters).toEqual([]);
+    expect(next.teams[1].players).toEqual(['p2', 'p1']);
+    expect(next.teams[1].skaters).toEqual(['p2', 'p1']);
+  });
+
+  it('keeps a goalie in the target goalie list', () => {
+    const next = movePlayerToTeam(movableState(), 'g1', 'b', true);
+    expect(next.teams[0].goalies).toEqual([]);
+    expect(next.teams[1].goalies).toEqual(['g1']);
+    expect(next.teams[1].skaters).toEqual(['p2']);
+  });
+
+  it('moves a player out of every team when the target is null', () => {
+    const next = movePlayerToTeam(movableState(), 'p2', null, false);
+    expect(next.teams[1].players).toEqual([]);
+    expect(next.unassigned).toEqual(['p3', 'p2']);
+  });
+
+  it('assigns a previously unassigned player', () => {
+    const next = movePlayerToTeam(movableState(), 'p3', 'a', false);
+    expect(next.unassigned).toEqual([]);
+    expect(next.teams[0].skaters).toEqual(['p1', 'p3']);
+  });
+
+  it('leaves the input untouched', () => {
+    const before = movableState();
+    movePlayerToTeam(before, 'p1', 'b', false);
+    expect(before.teams[0].players).toEqual(['p1', 'g1']);
+    expect(before.teams[1].players).toEqual(['p2']);
+  });
+
+  it('returns the same state for an unknown team', () => {
+    const before = movableState();
+    expect(movePlayerToTeam(before, 'p1', 'nope', false)).toBe(before);
   });
 });

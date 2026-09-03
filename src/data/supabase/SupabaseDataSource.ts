@@ -1559,10 +1559,16 @@ export class SupabaseDataSource implements DataSource {
       throw new Error('Email address not found');
     }
 
-    // Providing a redirectTo is generally needed for magic link/password reset flows in Supabase,
-    // though the actual URL depends on the project setup. For Expo, an app scheme like 'aas://reset-password' is often used.
-    // If none is provided, it falls back to the site url configured in Supabase.
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    // Goes through the request-password-reset function rather than
+    // resetPasswordForEmail: that mints the same 6-digit recovery OTP
+    // verifyPasswordResetOtp expects, but via the admin API, so the mail is
+    // dispatched by our own SendGrid sender instead of Supabase's auth mailer.
+    // Auth's mailer caps sends per hour per project, and a club resetting a few
+    // accounts in a row was hitting "email rate limit exceeded"; this path has
+    // no such cap. It is also what the mobile app already calls.
+    const { error } = await supabase.functions.invoke('request-password-reset', {
+      body: { email },
+    });
     if (error) throw new Error(authErrorMessage(error.message, 'Failed to send the reset email. Please try again.'));
   }
 

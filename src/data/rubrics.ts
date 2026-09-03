@@ -56,73 +56,69 @@ export function compareSubskillScores(
   return direction === 'lower_is_better' ? valA - valB : valB - valA;
 }
 
-function customToCategory(
-  r: {
-    key: string;
-    label: string;
-    scale?: string;
-    scoringType?: ScoringType;
-    unit?: string;
-    minVal?: number;
-    maxVal?: number;
-    rankingDirection?: RankingDirection;
-    role?: string;
-  },
-  role: 'skater' | 'goalie',
-): RubricCategory {
+export interface CustomRubricInput {
+  key: string;
+  label: string;
+  /** Groups several rubrics under one shared category heading, e.g. several drills under "Skating". Unset = its own standalone category, same as before grouping existed. */
+  category?: string;
+  scale?: string;
+  scoringType?: ScoringType;
+  unit?: string;
+  minVal?: number;
+  maxVal?: number;
+  rankingDirection?: RankingDirection;
+  role?: string;
+}
+
+function toSubSkill(r: CustomRubricInput): SubSkill {
   const scale: Scale = r.scale === '1-10' ? '1-10' : '1-5';
   const scoringType: ScoringType = r.scoringType ?? 'skill';
   const rankingDirection: RankingDirection = r.rankingDirection ?? (scoringType === 'time' ? 'lower_is_better' : 'higher_is_better');
-  return {
-    key: r.key,
-    label: r.label,
-    role,
-    subskills: [{ key: r.key, label: r.label, scale, scoringType, unit: r.unit, minVal: r.minVal, maxVal: r.maxVal, rankingDirection }],
-  };
+  return { key: r.key, label: r.label, scale, scoringType, unit: r.unit, minVal: r.minVal, maxVal: r.maxVal, rankingDirection };
 }
 
-/** Categories (with sub-skills) that apply to a given player. */
+/**
+ * Categories (with sub-skills) that apply to a given player. Rubrics sharing
+ * the same `category` merge into one RubricCategory with multiple
+ * sub-skills, in the order that category first appears; a rubric with no
+ * `category` stays its own standalone category, keyed by its own key/label.
+ */
 export function getPlayerCategories(
   sport: Sport,
   pos?: string,
-  customRubrics: {
-    key: string;
-    label: string;
-    scale?: string;
-    scoringType?: ScoringType;
-    unit?: string;
-    minVal?: number;
-    maxVal?: number;
-    rankingDirection?: RankingDirection;
-    role?: string;
-  }[] = [],
+  customRubrics: CustomRubricInput[] = [],
 ): RubricCategory[] {
   const goalie = isGoaliePosition(pos);
   const role: 'skater' | 'goalie' = goalie ? 'goalie' : 'skater';
-  const customs = customRubrics
-    .filter((r) => !r.role || r.role === 'all' || r.role === role)
-    .map((r) => customToCategory(r, role));
-  return customs;
+  const applicable = customRubrics.filter((r) => !r.role || r.role === 'all' || r.role === role);
+
+  const categories: RubricCategory[] = [];
+  const byCategoryKey = new Map<string, RubricCategory>();
+  for (const r of applicable) {
+    const categoryKey = r.category?.trim();
+    if (!categoryKey) {
+      categories.push({ key: r.key, label: r.label, role, subskills: [toSubSkill(r)] });
+      continue;
+    }
+    let cat = byCategoryKey.get(categoryKey);
+    if (!cat) {
+      cat = { key: categoryKey, label: categoryKey, role, subskills: [] };
+      byCategoryKey.set(categoryKey, cat);
+      categories.push(cat);
+    }
+    cat.subskills.push(toSubSkill(r));
+  }
+  return categories;
 }
 
 /** Backwards-compatible alias returning categories for a player. */
 export const getPlayerRubrics = getPlayerCategories;
 
-/** Flat list of every sub-skill that applies to a player. */
+/** Flat list of every sub-skill that applies to a player, regardless of category grouping. */
 export function getPlayerSubskills(
   sport: Sport,
   pos?: string,
-  customRubrics: {
-    key: string;
-    label: string;
-    scale?: string;
-    scoringType?: ScoringType;
-    unit?: string;
-    minVal?: number;
-    maxVal?: number;
-    rankingDirection?: RankingDirection;
-    role?: string;
-  }[] = [],
+  customRubrics: CustomRubricInput[] = [],
 ): SubSkill[] {
   return getPlayerCategories(sport, pos, customRubrics).flatMap((c) => c.subskills);
 }

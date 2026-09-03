@@ -35,6 +35,7 @@ export default function RubricsPage() {
 
   const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [label, setLabel] = useState('');
+  const [category, setCategory] = useState('');
   const [scoringType, setScoringType] = useState<ScoringType>('skill');
   const [scale, setScale] = useState<'1-5' | '1-10'>('1-5');
   const [unit, setUnit] = useState('');
@@ -58,6 +59,7 @@ export default function RubricsPage() {
 
   const tryout = tryoutQuery.data;
   const custom = tryout.settings.customRubrics ?? [];
+  const existingCategories = Array.from(new Set(custom.map((r) => r.category).filter((c): c is string => !!c)));
   const plan = getPlanDefinition(tier);
   const customLimit = plan.limits.customRubrics;
   const atCustomLimit = customLimit !== 'unlimited' && custom.length >= (customLimit as number);
@@ -84,6 +86,7 @@ export default function RubricsPage() {
       {
         key,
         label: label.trim(),
+        category: category.trim() || undefined,
         scoringType,
         scale: scoringType === 'skill' ? scale : ('1-5' as const),
         unit: scoringType !== 'skill' ? defaultUnit : undefined,
@@ -98,6 +101,9 @@ export default function RubricsPage() {
       updates: { settings: { ...tryout.settings, customRubrics: next } },
     });
 
+    // Category is deliberately not cleared — a coach usually adds several
+    // drills to the same category back to back (e.g. five Skating drills),
+    // so keeping it selected saves re-picking it each time.
     setLabel('');
     setUnit('');
     setMinValStr('');
@@ -173,6 +179,7 @@ export default function RubricsPage() {
                       {r.label}
                     </span>
                     <Badge label={typeLabel.toUpperCase()} variant="brand" />
+                    {r.category ? <Badge label={r.category} /> : null}
                   </div>
                   <p className="text-xs" style={{ color: colors.inkMuted }}>
                     {details}
@@ -207,14 +214,30 @@ export default function RubricsPage() {
           </span>
 
           <Input
-            label="1. Drill / Category Name"
+            label="1. Drill Name"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="e.g. 40-Yard Dash, Long Throw, Shot Speed"
           />
 
           <div>
-            <SectionLabel className="mb-2">2. Scoring Type</SectionLabel>
+            <Input
+              label="2. Category (optional)"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="e.g. Skating — groups several drills under one heading"
+            />
+            {existingCategories.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {existingCategories.map((c) => (
+                  <Chip key={c} label={c} active={category === c} onClick={() => setCategory(c)} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div>
+            <SectionLabel className="mb-2">3. Scoring Type</SectionLabel>
             <div className="flex flex-wrap gap-2">
               <Chip label="Skill / Technique" active={scoringType === 'skill'} onClick={() => handleScoringTypeChange('skill')} />
               <Chip label="Time-based" active={scoringType === 'time'} onClick={() => handleScoringTypeChange('time')} />
@@ -225,7 +248,7 @@ export default function RubricsPage() {
 
           {scoringType === 'skill' ? (
             <div className="flex flex-col gap-2">
-              <SectionLabel>3. Scale Choice</SectionLabel>
+              <SectionLabel>4. Scale Choice</SectionLabel>
               <div className="flex flex-wrap gap-2">
                 <Chip label="1-5 Scale" active={scale === '1-5'} onClick={() => setScale('1-5')} />
                 <Chip label="1-10 Scale" active={scale === '1-10'} onClick={() => setScale('1-10')} />
@@ -237,7 +260,7 @@ export default function RubricsPage() {
           ) : (
             <div className="flex flex-col gap-3">
               <Input
-                label="3. Unit Label (Free-form)"
+                label="4. Unit Label (Free-form)"
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
                 placeholder={
@@ -246,7 +269,7 @@ export default function RubricsPage() {
               />
 
               <div>
-                <SectionLabel className="mb-2">4. Ranking Rule</SectionLabel>
+                <SectionLabel className="mb-2">5. Ranking Rule</SectionLabel>
                 <button
                   type="button"
                   onClick={() => setRankingDirection(rankingDirection === 'lower_is_better' ? 'higher_is_better' : 'lower_is_better')}
@@ -275,7 +298,7 @@ export default function RubricsPage() {
                 </button>
               </div>
 
-              <SectionLabel className="mt-1">5. Score Range Benchmarks (Min &amp; Max)</SectionLabel>
+              <SectionLabel className="mt-1">6. Score Range Benchmarks (Min &amp; Max)</SectionLabel>
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   label="Min Value"
