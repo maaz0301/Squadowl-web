@@ -7,7 +7,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { lockBodyScroll } from '@/lib/scrollLock';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Avatar, ThemeToggle } from '@/components/ui';
+import { Avatar, Button, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
 import { prefetchRoute } from '@/features/prefetch';
@@ -185,11 +185,22 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="block truncate text-sm font-bold" style={{ color: colors.ink }}>
               {user?.displayName ?? 'Coach'}
             </span>
-            <span className="block truncate text-xs capitalize" style={{ color: colors.inkMuted }}>
-              {planTier} plan
-            </span>
+            {!isGuardian ? (
+              <span className="block truncate text-xs capitalize" style={{ color: colors.inkMuted }}>
+                {planTier} plan
+              </span>
+            ) : null}
           </span>
         </Link>
+        {!isGuardian && planTier !== 'club' ? (
+          <Button
+            label="Upgrade"
+            size="sm"
+            fullWidth
+            className="mt-2"
+            onClick={() => router.push('/upgrade')}
+          />
+        ) : null}
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
