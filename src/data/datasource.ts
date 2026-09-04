@@ -93,6 +93,19 @@ export interface DataSource {
 
   // Players
   addPlayer(tryoutId: string, form: AddPlayerForm): Promise<Player>;
+  /**
+   * Add many players at once, from a spreadsheet the club already keeps.
+   *
+   * Each row goes through the same path a hand-typed player does, so an
+   * imported player is indistinguishable from a typed one — including the
+   * guardian account that gets created behind them. Rows are independent: one
+   * bad row is reported, not thrown. See PlayerImportResult.
+   */
+  importTryoutPlayers(
+    tryoutId: string,
+    rows: { line: number; form: AddPlayerForm }[],
+    onProgress?: (done: number) => void,
+  ): Promise<import('./types').PlayerImportResult>;
   updatePlayer(tryoutId: string, playerId: string, updates: Partial<Player>): Promise<Player>;
   deletePlayer(tryoutId: string, playerId: string): Promise<void>;
   uploadPlayerPhoto(athleteId: string, fileUri: string, fileType: string): Promise<string>;
@@ -171,6 +184,13 @@ export interface DataSource {
   // Team chat (season-scoped): staff on the season's account plus the guardian
   // of any athlete on its roster share this conversation.
   listTeamMessages(seasonId: string): Promise<import('./types').TeamMessage[]>;
+  /**
+   * How many messages other people have posted to this season's chat since
+   * `sinceMs` — what the Chat tab's unread badge counts. A count, not the rows:
+   * every screen with a Chat tab on it would otherwise pull the conversation
+   * down just to find out whether there is anything new in it.
+   */
+  countUnreadTeamMessages(seasonId: string, sinceMs: number): Promise<number>;
   sendTeamMessage(seasonId: string, body: string): Promise<import('./types').TeamMessage>;
   deleteTeamMessage(messageId: string): Promise<void>;
 
@@ -288,15 +308,27 @@ export interface DataSource {
   // them from), rather than only being reachable via "Add Players from
   // Assessments".
   addManualTeamPlayer(teamId: string, form: AddPlayerForm): Promise<{ athleteId: string }>;
+  /** The team-roster counterpart of importTryoutPlayers. */
+  importTeamRosterPlayers(
+    teamId: string,
+    rows: { line: number; form: AddPlayerForm }[],
+    onProgress?: (done: number) => void,
+  ): Promise<import('./types').PlayerImportResult>;
   removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void>;
   /**
    * Invite a team's roster to the player/guardian portal — each player's own
    * email and their guardian's, both when present.
    *
    * `athleteIds` narrows it to specific players; omitted, the whole roster is
-   * invited. Never throws for a single bad address: see TeamInviteResult.
+   * invited. `emails` narrows it further to specific addresses, for the
+   * "Invite" button that sits beside a single email field. Never throws for a
+   * single bad address: see TeamInviteResult.
    */
-  sendTeamRosterInvites(teamId: string, athleteIds?: string[]): Promise<import('./types').TeamInviteResult>;
+  sendTeamRosterInvites(
+    teamId: string,
+    athleteIds?: string[],
+    emails?: string[],
+  ): Promise<import('./types').TeamInviteResult>;
   importScanScores(tryoutId: string, scores: { playerId: string; rubricKey: string; value: number }[]): Promise<void>;
   getGuardianRosters(): Promise<GuardianRosterAthlete[]>;
   /**

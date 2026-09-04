@@ -397,6 +397,19 @@ export interface TeamInviteResult {
   skipped: string[];
 }
 
+/**
+ * Outcome of importing a roster out of a spreadsheet.
+ *
+ * Per-row, and never all-or-nothing: a thirty-row sheet with two bad addresses
+ * in it should put twenty-eight players on the roster and say which two it
+ * couldn't, not refuse the lot. `line` is the row's own line in the file, so
+ * the coach can go and fix it there.
+ */
+export interface PlayerImportResult {
+  added: number;
+  failed: { line: number; name: string; message: string }[];
+}
+
 /** A permanently-saved snapshot of a Team Builder generation, so regenerating doesn't lose it. */
 export const TeamBuilderResultSchema = z.object({
   id: z.string(),
@@ -514,9 +527,9 @@ export const AddPlayerFormSchema = z.object({
     .refine(isValidOptionalEmail, { message: 'Please enter a valid email address' }),
   guardianName: z.string().optional(),
   guardianEmail: z
-    .string({ message: 'Guardian email is required' })
-    .min(1, 'Guardian email is required')
-    .email('Please enter a valid email address'),
+    .string()
+    .optional()
+    .refine(isValidOptionalEmail, { message: 'Please enter a valid email address' }),
   guardianPhone: z.string().optional().refine(isValidGuardianPhone, { message: 'Phone number must be between 10 and 15 digits' }),
   currentTeam: z.string().optional(),
   currentLevel: z.string().optional(),
@@ -525,7 +538,15 @@ export const AddPlayerFormSchema = z.object({
   friend1Name: z.string().optional(),
   friend2Name: z.string().optional(),
   avatarUrl: z.string().optional(),
-});
+})
+  // One address, not specifically the guardian's. A player old enough to hold
+  // their own email has no guardian address to give, and demanding one blocked
+  // the invite that is the whole reason for typing them in. Reported on
+  // guardianEmail because that is where a coach looks for a missing address.
+  .refine((f) => !!f.playerEmail?.trim() || !!f.guardianEmail?.trim(), {
+    message: 'A player or guardian email is required',
+    path: ['guardianEmail'],
+  });
 
 export type AddPlayerForm = z.infer<typeof AddPlayerFormSchema>;
 

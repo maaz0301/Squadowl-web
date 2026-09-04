@@ -65,6 +65,8 @@ export const queryKeys = {
   teamManagers: (teamId?: string) => (teamId ? (['team', teamId, 'managers'] as const) : (['team', 'managers'] as const)),
   teamBuilderResults: (tryoutId: string) => ['tryout', tryoutId, 'teamBuilderResults'] as const,
   teamMessages: (seasonId: string) => ['season', seasonId, 'messages'] as const,
+  teamMessagesUnread: (seasonId: string, sinceMs: number) =>
+    ['season', seasonId, 'messages', 'unread', sinceMs] as const,
   referralSummary: ['referral', 'summary'] as const,
   coachDirectory: ['coachDirectory'] as const,
   athleteShares: (athleteId: string) => ['athleteShares', athleteId] as const,

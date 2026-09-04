@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm, Controller, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { AddPlayerFormSchema, type AddPlayerForm as AddPlayerFormType, type Athlete } from '@/data/types';
@@ -12,16 +12,95 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 interface Props {
   loading?: boolean;
   defaultValues?: Partial<AddPlayerFormType>;
-  onSubmit: (data: AddPlayerFormType) => Promise<void>;
+  /**
+   * `inviteEmails` is the addresses the coach marked with the Invite buttons.
+   * Undefined means they marked none and the caller decides who to mail.
+   */
+  onSubmit: (data: AddPlayerFormType, inviteEmails?: string[]) => Promise<void>;
+  /**
+   * Show an Invite toggle beside each email — only where an invite has
+   * somewhere to go (a team roster).
+   *
+   * A toggle rather than a send button, because an invite is addressed to a
+   * player on a roster and this form's player has not been saved onto one yet.
+   * Marking an address costs nothing and creates nobody; the save that creates
+   * the player is what mails them, which is also what kept this off the old
+   * three-step path of save, reopen the profile, invite from there.
+   */
+  showInvite?: boolean;
+  /**
+   * Names what saving does where it also mails the player — a coach shouldn't
+   * have to discover from the confirmation that "Save Player" sent an invite.
+   */
+  submitLabel?: string;
 }
 
-export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
+/**
+ * Sits inside the email field. `sm` is still too tall for a 48px input, so the
+ * height and padding are trimmed rather than a new Button size being invented
+ * for the one place that needs it.
+ */
+function InviteToggle({
+  email,
+  marked,
+  onToggle,
+}: {
+  email: string;
+  marked: boolean;
+  onToggle: () => void;
+}) {
+  const disabled = !email.trim();
+  return (
+    // The title rides on a wrapper, not the button: a disabled control fires no
+    // mouse events, so its own tooltip would never open — and with no address
+    // typed in, why it is unavailable is exactly what a coach hovers to find.
+    <span
+      className="inline-flex"
+      title={
+        disabled
+          ? 'Enter an email address to invite it.'
+          : marked
+            ? 'This address is invited when you save the player.'
+            : 'Invite this address when you save the player.'
+      }
+    >
+      <Button
+        // Fixed width so marking it doesn't resize the button out from under
+        // the padding the field reserves for it and onto the address.
+        label={marked ? '✓ Invite' : 'Invite'}
+        aria-pressed={marked}
+        variant={marked ? 'primary' : 'secondary'}
+        size="sm"
+        className="min-h-[32px] w-[72px] px-0 py-1 text-xs"
+        disabled={disabled}
+        onClick={onToggle}
+      />
+    </span>
+  );
+}
+
+export function AddPlayerForm({
+  loading,
+  defaultValues,
+  onSubmit,
+  showInvite,
+  submitLabel = 'Save Player',
+}: Props) {
   const colors = useThemeColors();
   const { alert } = useAlert();
   const athletesQuery = useAthletesQuery();
   const [modalVisible, setModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(defaultValues?.avatarUrl || null);
+  /**
+   * Which email fields the coach marked for an invite — the field, not the
+   * address, so editing the address after marking it still sends to what ends
+   * up in the box.
+   */
+  const [invited, setInvited] = useState<Record<'playerEmail' | 'guardianEmail', boolean>>({
+    playerEmail: false,
+    guardianEmail: false,
+  });
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { control, handleSubmit, setValue, watch } = useForm<AddPlayerFormType>({
@@ -51,6 +130,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
 
   const firstVal = watch('first');
   const lastVal = watch('last');
+
 
   const pickPhoto = (file: File | undefined) => {
     if (!file) return;
@@ -87,14 +167,25 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
     setModalVisible(false);
   };
 
-  const submit = handleSubmit(onSubmit, async (errors) => {
+  const reportInvalid = async (errors: FieldErrors<AddPlayerFormType>) => {
     const emailError = errors.guardianEmail ?? errors.playerEmail;
     if (emailError) {
-      await alert('Invalid Email', emailError.message || 'Please enter a valid email address');
+      const message = emailError.message || 'Please enter a valid email address';
+      await alert(message.includes('required') ? 'Email Required' : 'Invalid Email', message);
     } else {
       await alert('Validation Error', 'Please check the highlighted fields before saving.');
     }
-  });
+  };
+
+  const submit = handleSubmit(async (data) => {
+    // Marked nothing: say nothing, and let the caller mail whoever it would
+    // have. Marked something: those addresses and no others.
+    const marked = (['playerEmail', 'guardianEmail'] as const)
+      .filter((f) => invited[f])
+      .map((f) => (data[f] || '').trim())
+      .filter(Boolean);
+    await onSubmit(data, marked.length > 0 ? marked : undefined);
+  }, reportInvalid);
 
   return (
     <div className="flex flex-col gap-4 pb-2">
@@ -204,7 +295,22 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
             control={control}
             name="playerEmail"
             render={({ field, fieldState }) => (
-              <Input label="Player Email" type="email" {...field} error={fieldState.error?.message} />
+              <Input
+                label="Player Email"
+                type="email"
+                {...field}
+                error={fieldState.error?.message}
+                className={showInvite ? 'pr-[92px]' : undefined}
+                rightAccessory={
+                  showInvite ? (
+                    <InviteToggle
+                      email={field.value || ''}
+                      marked={invited.playerEmail}
+                      onToggle={() => setInvited((v) => ({ ...v, playerEmail: !v.playerEmail }))}
+                    />
+                  ) : undefined
+                }
+              />
             )}
           />
           <Controller
@@ -218,7 +324,23 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
             control={control}
             name="guardianEmail"
             render={({ field, fieldState }) => (
-              <Input label="Guardian Email *" type="email" {...field} error={fieldState.error?.message} />
+              <Input
+                label="Guardian Email"
+                type="email"
+                hint="A player or guardian email is required."
+                {...field}
+                error={fieldState.error?.message}
+                className={showInvite ? 'pr-[92px]' : undefined}
+                rightAccessory={
+                  showInvite ? (
+                    <InviteToggle
+                      email={field.value || ''}
+                      marked={invited.guardianEmail}
+                      onToggle={() => setInvited((v) => ({ ...v, guardianEmail: !v.guardianEmail }))}
+                    />
+                  ) : undefined
+                }
+              />
             )}
           />
           <Controller
@@ -240,7 +362,7 @@ export function AddPlayerForm({ loading, defaultValues, onSubmit }: Props) {
 
       </FormLock>
 
-      <Button label="Save Player" onClick={submit} loading={loading} size="lg" />
+      <Button label={submitLabel} onClick={submit} loading={loading} size="lg" />
     </div>
   );
 }

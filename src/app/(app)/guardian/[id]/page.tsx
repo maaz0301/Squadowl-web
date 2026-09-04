@@ -15,8 +15,10 @@ import {
   useLeaveSeasonMutation,
   useRemoveFamilyContactMutation,
   useSetAvailabilityMutation,
+  useChatUnreadCount,
 } from '@/features/queries';
 import type { GuardianRosterAthlete, SeasonEvent } from '@/data/types';
+import { ChatUnreadBadge } from '@/components/ChatUnreadBadge';
 
 type FlatEvent = SeasonEvent & { seasonName: string; teamName: string; seasonId: string };
 type GuardianSeason = GuardianRosterAthlete['seasons'][number];
@@ -267,6 +269,13 @@ export default function GuardianPortalPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // Ahead of the early returns below, because it is a hook. The Chat tab jumps
+  // straight into the conversation when there is only one team to have it with,
+  // so that is the only case where a badge on the tab means one thing; with
+  // several teams each one carries its own badge in the list instead.
+  const soleChatSeason = guardianQuery.data?.find((a) => a.id === playerId)?.seasons;
+  const chatUnread = useChatUnreadCount(soleChatSeason?.length === 1 ? soleChatSeason[0].id : undefined);
+
   if (guardianQuery.isLoading) {
     return <LoadingState message="Loading portal..." />;
   }
@@ -330,7 +339,7 @@ export default function GuardianPortalPage() {
         tabs={[
           { key: 'overview', label: 'Overview' },
           { key: 'schedule', label: 'Schedule', badge: allEvents.length || undefined },
-          { key: 'chat', label: 'Chat' },
+          { key: 'chat', label: 'Chat', badge: chatUnread || undefined },
           { key: 'info', label: 'Info' },
         ]}
         activeKey={tab}
@@ -411,7 +420,10 @@ export default function GuardianPortalPage() {
                   <p className="font-bold" style={{ color: colors.ink }}>{s.teamName}</p>
                   <p className="text-sm" style={{ color: colors.inkMuted }}>{s.name}</p>
                 </div>
-                <Badge label="Chat" variant="brand" />
+                <div className="flex items-center gap-2">
+                  <ChatUnreadBadge seasonId={s.id} />
+                  <Badge label="Chat" variant="brand" />
+                </div>
               </Card>
             ))}
           </div>

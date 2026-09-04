@@ -6,6 +6,7 @@ import { useIsMutating } from '@tanstack/react-query';
 
 import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
 import { DummyDataModal } from '@/components/DummyDataModal';
+import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import {
   Avatar,
@@ -26,6 +27,7 @@ import { playerDisplayName } from '@/data/rubrics';
 import type { AddPlayerForm as AddPlayerFormValues } from '@/data/types';
 import {
   useAddPlayerMutation,
+  useImportTryoutPlayersMutation,
   useClearTestDataMutation,
   useGenerateTestDataMutation,
   useTryoutQuery,
@@ -47,6 +49,7 @@ export default function RosterPage() {
   const { alert, confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   const addPlayer = useAddPlayerMutation(id!);
+  const importPlayers = useImportTryoutPlayersMutation(id!);
   const uploadPhoto = useUploadPlayerPhotoMutation(id!);
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
   const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
@@ -58,6 +61,7 @@ export default function RosterPage() {
   const setCurrentPlayer = useSessionStore((s) => s.setCurrentPlayer);
   const user = useUser();
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [runningTool, setRunningTool] = useState<string | null>(null);
   const [showTestGen, setShowTestGen] = useState(false);
@@ -121,6 +125,16 @@ export default function RosterPage() {
       return;
     }
     setShowAdd(true);
+  };
+
+  // Same plan gate as adding one by hand — a spreadsheet is a faster way onto
+  // the roster, not a way around the cap.
+  const openImport = () => {
+    if (isAtPlayerLimit(user?.planTier ?? 'free', tryout.roster.length)) {
+      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
+      return;
+    }
+    setShowImport(true);
   };
 
   // On failure, offers a Retry instead of just dead-ending — re-running this
@@ -216,6 +230,7 @@ export default function RosterPage() {
           <div className="flex flex-wrap gap-2">
             <Button label="Score Players" onClick={() => router.push(href('rinkside'))} />
             <Button label="+ Add Player" variant="secondary" onClick={openAdd} />
+            <Button label="Import from File" variant="secondary" onClick={openImport} />
             <Button label="Tools" variant="ghost" onClick={() => setShowTools(true)} />
           </div>
 
@@ -329,6 +344,13 @@ export default function RosterPage() {
           })}
         </div>
       )}
+
+      <ImportPlayersModal
+        visible={showImport}
+        onClose={() => setShowImport(false)}
+        target={tryout.name}
+        onImport={(rows, onProgress) => importPlayers.mutateAsync({ rows, onProgress })}
+      />
 
       <Modal visible={showAdd} title="Add Player" size="lg" onClose={() => setShowAdd(false)} hideDefaultFooter>
         <AddPlayerForm loading={addPlayer.isPending || uploadPhoto.isPending} onSubmit={submitAddPlayer} />

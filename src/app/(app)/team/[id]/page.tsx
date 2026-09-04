@@ -39,11 +39,13 @@ import {
   useTeamRosterAthleteIdsQuery,
   useAddTeamRosterPlayersMutation,
   useAddManualTeamPlayerMutation,
+  useImportTeamRosterPlayersMutation,
   useUploadTeamPlayerPhotoMutation,
   useRemoveTeamRosterPlayerMutation,
   useTeamRosterInvitesMutation,
   useSeasonSummariesQuery,
   useSeasonQuery,
+  useChatUnreadCount,
   useSeasonRealtimeSync,
   useAddTeamEventMutation,
   useUpdateSeasonEventMutation,
@@ -65,6 +67,7 @@ import { TeamBanner } from '@/components/TeamBanner';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
+import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { getDataSource } from '@/data';
 
 function feeCentsFromInput(feeInput: string): number {
@@ -210,29 +213,68 @@ export default function TeamDetailPage() {
   // Same AddPlayerForm the assessment roster uses, just attached to the team
   // roster instead of a tryout's participants.
   const [showAddManualPlayer, setShowAddManualPlayer] = useState(false);
+  // A club that already keeps its roster in a spreadsheet shouldn't have to
+  // retype it — see ImportPlayersModal for the mapping step that makes an
+  // arbitrary sheet usable.
+  const [showImportPlayers, setShowImportPlayers] = useState(false);
+  const importPlayers = useImportTeamRosterPlayersMutation(id);
 
-  const submitManualPlayer = async (data: AddPlayerFormValues) => {
-    try {
-      const { athleteId } = await addManualPlayer.mutateAsync(data);
-      if (athleteId && data.avatarUrl?.startsWith('blob:')) {
-        try {
-          await uploadTeamPlayerPhoto.mutateAsync({
-            athleteId,
-            fileUri: data.avatarUrl,
-            fileType: 'image/jpeg',
-          });
-        } catch (e) {
-          await alert(
-            'Upload Error',
-            `Failed to upload profile picture: ${e instanceof Error ? e.message : 'Unknown error'}`,
-          );
-        }
+  /** Create the athlete, put them on the roster, and upload the photo they were given. */
+  const saveManualPlayer = async (data: AddPlayerFormValues) => {
+    const { athleteId } = await addManualPlayer.mutateAsync(data);
+    if (athleteId && data.avatarUrl?.startsWith('blob:')) {
+      try {
+        await uploadTeamPlayerPhoto.mutateAsync({
+          athleteId,
+          fileUri: data.avatarUrl,
+          fileType: 'image/jpeg',
+        });
+      } catch (e) {
+        await alert(
+          'Upload Error',
+          `Failed to upload profile picture: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        );
       }
-      setShowAddManualPlayer(false);
+    }
+    return athleteId;
+  };
+
+  /**
+   * Add a player by hand and invite them, in one step — the invite is the point
+   * of adding them, and making the coach save, reopen the profile and invite
+   * from there was three steps to send one email.
+   *
+   * `emails` is what the form's Invite toggles marked; without it every address
+   * the player has on file is mailed.
+   */
+  const addAndInviteManualPlayer = async (data: AddPlayerFormValues, emails?: string[]) => {
+    let athleteId: string;
+    try {
+      athleteId = await saveManualPlayer(data);
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Could not add this player.');
+      return;
+    }
+    // The player is on the roster from here on, whatever the invite does — so
+    // the form closes first and the send reports itself on top of the roster.
+    setShowAddManualPlayer(false);
+    try {
+      setInvitingAthleteId(athleteId);
+      await reportInviteResult(await sendInvites.mutateAsync({ athleteIds: [athleteId], emails }));
+    } catch (e) {
+      await alert(
+        'Invite Not Sent',
+        `${`${data.first} ${data.last}`.trim()} was added to the roster, but the invite could not be sent: ${
+          e instanceof Error ? e.message : 'Unknown error'
+        }`,
+      );
+    } finally {
+      setInvitingAthleteId(null);
     }
   };
+
+  const submitManualPlayer = (data: AddPlayerFormValues, inviteEmails?: string[]) =>
+    addAndInviteManualPlayer(data, inviteEmails);
 
   // Events live on the season attached to this team, but that's an implementation
   // detail — the team screen is the only place a coach touches them.
@@ -244,6 +286,8 @@ export default function TeamDetailPage() {
   const seasonsQuery = useSeasonSummariesQuery();
   const teamSeasonId = (seasonsQuery.data ?? []).find((s) => s.teamId === id)?.id;
   const seasonQuery = useSeasonQuery(teamSeasonId);
+  /** Badges the Chat tab, so a coach on the hub can see the team has written. */
+  const chatUnread = useChatUnreadCount(teamSeasonId);
   // The Season Hub tab renders this season's schedule and RSVPs inline, so it
   // needs the same live updates the dedicated season pages get.
   useSeasonRealtimeSync(teamSeasonId);
@@ -515,7 +559,7 @@ export default function TeamDetailPage() {
     });
     if (!ok) return;
     try {
-      await reportInviteResult(await sendInvites.mutateAsync(undefined));
+      await reportInviteResult(await sendInvites.mutateAsync({}));
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Could not send invites.');
     }
@@ -524,7 +568,7 @@ export default function TeamDetailPage() {
   const sendPlayerInvite = async (athleteId: string) => {
     setInvitingAthleteId(athleteId);
     try {
-      await reportInviteResult(await sendInvites.mutateAsync([athleteId]));
+      await reportInviteResult(await sendInvites.mutateAsync({ athleteIds: [athleteId] }));
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Could not send invite.');
     } finally {
@@ -778,7 +822,7 @@ export default function TeamDetailPage() {
           { key: 'schedule', label: 'Schedule', badge: upcomingEvents.length },
           { key: 'players', label: 'Players', badge: playerCount },
           { key: 'assessments', label: 'Evaluations', badge: tryoutsLoading ? undefined : linkedTryouts.length },
-          { key: 'chat', label: 'Chat' },
+          { key: 'chat', label: 'Chat', badge: chatUnread || undefined },
           { key: 'settings', label: 'Settings' },
         ]}
         activeKey={tab}
@@ -953,6 +997,12 @@ export default function TeamDetailPage() {
               size="sm"
               variant="secondary"
               onClick={() => setShowAddManualPlayer(true)}
+            />
+            <Button
+              label="Import from File"
+              size="sm"
+              variant="secondary"
+              onClick={() => setShowImportPlayers(true)}
             />
             {canManageTeam && playerCount > 0 ? (
               <Button
@@ -1380,6 +1430,13 @@ export default function TeamDetailPage() {
         )}
       </Modal>
 
+      <ImportPlayersModal
+        visible={showImportPlayers}
+        onClose={() => setShowImportPlayers(false)}
+        target={team.name}
+        onImport={(rows, onProgress) => importPlayers.mutateAsync({ rows, onProgress })}
+      />
+
       <Modal
         visible={showAddManualPlayer}
         title="Add Player Manually"
@@ -1390,8 +1447,10 @@ export default function TeamDetailPage() {
         hideDefaultFooter
       >
         <AddPlayerForm
-          loading={addManualPlayer.isPending || uploadTeamPlayerPhoto.isPending}
+          loading={addManualPlayer.isPending || uploadTeamPlayerPhoto.isPending || sendInvites.isPending}
           onSubmit={submitManualPlayer}
+          showInvite
+          submitLabel="Save Player & Send Invite"
         />
       </Modal>
 

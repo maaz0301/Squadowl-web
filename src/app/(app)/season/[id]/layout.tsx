@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { useSeasonQuery, useSeasonRealtimeSync } from '@/features/queries';
+import { ChatUnreadBadge } from '@/components/ChatUnreadBadge';
 
 const TABS = [
   { slug: '', label: 'Hub' },
@@ -76,13 +77,14 @@ export default function SeasonLayout({
             <Link
               key={tab.slug || 'hub'}
               href={`/season/${id}${tab.slug ? `/${tab.slug}` : ''}`}
-              className="shrink-0 snap-start border-b-2 px-3.5 py-3 text-sm font-bold transition-colors"
+              className="inline-flex shrink-0 snap-start items-center gap-1.5 border-b-2 px-3.5 py-3 text-sm font-bold transition-colors"
               style={{
                 borderColor: active ? colors.primary : 'transparent',
                 color: active ? colors.primary : colors.inkMuted,
               }}
             >
               {tab.label}
+              {tab.slug === 'chat' ? <ChatUnreadBadge seasonId={id} /> : null}
             </Link>
           );
         })}

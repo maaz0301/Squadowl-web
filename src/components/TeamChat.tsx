@@ -11,6 +11,7 @@ import {
   useTeamMessagesQuery,
 } from '@/features/queries';
 import { useAuthStore } from '@/state/authStore';
+import { useChatReadStore } from '@/state/chatReadStore';
 import type { TeamMessage } from '@/data/types';
 import type { ThemeColors } from '@/theme/tokens';
 
@@ -199,6 +200,15 @@ export function TeamChat({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [rows.length]);
+
+  // Having the conversation open is what counts as reading it — including
+  // messages that arrive while it stays open, which is why this tracks the data
+  // rather than firing once on mount.
+  const markChatRead = useChatReadStore((s) => s.markChatRead);
+  useEffect(() => {
+    const newest = messagesQuery.data?.[messagesQuery.data.length - 1];
+    if (seasonId && newest) markChatRead(seasonId, newest.createdAt);
+  }, [seasonId, messagesQuery.data, markChatRead]);
 
   const send = async () => {
     const body = draft.trim();

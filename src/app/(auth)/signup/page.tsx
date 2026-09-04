@@ -25,6 +25,11 @@ export default function SignupPage() {
   // the person can still clear or overwrite it before submitting.
   const referredCode = (searchParams.get('ref') ?? '').toUpperCase();
 
+  // ?invite=assessor — carried over from the invitation email's link (see the
+  // login screen). The invite is claimed by email address once the account
+  // exists, so all this does is tell the person which address to sign up with.
+  const invitedAsAssessor = searchParams.get('invite') === 'assessor';
+
   const { control, handleSubmit } = useForm({
     resolver: zodResolver(SignupFormSchema),
     defaultValues: {
@@ -67,6 +72,19 @@ export default function SignupPage() {
           Create Account
         </h1>
       </div>
+
+      {invitedAsAssessor ? (
+        <div
+          className="rounded-xl border p-3 text-sm"
+          style={{ borderColor: colors.border, backgroundColor: colors.tile, color: colors.inkMuted }}
+        >
+          <span className="font-bold" style={{ color: colors.ink }}>
+            Your assessor invitation is waiting.
+          </span>{' '}
+          Sign up with the email address it was sent to and it will be on your dashboard under &ldquo;Assigned to
+          me&rdquo; as soon as you sign in.
+        </div>
+      ) : null}
 
       <Controller
         control={control}
@@ -130,7 +148,7 @@ export default function SignupPage() {
       <div className="flex flex-wrap items-center justify-center gap-x-1.5 text-sm">
         <span style={{ color: colors.inkMuted }}>Already have an account?</span>
         <Link
-          href="/login"
+          href={invitedAsAssessor ? '/login?invite=assessor' : '/login'}
           className="inline-flex min-h-[44px] items-center px-2 font-bold"
           style={{ color: colors.primary }}
         >

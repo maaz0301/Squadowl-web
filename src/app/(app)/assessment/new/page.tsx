@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm, Controller } from 'react-hook-form';
+import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import {
@@ -44,6 +45,7 @@ import { isAtAssessmentLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { getDataSource } from '@/data';
+import { APP_CONFIG } from '@/config/app';
 import { SCORING_TYPE_LABELS, binaryLabels, isBinaryScoringType, isMetricScoringType } from '@/data/rubrics';
 
 function NewAssessmentForm() {
@@ -69,7 +71,6 @@ function NewAssessmentForm() {
   const [showAssessorForm, setShowAssessorForm] = useState(false);
   const [assessorName, setAssessorName] = useState('');
   const [assessorEmail, setAssessorEmail] = useState('');
-  const [checkingAssessor, setCheckingAssessor] = useState(false);
 
   const [pendingRubrics, setPendingRubrics] = useState<CustomRubric[]>([]);
   const [showRubricForm, setShowRubricForm] = useState(false);
@@ -94,25 +95,23 @@ function NewAssessmentForm() {
       await alert('Missing Info', 'An assessor needs both a name and an email address.');
       return;
     }
-    setCheckingAssessor(true);
-    try {
-      const exists = await getDataSource().checkUserExistsByEmail(email);
-      if (!exists) {
-        await alert(
-          'Email Not Registered',
-          'This email is not registered in the system. Assessors must create an account before they can be invited.',
-        );
-        return;
-      }
-      setPendingAssessors((prev) => [...prev, { name, email, role: 'assessor', status: 'pending' }]);
-      setAssessorName('');
-      setAssessorEmail('');
-      setShowAssessorForm(false);
-    } catch (e) {
-      await alert('Error', e instanceof Error ? e.message : 'Could not verify this assessor.');
-    } finally {
-      setCheckingAssessor(false);
+    if (!z.string().email().safeParse(email).success) {
+      await alert('Invalid Email', `"${email}" is not a valid email address.`);
+      return;
     }
+    // One row per address per tryout — the same constraint the settings screen
+    // guards, caught here before the list is even submitted.
+    if (pendingAssessors.some((a) => a.email?.toLowerCase() === email.toLowerCase())) {
+      await alert('Already Added', `${email} is already on this evaluation's assessor list.`);
+      return;
+    }
+    // No account-exists check: the invite is claimed by email address whenever
+    // that person signs up (handle_new_user in 0002_assessor_linking.sql), so
+    // an assessor who isn't registered yet is invited, not rejected.
+    setPendingAssessors((prev) => [...prev, { name, email, role: 'assessor', status: 'pending' }]);
+    setAssessorName('');
+    setAssessorEmail('');
+    setShowAssessorForm(false);
   };
 
   const removeAssessorFromList = (index: number) => {
@@ -230,11 +229,21 @@ function NewAssessmentForm() {
           });
           // Best-effort in parallel: the assessment and its assessor list are already saved,
           // so failed invite emails shouldn't block the coach from moving on.
+          const inviteUrl = `${
+            APP_CONFIG.webUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://www.tryouthq.ca')
+          }/login?invite=assessor`;
+          // `role !== 'lead'` skips the creator's own seeded row — otherwise
+          // every coach mailed themselves an "you've been assigned as an
+          // assessor" note for the evaluation they had just made.
           const invitePromises = updated.assessors
-            .filter((a) => !!a.email)
+            .filter((a) => !!a.email && a.role !== 'lead')
             .map((a) =>
               getDataSource()
-                .sendEmail('tryout_invite', a.email!, { role: 'assessor' })
+                .sendEmail('tryout_invite', a.email!, {
+                  role: 'assessor',
+                  tryoutName: updated.name,
+                  inviteUrl,
+                })
                 .catch((err) => console.error('Error sending assessor invite email to', a.email, err)),
             );
           await Promise.allSettled(invitePromises);
@@ -590,12 +599,12 @@ function NewAssessmentForm() {
             onChange={(e) => setAssessorEmail(e.target.value)}
           />
           <p className="text-xs" style={{ color: colors.inkMuted }}>
-            They must already have a TryoutHQ account — this checks their email before adding them.
+            They&apos;ll be emailed an invitation when the evaluation is created. If they don&apos;t have a TryoutHQ
+            account yet, they can create one with this address and the invitation will be waiting for them.
           </p>
           <Button
             label="Add"
             onClick={addAssessorToList}
-            loading={checkingAssessor}
             disabled={!assessorName.trim() || !assessorEmail.trim()}
           />
         </div>

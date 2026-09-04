@@ -25,6 +25,7 @@ import { queryKeys, tryoutBulkWriteKey } from '@/lib/queryClient';
 import { getSupabase } from '@/lib/supabase';
 import { useAuthStore } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
+import { useChatReadStore } from '@/state/chatReadStore';
 import {
   useInfiniteQuery,
   useMutation,
@@ -213,6 +214,28 @@ export function useAddTeamRosterPlayersMutation(
   });
 }
 
+/**
+ * Bulk-add players read out of a spreadsheet. `onProgress` is threaded through
+ * rather than inferred from the mutation's pending flag: an import of thirty
+ * players is slow enough that "working…" on its own reads as a hang.
+ */
+export function useImportTeamRosterPlayersMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      rows,
+      onProgress,
+    }: {
+      rows: { line: number; form: AddPlayerForm }[];
+      onProgress?: (done: number) => void;
+    }) => getDataSource().importTeamRosterPlayers(teamId, rows, onProgress),
+    // Invalidate whatever the outcome: a partial import still changed the roster.
+    onSettled: () => {
+      invalidateTeamRoster(qc, teamId);
+    },
+  });
+}
+
 export function useAddManualTeamPlayerMutation(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -285,10 +308,14 @@ function dropRosterPlayer(cache: TeamRosterCache, athleteId: string): TeamRoster
  * Invite a team's roster to the portal — each player's own email and their
  * guardian's. No invalidation: nothing the team screen renders is derived from
  * portal_invites, and the caller reports the per-address outcome it returns.
+ *
+ * `athleteIds` narrows the send to specific players, `emails` to specific
+ * addresses; omit both to invite the whole roster.
  */
 export function useTeamRosterInvitesMutation(teamId: string) {
   return useMutation({
-    mutationFn: (athleteIds?: string[]) => getDataSource().sendTeamRosterInvites(teamId, athleteIds),
+    mutationFn: ({ athleteIds, emails }: { athleteIds?: string[]; emails?: string[] } = {}) =>
+      getDataSource().sendTeamRosterInvites(teamId, athleteIds, emails),
   });
 }
 
@@ -593,6 +620,26 @@ export function useAddPlayerMutation(tryoutId: string) {
       qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
       qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
+  });
+}
+
+/** The assessment-roster counterpart of useImportTeamRosterPlayersMutation. */
+export function useImportTryoutPlayersMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      rows,
+      onProgress,
+    }: {
+      rows: { line: number; form: AddPlayerForm }[];
+      onProgress?: (done: number) => void;
+    }) => getDataSource().importTryoutPlayers(tryoutId, rows, onProgress),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      void qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
+      void qc.invalidateQueries({ queryKey: queryKeys.profile });
     },
   });
 }
@@ -1657,7 +1704,8 @@ export function useDeleteTeamMessageMutation(seasonId: string) {
 
 // Unlike the other realtime hooks here, this one refetches immediately rather
 // than on a debounce — a visible delay between sending and seeing a message is
-// what makes a chat feel broken.
+// what makes a chat feel broken. The unread count hangs off the same key
+// prefix, so a message arriving lights the badge without a reload too.
 export function useTeamChatRealtimeSync(seasonId: string | undefined) {
   const qc = useQueryClient();
 
@@ -1678,6 +1726,28 @@ export function useTeamChatRealtimeSync(seasonId: string | undefined) {
       getSupabase().removeChannel(channel);
     };
   }, [seasonId, qc]);
+}
+
+/**
+ * How many chat messages have arrived in this season since the user last had
+ * the conversation open — what the Chat tab badges.
+ *
+ * Never having opened it counts everything, which is the honest answer: the
+ * badge then clears the first time they look. Subscribes to the same realtime
+ * channel the chat itself uses, so the badge appears as the message lands.
+ */
+export function useChatUnreadCount(seasonId: string | undefined): number {
+  const lastReadAt = useChatReadStore((s) => (seasonId ? (s.lastReadAt[seasonId] ?? 0) : 0));
+  useTeamChatRealtimeSync(seasonId);
+  const query = useQuery({
+    queryKey: queryKeys.teamMessagesUnread(seasonId ?? '', lastReadAt),
+    queryFn: () => getDataSource().countUnreadTeamMessages(seasonId!, lastReadAt),
+    enabled: !!seasonId,
+    // A stale badge is worse than a slightly chatty query: this is the number
+    // the user is watching to decide whether to open the tab.
+    staleTime: 30_000,
+  });
+  return query.data ?? 0;
 }
 
 export function useAthletesQuery() {

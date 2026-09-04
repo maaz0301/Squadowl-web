@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { z } from 'zod';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -31,8 +32,38 @@ import { getDefaultRubrics } from '@/data/rubrics';
 import type { Assessor } from '@/data/types';
 import { useUser } from '@/state/authStore';
 import { isAtAssessmentLimit } from '@/data/plans';
+import { APP_CONFIG } from '@/config/app';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+
+/**
+ * How an invitation is reading right now, from the inviting coach's side.
+ * Spelled out rather than echoing the raw status word: "pending" on its own
+ * left the coach unsure whether it meant the email hadn't gone out or the
+ * assessor hadn't answered yet. `title` carries the longer explanation on
+ * hover.
+ */
+const INVITE_STATUS: Record<'pending' | 'accepted' | 'declined', {
+  label: string;
+  variant: 'warning' | 'success' | 'danger';
+  title: string;
+}> = {
+  pending: {
+    label: 'Invite pending',
+    variant: 'warning',
+    title: "Invited — waiting for them to accept. They'll see it after signing in with the address it was sent to.",
+  },
+  accepted: {
+    label: 'Invite accepted',
+    variant: 'success',
+    title: 'They accepted and can score this evaluation.',
+  },
+  declined: {
+    label: 'Invite declined',
+    variant: 'danger',
+    title: 'They declined this invitation.',
+  },
+};
 
 export default function SettingsPage() {
   const id = useAssessmentId();
@@ -104,14 +135,29 @@ export default function SettingsPage() {
     setShowEdit(false);
   };
 
-  const inviteLink = (assessor: { name: string }) =>
-    `https://aas-tryout.app/assess?event=${tryout.cloud?.id ?? tryout.id}&assessor=${encodeURIComponent(assessor.name)}`;
+  // The invite is claimed by e-mail address, not by a token in the URL: the
+  // database links a tryout_assessors row to whoever signs in with the address
+  // it was addressed to (link_assessor_to_user on insert, handle_new_user on
+  // signup). So the link only has to land the invitee on the sign-in screen
+  // with the right context — it deliberately carries no identifying details.
+  const inviteLink = () => {
+    const base =
+      APP_CONFIG.webUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://www.tryouthq.ca');
+    return `${base}/login?invite=assessor`;
+  };
 
   const shareAssessorInvite = async (assessor: { name: string; email?: string }) => {
     if (assessor.email) {
       try {
-        await getDataSource().sendEmail('tryout_invite', assessor.email, { role: 'assessor' });
-        await alert('Invitation Sent', `An invitation email has been successfully sent to ${assessor.email}.`);
+        await getDataSource().sendEmail('tryout_invite', assessor.email, {
+          role: 'assessor',
+          tryoutName: tryout.name,
+          inviteUrl: inviteLink(),
+        });
+        await alert(
+          'Invitation Sent',
+          `An invitation email has been sent to ${assessor.email}. They can accept it after signing in — or after creating an account with that address if they don't have one yet.`,
+        );
         return;
       } catch (err) {
         console.error('Error sending email via Supabase', err);
@@ -120,11 +166,11 @@ export default function SettingsPage() {
     }
     try {
       await navigator.clipboard.writeText(
-        `${assessor.name}, you've been invited to score ${tryout.name}. Open: ${inviteLink(assessor)}`,
+        `${assessor.name}, you've been invited to score ${tryout.name}. Sign in (or create an account) with this email address to accept: ${inviteLink()}`,
       );
       toast('Invite link copied to clipboard', 'success');
     } catch {
-      await alert('Invite link', inviteLink(assessor));
+      await alert('Invite link', inviteLink());
     }
   };
 
@@ -137,17 +183,26 @@ export default function SettingsPage() {
       return;
     }
 
+    if (!z.string().email().safeParse(emailToInvite).success) {
+      await alert('Invalid Email', `"${emailToInvite}" is not a valid email address.`);
+      return;
+    }
+
+    // One row per address per tryout is a database constraint
+    // (unique (tryout_id, email)), so catch the repeat here and say so rather
+    // than letting the insert fail with a Postgres message.
+    if (tryout.assessors.some((a) => a.email?.toLowerCase() === emailToInvite.toLowerCase())) {
+      await alert('Already Invited', `${emailToInvite} is already on this evaluation's assessor list.`);
+      return;
+    }
+
     setAddingAssessor(true);
     try {
-      const exists = await getDataSource().checkUserExistsByEmail(emailToInvite);
-      if (!exists) {
-        await alert(
-          'Email Not Registered',
-          'This email is not registered in the system. Assessors must create an account before they can be invited.',
-        );
-        return;
-      }
-
+      // No "do they already have an account?" gate. An invite is addressed to
+      // an email, and the database claims it for whoever signs up with that
+      // address (handle_new_user in 0002_assessor_linking.sql), so requiring
+      // the assessor to go and register first — with no prompt telling them to
+      // — was a dead end the coach had no way past.
       const newAssessor: Assessor = {
         name: assessorName.trim(),
         email: emailToInvite,
@@ -301,10 +356,8 @@ export default function SettingsPage() {
                   {a.email}
                 </p>
               ) : null}
-              <div className="mt-2 flex gap-1.5">
-                {a.role !== 'lead' ? (
-                  <Badge label={a.status || 'pending'} variant={a.status === 'accepted' ? 'brand' : 'default'} />
-                ) : null}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {a.role !== 'lead' ? <Badge {...INVITE_STATUS[a.status ?? 'pending']} /> : null}
                 <Badge label={a.role} />
               </div>
             </div>
@@ -313,7 +366,7 @@ export default function SettingsPage() {
               <div className="flex shrink-0 gap-2">
                 <Button
                   className="flex-1 sm:flex-none"
-                  label={a.status === 'pending' ? 'Send Invite' : 'Send Reminder'}
+                  label={a.status === 'pending' ? 'Resend Invite' : 'Send Reminder'}
                   size="sm"
                   variant="secondary"
                   loading={busyAssessor?.index === i && busyAssessor.action === 'invite'}
@@ -403,7 +456,8 @@ export default function SettingsPage() {
       <Modal visible={showAssessor} title="Add Assessor" onClose={() => setShowAssessor(false)} hideDefaultFooter>
         <div className="flex flex-col gap-3">
           <p className="text-sm" style={{ color: colors.inkMuted }}>
-            Assessors must have a registered account in the app before they can be invited.
+            They&apos;ll get an email invitation. If they don&apos;t have a TryoutHQ account yet, they can create one
+            with this address and the invitation will be waiting for them.
           </p>
           <Input label="Name" value={assessorName} onChange={(e) => setAssessorName(e.target.value)} />
           <Input

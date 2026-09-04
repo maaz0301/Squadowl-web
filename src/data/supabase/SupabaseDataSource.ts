@@ -78,6 +78,7 @@ import type {
   Team,
   TeamBuilderResult,
   TeamInviteResult,
+  PlayerImportResult,
   TeamMessage,
   TeamRosterCursor,
   TeamRosterPlayer,
@@ -1335,21 +1336,23 @@ export class SupabaseDataSource implements DataSource {
     }
     const supabase = getSupabase();
     // Three independent lookups, all keyed on a userId we already hold: the
-    // profile row, the membership that carries the account (and therefore the
+    // profile row, the memberships that carry the account (and therefore the
     // plan), and the Auth server's view of whether the address is confirmed.
     // Nothing here feeds anything else here, so awaiting them one after
     // another just stacked three round trips — measured at 1262ms + 755ms +
     // 384ms, in front of *every* login and every cold boot, since this sits on
     // the path from "signed in" to the first screen having a session at all.
-    const [profileRes, membershipRes, userRes, guardianRes] = await Promise.all([
+    const [profileRes, membershipsRes, userRes, guardianRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).single(),
-      supabase
-        .from('memberships')
-        .select('role, accounts(*)')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle(),
+      // Every membership, not just the oldest one. A user can hold more than
+      // one — a guardian row on a club's account and their own coaching
+      // account, say — and taking whichever was created first handed the
+      // profile the wrong account: role, plan tier, subscription status and
+      // team licences all came off it. A coach who had first been added as a
+      // guardian somewhere therefore signed in on the web as a free-tier
+      // guardian, with no Upgrade or Plans & Billing anywhere, while ctx()
+      // (which ranks by role) kept writing to their real account.
+      supabase.from('memberships').select('role, accounts(*)').eq('user_id', userId),
       supabase.auth.getUser(),
       // Guardians never get a membership row (see below), so the only way to
       // tell "a guardian we haven't heard from yet" apart from "genuinely
@@ -1368,10 +1371,17 @@ export class SupabaseDataSource implements DataSource {
     // the error silently signed the coach in as free-tier and persisted that to
     // storage, where it stuck (and produced a bogus "you've reached your plan's
     // limit" banner) until something refetched the profile. Seen for real
-    // against a transient 401. `data: null` with no error still means what it
+    // against a transient 401. An empty list with no error still means what it
     // always did: a guardian, provisioned with a profile and no membership row.
-    if (membershipRes.error) throw membershipRes.error;
-    const membership = membershipRes.data as Row | null;
+    if (membershipsRes.error) throw membershipsRes.error;
+    const memberships = (membershipsRes.data ?? []) as Row[];
+    // Same ordering ctx() resolves the working account with, so the plan and
+    // limits shown match the account writes actually go through.
+    const membership = memberships
+      .slice()
+      .sort((a, b) => this.getRoleWeight(b.role as string) - this.getRoleWeight(a.role as string))[0] as
+      | Row
+      | undefined;
     const account = Array.isArray(membership?.accounts)
       ? membership.accounts[0]
       : (membership?.accounts as Row | undefined);
@@ -2043,6 +2053,55 @@ export class SupabaseDataSource implements DataSource {
     return { athleteId };
   }
 
+  /**
+   * Shared body of the two roster imports: run `add` over the rows and collect
+   * the outcome of each.
+   *
+   * Serial on purpose, where nearly every other fan-out in this file is
+   * pooled. Adding a player provisions a guardian login and mails it, so a
+   * pooled import would fire twenty auth writes and twenty emails at once, and
+   * two rows sharing a guardian address would race each other to create the
+   * same account. A roster is tens of rows, not thousands, and the caller shows
+   * a progress bar.
+   */
+  private async importPlayers(
+    rows: { line: number; form: AddPlayerForm }[],
+    add: (form: AddPlayerForm) => Promise<unknown>,
+    onProgress?: (done: number) => void,
+  ): Promise<PlayerImportResult> {
+    const result: PlayerImportResult = { added: 0, failed: [] };
+    for (const [i, { line, form }] of rows.entries()) {
+      try {
+        await add(form);
+        result.added++;
+      } catch (e) {
+        result.failed.push({
+          line,
+          name: `${form.first} ${form.last}`.trim() || 'Unnamed player',
+          message: e instanceof Error ? e.message : 'Could not add this player.',
+        });
+      }
+      onProgress?.(i + 1);
+    }
+    return result;
+  }
+
+  async importTryoutPlayers(
+    tryoutId: string,
+    rows: { line: number; form: AddPlayerForm }[],
+    onProgress?: (done: number) => void,
+  ): Promise<PlayerImportResult> {
+    return this.importPlayers(rows, (form) => this.addPlayer(tryoutId, form), onProgress);
+  }
+
+  async importTeamRosterPlayers(
+    teamId: string,
+    rows: { line: number; form: AddPlayerForm }[],
+    onProgress?: (done: number) => void,
+  ): Promise<PlayerImportResult> {
+    return this.importPlayers(rows, (form) => this.addManualTeamPlayer(teamId, form), onProgress);
+  }
+
   async removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void> {
     const { supabase } = await this.ctx();
     unwrap(
@@ -2067,8 +2126,16 @@ export class SupabaseDataSource implements DataSource {
    * the send-email function rejects, is reported back rather than thrown: on a
    * roster of any size at least one of those is normal, and failing the whole
    * batch on it would leave the coach unable to tell who was actually invited.
+   *
+   * `emails` narrows the derived recipient list down to specific addresses, so
+   * a caller that already has one address in hand — the "Invite" button beside
+   * an email field on the add-player form — can send to just that one.
    */
-  async sendTeamRosterInvites(teamId: string, athleteIds?: string[]): Promise<TeamInviteResult> {
+  async sendTeamRosterInvites(
+    teamId: string,
+    athleteIds?: string[],
+    emails?: string[],
+  ): Promise<TeamInviteResult> {
     const { supabase } = await this.ctx();
 
     // portal_invites.account_id is the *team's* owning account, not the
@@ -2095,6 +2162,9 @@ export class SupabaseDataSource implements DataSource {
     // The role travels with the address because the email is worded differently
     // for the player than for their guardian; when one address is on file as
     // both, Player wins and it's only sent once.
+    // Addresses are matched case-insensitively: the caller's copy of an address
+    // comes off a form field, and mail addresses don't round-trip case.
+    const wanted = emails?.length ? new Set(emails.map((e) => e.trim().toLowerCase())) : null;
     const targets: { player: TeamRosterPlayer; email: string; role: 'Player' | 'Guardian' }[] = [];
     for (const p of invitees) {
       const byEmail = new Map<string, 'Player' | 'Guardian'>();
@@ -2102,11 +2172,14 @@ export class SupabaseDataSource implements DataSource {
       if (guardian) byEmail.set(guardian, 'Guardian');
       const own = p.playerEmail?.trim();
       if (own) byEmail.set(own, 'Player');
-      if (byEmail.size === 0) {
+      const chosen = wanted
+        ? [...byEmail].filter(([email]) => wanted.has(email.toLowerCase()))
+        : [...byEmail];
+      if (chosen.length === 0) {
         result.skipped.push(`${p.first} ${p.last}`.trim() || 'Unnamed player');
         continue;
       }
-      for (const [email, role] of byEmail) targets.push({ player: p, email, role });
+      for (const [email, role] of chosen) targets.push({ player: p, email, role });
     }
 
     if (targets.length === 0) return result;
@@ -5544,6 +5617,22 @@ export class SupabaseDataSource implements DataSource {
         .limit(200),
     ) as Row[] | null;
     return (rows ?? []).reverse().map((row) => this.mapTeamMessage(row));
+  }
+
+  async countUnreadTeamMessages(seasonId: string, sinceMs: number): Promise<number> {
+    const { supabase, userId } = await this.userCtx();
+    // head:true — the rows are never read, only counted, so none come back.
+    // The caller's own messages are excluded: posting to a chat is not a
+    // notification to yourself, and every send would otherwise badge the tab
+    // it was sent from.
+    const { count, error } = await supabase
+      .from('season_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('season_id', seasonId)
+      .gt('created_at', new Date(sinceMs).toISOString())
+      .neq('author_user_id', userId);
+    if (error) throw new Error(error.message);
+    return count ?? 0;
   }
 
   async sendTeamMessage(seasonId: string, body: string): Promise<TeamMessage> {
