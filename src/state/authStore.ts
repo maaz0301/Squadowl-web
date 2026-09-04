@@ -34,6 +34,13 @@ interface AuthState {
   expireSession: () => Promise<void>;
   clearSessionExpired: () => void;
   restoreSession: (forceRefresh?: boolean) => Promise<void>;
+  /**
+   * Re-read the signed-in user's profile from the server, discarding the
+   * data source's cached copy. Role and plan tier decide which navigation a
+   * user gets and whether billing is reachable at all, so a profile that has
+   * gone stale doesn't just show an old number — it hands out the wrong app.
+   */
+  refreshProfile: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
   verifyPasswordResetOtp: (email: string, token: string) => Promise<void>;
@@ -132,6 +139,21 @@ export const useAuthStore = create<AuthState>()(
         } catch (e) {
           console.error('Failed to restore session:', e);
           set({ session: null, isHydrated: true, sessionExpired: hadSession });
+        }
+      },
+      refreshProfile: async () => {
+        if (!get().session) return;
+        try {
+          const profile = await getDataSource().getProfile(true);
+          const current = get().session;
+          // The session can be torn down while this read is in flight — a
+          // sign-out mid-refresh must not write the old user back.
+          if (!profile || !current || current.user.id !== profile.id) return;
+          set({ session: { ...current, user: profile } });
+        } catch (e) {
+          // Keep whatever profile is already in hand; this is a background
+          // reconciliation, not something the user asked for.
+          console.warn('Could not refresh profile:', e);
         }
       },
       updateProfile: async (updates) => {

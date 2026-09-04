@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { getSupabase } from '@/lib/supabase';
 import { APP_CONFIG } from '@/config/app';
-import { type Session, type SupabaseClient } from '@supabase/supabase-js';
+import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
 import type { FeedbackSubmission } from '../extras';
 import {
@@ -663,10 +663,54 @@ function webOrigin(): string | undefined {
  * the same stringify path applies to other non-Response objects too) for a
  * real fallback instead of surfacing it as-is.
  */
-function authErrorMessage(message: string | null | undefined, fallback: string): string {
+function authErrorMessage(
+  error: { message?: string | null } | null | undefined,
+  fallback: string,
+): string {
+  if (error && isNetworkFetchError(error)) return NETWORK_ERROR_MESSAGE;
+  const message = error?.message;
   if (!message || /^[{[]/.test(message.trim())) return fallback;
   return message;
 }
+
+/**
+ * A request that never got an HTTP response at all — the browser's fetch()
+ * itself threw (offline, DNS hiccup, a VPN/ad-blocker/content-blocker
+ * dropping the request, a transient TLS failure). auth-js wraps these as
+ * AuthRetryableFetchError and, tellingly, passes the raw browser Error
+ * message straight through as `.message` — which on Safari is the single
+ * word "Load failed" and on Chrome "Failed to fetch", neither of which means
+ * anything to someone looking at a signup form. Worth a name because the SDK
+ * itself considers this class retryable (see withAuthRetry below) rather
+ * than a real rejection from the server.
+ */
+function isNetworkFetchError(error: unknown): boolean {
+  return isAuthRetryableFetchError(error) && (error as { status?: number }).status === 0;
+}
+
+/**
+ * One retry, only for the network-level failure above — not for a real
+ * rejection from the server (bad password, rate limit, etc.), which the
+ * first attempt already reports correctly. A dropped connection is often a
+ * one-off blip (Safari Private Relay hiccups are the common local case), so
+ * silently trying again once beats surfacing "Load failed" for something
+ * that would have worked a second later.
+ *
+ * auth-js resolves signUp/signInWithPassword/etc. with `{ data, error }`
+ * rather than throwing even for a network failure, so the retry has to
+ * inspect the returned `error`, not a caught exception.
+ */
+async function withAuthRetry<T extends { error: { message?: string } | null }>(
+  run: () => Promise<T>,
+): Promise<T> {
+  const result = await run();
+  if (result.error && isNetworkFetchError(result.error)) return run();
+  return result;
+}
+
+/** Message shown when withAuthRetry's second attempt also fails at the network level. */
+const NETWORK_ERROR_MESSAGE =
+  "Couldn't reach the server. Check your internet connection — browser privacy/ad-blocking extension can also cause this — and try again.";
 
 const EVENT_TYPE_TO_DB: Record<EventType, string> = {
   Tryout: 'tryout',
@@ -1419,8 +1463,8 @@ export class SupabaseDataSource implements DataSource {
 
   async login(email: string, password: string): Promise<AuthSession> {
     const supabase = getSupabase();
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error || !data.session) throw new Error(authErrorMessage(error?.message, 'Login failed. Please try again.'));
+    const { data, error } = await withAuthRetry(() => supabase.auth.signInWithPassword({ email, password }));
+    if (error || !data.session) throw new Error(authErrorMessage(error, 'Login failed. Please try again.'));
     this.resetAccountCaches();
     this.userId = data.session.user.id;
     const user = await this.loadUserProfile(data.session.user.id);
@@ -1429,21 +1473,23 @@ export class SupabaseDataSource implements DataSource {
 
   async signup(displayName: string, email: string, password: string, accountType: string): Promise<AuthSession> {
     const supabase = getSupabase();
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { display_name: displayName, account_type: accountType },
-        // Without this, the confirmation link falls back to Supabase's
-        // project-level Site URL and lands with an unconsumed token in the
-        // URL — this app doesn't auto-parse it (see supabase.ts's
-        // detectSessionInUrl: false), so the tab just goes blank. Routing it
-        // at /auth/callback instead gives the app a page whose whole job is
-        // to read that token and actually start the session.
-        emailRedirectTo: emailRedirectTo(),
-      },
-    });
-    if (error) throw new Error(authErrorMessage(error.message, 'Failed to create your account. Please try again.'));
+    const { data, error } = await withAuthRetry(() =>
+      supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { display_name: displayName, account_type: accountType },
+          // Without this, the confirmation link falls back to Supabase's
+          // project-level Site URL and lands with an unconsumed token in the
+          // URL — this app doesn't auto-parse it (see supabase.ts's
+          // detectSessionInUrl: false), so the tab just goes blank. Routing it
+          // at /auth/callback instead gives the app a page whose whole job is
+          // to read that token and actually start the session.
+          emailRedirectTo: emailRedirectTo(),
+        },
+      }),
+    );
+    if (error) throw new Error(authErrorMessage(error, 'Failed to create your account. Please try again.'));
 
     // Signing up an address that already has an account is not an error as far
     // as Supabase is concerned: rather than confirm the address is taken, it
@@ -1561,17 +1607,19 @@ export class SupabaseDataSource implements DataSource {
   async updatePassword(password: string): Promise<void> {
     const { supabase } = await this.ctx();
     const { error } = await supabase.auth.updateUser({ password });
-    if (error) throw new Error(authErrorMessage(error.message, 'Failed to update your password. Please try again.'));
+    if (error) throw new Error(authErrorMessage(error, 'Failed to update your password. Please try again.'));
   }
 
   async resendVerificationEmail(email: string): Promise<void> {
     const supabase = getSupabase();
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email,
-      options: { emailRedirectTo: emailRedirectTo() },
-    });
-    if (error) throw new Error(authErrorMessage(error.message, 'Failed to resend the verification email. Please try again.'));
+    const { error } = await withAuthRetry(() =>
+      supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: emailRedirectTo() },
+      }),
+    );
+    if (error) throw new Error(authErrorMessage(error, 'Failed to resend the verification email. Please try again.'));
   }
 
   async requestPasswordReset(email: string): Promise<void> {
@@ -1593,13 +1641,13 @@ export class SupabaseDataSource implements DataSource {
     const { error } = await supabase.functions.invoke('request-password-reset', {
       body: { email },
     });
-    if (error) throw new Error(authErrorMessage(error.message, 'Failed to send the reset email. Please try again.'));
+    if (error) throw new Error(authErrorMessage(error, 'Failed to send the reset email. Please try again.'));
   }
 
   async verifyPasswordResetOtp(email: string, token: string): Promise<void> {
     const supabase = getSupabase();
     const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
-    if (error) throw new Error(authErrorMessage(error.message, 'Failed to verify the code. Please try again.'));
+    if (error) throw new Error(authErrorMessage(error, 'Failed to verify the code. Please try again.'));
     if (data.session) {
       this.resetAccountCaches();
       this.userId = null;
@@ -1609,10 +1657,10 @@ export class SupabaseDataSource implements DataSource {
   async resetPasswordWithOtp(email: string, token: string, newPassword: string): Promise<void> {
     const supabase = getSupabase();
     const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
-    if (error) throw new Error(authErrorMessage(error.message, 'Failed to verify the code. Please try again.'));
+    if (error) throw new Error(authErrorMessage(error, 'Failed to verify the code. Please try again.'));
     if (!data.session) throw new Error('Failed to start session after OTP verification');
     const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
-    if (updateError) throw new Error(authErrorMessage(updateError.message, 'Failed to update your password. Please try again.'));
+    if (updateError) throw new Error(authErrorMessage(updateError, 'Failed to update your password. Please try again.'));
     this.resetAccountCaches();
     this.userId = null;
   }
