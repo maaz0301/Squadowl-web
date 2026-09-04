@@ -98,6 +98,21 @@ describe('buildImportRows', () => {
     expect(rows[1].errors).toContain('Same player as row 2');
   });
 
+  // The import modal lets a coach strike rows off the preview, and it does that
+  // by dropping them from the sheet and rebuilding rather than filtering the
+  // built rows. This is why: removing the row a duplicate points at has to
+  // clear the duplicate, not leave it accusing a row that is no longer there.
+  it('clears the duplicate flag when the row it points at is dropped first', () => {
+    const all = sheet(headers, [
+      ['Maaz', 'Khan', 'a@b.com', ''],
+      ['maaz', 'khan', 'A@B.com', ''],
+    ]);
+    const withoutFirst = { ...all, rows: all.rows.filter((r) => r.line !== 2) };
+    const rows = buildImportRows(withoutFirst, mapping);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ line: 3, errors: [] });
+  });
+
   it('splits a full-name column both ways round', () => {
     const rows = buildImportRows(
       sheet(['Name', 'Guardian Email'], [['Maaz Khan', 'a@b.com'], ['Khan, Sam', 'c@d.com']]),

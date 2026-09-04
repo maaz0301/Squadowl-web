@@ -24,10 +24,31 @@ import { queryClient, queryKeys } from '@/lib/queryClient';
 /** Prefetches respect this like any query, so a warm cache is left alone. */
 const PREFETCH_STALE_TIME = 30_000;
 
-function warm(queryKey: readonly unknown[], queryFn: () => Promise<unknown>): void {
-  void queryClient
-    .prefetchQuery({ queryKey, queryFn, staleTime: PREFETCH_STALE_TIME })
-    .catch(() => {});
+/**
+ * `staleTime` is an override for the rare query whose own hook sets a longer
+ * one. Warming such a query on the 30s default would refetch it on a hover the
+ * screen itself would have answered from cache — the opposite of the point.
+ */
+function warm(
+  queryKey: readonly unknown[],
+  queryFn: () => Promise<unknown>,
+  staleTime: number = PREFETCH_STALE_TIME,
+): void {
+  void queryClient.prefetchQuery({ queryKey, queryFn, staleTime }).catch(() => {});
+}
+
+/**
+ * What a route's prefetch needs to know about who is asking.
+ *
+ * Passed in by the caller rather than read off the auth store: authStore
+ * imports this module (warmAfterAuth), so importing it back would close a
+ * module-load cycle. AppShell already has both facts to hand.
+ */
+export interface PrefetchContext {
+  /** The signed-in user's id. Some queries key on it, so they can't warm without it. */
+  userId?: string;
+  /** Guardians share the /dashboard href with coaches but read a different query. */
+  isGuardian?: boolean;
 }
 
 /** The dashboard's own reads, plus the teams list its overview card counts. */
@@ -90,19 +111,89 @@ export function prefetchTeamDetail(teamId: string): void {
   warm(queryKeys.tryouts(false), () => getDataSource().listTryouts(false));
 }
 
+/** The coach's inbox of athletes guardians have shared with them. */
+export function prefetchSharedAthletes(): void {
+  warm(queryKeys.sharedAthletes, () => getDataSource().getSharedAthletesForCoach());
+}
+
+/**
+ * The enterprise dashboard's headline metrics are computed across most of the
+ * account at once — five reads it fires in parallel on mount, and the slowest
+ * of them is the full archived-inclusive tryout list. Warming them together on
+ * hover is the largest single saving in this file after prefetchTryout.
+ */
+export function prefetchEnterprise({ userId }: PrefetchContext = {}): void {
+  warm(queryKeys.org, () => getDataSource().getOrg());
+  warm(queryKeys.tryouts(true), () => getDataSource().listTryouts(true));
+  warm(queryKeys.teams, () => getDataSource().listTeams());
+  warm(queryKeys.seasons, () => getDataSource().listSeasons());
+  if (userId) warm(queryKeys.orgMembers(userId), () => getDataSource().listOrgMembers(false));
+}
+
+export function prefetchPayments(): void {
+  warm(queryKeys.enterprisePayments, () => getDataSource().getEnterprisePayments());
+  // Carries useConnectAccountStatusQuery's own 5-minute staleTime rather than
+  // the default: each run is a live Stripe accounts.retrieve, so warming it at
+  // 30s would turn passing the cursor over "Payments" into a round trip the
+  // screen would otherwise have skipped entirely.
+  warm(
+    queryKeys.connectAccountStatus,
+    () => getDataSource().getConnectAccountStatus(),
+    5 * 60_000,
+  );
+}
+
+/**
+ * The Members screen asks for team managers alongside staff, which is a
+ * different cache key from the plain membership list `usePermissions()` keeps
+ * warm — so this screen really does start a fresh read on mount.
+ */
+export function prefetchOrgMembers({ userId }: PrefetchContext = {}): void {
+  if (!userId) return;
+  warm(queryKeys.orgMembers(userId, true), () => getDataSource().listOrgMembers(true));
+}
+
+/**
+ * Loyalty Program and Plans & Billing both open on the referral summary — the
+ * one read either screen blocks on — so a hover over either warms both.
+ */
+export function prefetchReferralSummary(): void {
+  warm(queryKeys.referralSummary, () => getDataSource().getReferralSummary());
+}
+
+/** What a guardian's /dashboard renders from, in place of the coach reads. */
+export function prefetchGuardianDashboard({ userId }: PrefetchContext = {}): void {
+  if (!userId) return;
+  warm(queryKeys.guardianRosters(userId), () => getDataSource().getGuardianRosters());
+}
+
 /** Route prefix → the data that route opens with. Unlisted routes are cheap. */
-const BY_ROUTE: Record<string, () => void> = {
-  '/dashboard': prefetchDashboard,
+const BY_ROUTE: Record<string, (ctx: PrefetchContext) => void> = {
+  // Same href, two entirely different screens — see prefetchGuardianDashboard.
+  '/dashboard': (ctx) => (ctx.isGuardian ? prefetchGuardianDashboard(ctx) : prefetchDashboard()),
   '/teams': prefetchTeams,
   '/search': prefetchSearch,
   '/archived-assessments': prefetchArchivedAssessments,
+  '/shared-athletes': prefetchSharedAthletes,
+  '/enterprise': prefetchEnterprise,
+  '/payments': prefetchPayments,
+  '/organization/members': prefetchOrgMembers,
+  '/loyalty': prefetchReferralSummary,
+  '/upgrade': prefetchReferralSummary,
   '/assessment/new': prefetchNewAssessment,
   '/team/new': prefetchNewTeam,
 };
 
-/** Called from nav items on hover/focus/touch, keyed by href. */
-export function prefetchRoute(href: string): void {
-  BY_ROUTE[href]?.();
+/**
+ * Called from nav items on hover/focus/touch, keyed by href.
+ *
+ * Every sidebar destination that blocks on a read is listed above. The ones
+ * that aren't — /profile and /feedback — render from the session and local
+ * state alone, so there is nothing to warm and Next's own prefetch of the
+ * route chunk is the whole of their cost.
+ */
+export function prefetchRoute(href: string, ctx: PrefetchContext = {}): void {
+  BY_ROUTE[href]?.(ctx);
 }
 
 /**
@@ -121,7 +212,7 @@ export function warmAfterAuth(
   // dashboard for them is a request whose answer nobody will ever look at.
   if (!user || user.emailVerified === false) return;
   if (user.role === 'guardian') {
-    warm(queryKeys.guardianRosters(user.id), () => getDataSource().getGuardianRosters());
+    prefetchGuardianDashboard({ userId: user.id });
     return;
   }
   prefetchDashboard();

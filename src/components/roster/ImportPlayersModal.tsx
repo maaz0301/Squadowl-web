@@ -66,11 +66,32 @@ export function ImportPlayersModal({
   const [reading, setReading] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<PlayerImportResult | null>(null);
+  /**
+   * File lines the coach has struck off the import, by line number.
+   *
+   * Dropped from the sheet *before* the rows are built rather than filtered out
+   * of the result: the duplicate check inside buildImportRows keeps the first
+   * occurrence and flags the rest, so removing the row a duplicate points at
+   * has to let the survivor be rebuilt as the first one. Filtering afterwards
+   * would leave it reading "Same player as row 4" against a row that is gone.
+   */
+  const [removed, setRemoved] = useState<ReadonlySet<number>>(() => new Set());
 
-  const rows = useMemo(() => (sheet ? buildImportRows(sheet, mapping) : []), [sheet, mapping]);
+  const kept = useMemo(
+    () => (sheet ? { ...sheet, rows: sheet.rows.filter((r) => !removed.has(r.line)) } : null),
+    [sheet, removed],
+  );
+  const rows = useMemo(() => (kept ? buildImportRows(kept, mapping) : []), [kept, mapping]);
   const ready = rows.filter((r) => r.errors.length === 0);
   const skipped = rows.filter((r) => r.errors.length > 0);
   const importing = progress !== null;
+
+  const removeLines = (lines: number[]) =>
+    setRemoved((prev) => {
+      const next = new Set(prev);
+      for (const line of lines) next.add(line);
+      return next;
+    });
 
   const reset = () => {
     setFile(null);
@@ -78,6 +99,7 @@ export function ImportPlayersModal({
     setMapping({});
     setProgress(null);
     setResult(null);
+    setRemoved(new Set());
   };
 
   const close = () => {
@@ -95,6 +117,10 @@ export function ImportPlayersModal({
       setSheet(parsed);
       setMapping(guessMapping(parsed.headers));
       setResult(null);
+      // Line numbers mean nothing across a different file or a different tab of
+      // the same workbook, so removals can't carry over. Re-mapping columns
+      // deliberately *does* keep them — that is the same rows, read differently.
+      setRemoved(new Set());
     } catch (e) {
       await alert(
         'Could Not Read That File',
@@ -190,7 +216,9 @@ export function ImportPlayersModal({
             <div>
               <p className="font-bold" style={{ color: colors.ink }}>{file?.name}</p>
               <p className="text-sm" style={{ color: colors.inkMuted }}>
-                {rows.length} {rows.length === 1 ? 'row' : 'rows'} below the headings on line {sheet.headerLine}
+                {removed.size > 0
+                  ? `${rows.length} of ${sheet.rows.length} rows kept — ${removed.size} removed`
+                  : `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} below the headings on line ${sheet.headerLine}`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -228,7 +256,14 @@ export function ImportPlayersModal({
             </div>
           </div>
 
-          <RowPreview rows={rows} colors={colors} />
+          <RowPreview
+            rows={rows}
+            colors={colors}
+            disabled={importing}
+            removedCount={removed.size}
+            onRemove={(lines) => removeLines(lines)}
+            onRestore={() => setRemoved(new Set())}
+          />
 
           {importing ? (
             <div className="flex items-center gap-3">
@@ -261,22 +296,64 @@ export function ImportPlayersModal({
   );
 }
 
-function RowPreview({ rows, colors }: { rows: ImportRow[]; colors: Colors }) {
+function RowPreview({
+  rows,
+  colors,
+  disabled,
+  removedCount,
+  onRemove,
+  onRestore,
+}: {
+  rows: ImportRow[];
+  colors: Colors;
+  disabled: boolean;
+  removedCount: number;
+  /** Strike these file lines off the import. */
+  onRemove: (lines: number[]) => void;
+  /** Put every removed line back. */
+  onRestore: () => void;
+}) {
   // Bad rows first: they are the ones the coach has to decide about, and a
   // wrong column mapping shows up in them before anywhere else.
   const ordered = [...rows].sort((a, b) => Number(b.errors.length > 0) - Number(a.errors.length > 0));
   const shown = ordered.slice(0, PREVIEW_ROWS);
+  const incomplete = rows.filter((r) => r.errors.length > 0);
 
   return (
     <div>
-      <p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
-        What will be added
-      </p>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
+          What will be added
+        </p>
+        <div className="flex items-center gap-2">
+          {/* Clearing the unusable rows in one go is the common case: they are
+              sorted to the top, so on a sheet with a few bad lines they are all
+              the coach can see of the preview until they go. */}
+          {incomplete.length > 0 ? (
+            <Button
+              label={`Remove ${incomplete.length} incomplete`}
+              variant="ghost"
+              size="sm"
+              disabled={disabled}
+              onClick={() => onRemove(incomplete.map((r) => r.line))}
+            />
+          ) : null}
+          {removedCount > 0 ? (
+            <Button
+              label={`Restore ${removedCount} removed`}
+              variant="ghost"
+              size="sm"
+              disabled={disabled}
+              onClick={onRestore}
+            />
+          ) : null}
+        </div>
+      </div>
       <div className="overflow-x-auto rounded-xl border" style={{ borderColor: colors.border }}>
         <table className="w-full text-sm">
           <thead>
             <tr style={{ backgroundColor: colors.tile }}>
-              {['Row', 'Name', 'Email', 'Jersey', 'Pos', 'Born', ''].map((h, i) => (
+              {['Row', 'Name', 'Email', 'Jersey', 'Pos', 'Born', '', ''].map((h, i) => (
                 <th
                   key={h || `blank-${i}`}
                   className="whitespace-nowrap px-3 py-2 text-left text-xs font-bold uppercase tracking-wider"
@@ -288,6 +365,13 @@ function RowPreview({ rows, colors }: { rows: ImportRow[]; colors: Colors }) {
             </tr>
           </thead>
           <tbody>
+            {shown.length === 0 ? (
+              <tr className="border-t" style={{ borderColor: colors.border }}>
+                <td colSpan={8} className="px-3 py-6 text-center text-sm" style={{ color: colors.inkMuted }}>
+                  Every row has been removed. Restore them, or choose another file.
+                </td>
+              </tr>
+            ) : null}
             {shown.map((row) => (
               <tr key={row.line} className="border-t" style={{ borderColor: colors.border }}>
                 <td className="px-3 py-2" style={{ color: colors.inkMuted }}>{row.line}</td>
@@ -304,6 +388,24 @@ function RowPreview({ rows, colors }: { rows: ImportRow[]; colors: Colors }) {
                   ) : (
                     <Badge label="Ready" variant="success" />
                   )}
+                </td>
+                <td className="px-3 py-2">
+                  {/* Per row, so a Ready player the coach doesn't want can go
+                      too — until now the only way to leave one out was to edit
+                      the spreadsheet and start over. */}
+                  <button
+                    type="button"
+                    aria-label={`Remove row ${row.line}, ${row.display.name}`}
+                    title="Leave this row out of the import"
+                    disabled={disabled}
+                    onClick={() => onRemove([row.line])}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:brightness-125 disabled:opacity-40"
+                    style={{ backgroundColor: colors.tile }}
+                  >
+                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+                      <path d="M6 6l12 12M18 6L6 18" stroke={colors.inkMuted} strokeWidth={2} strokeLinecap="round" />
+                    </svg>
+                  </button>
                 </td>
               </tr>
             ))}

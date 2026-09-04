@@ -11,6 +11,7 @@ import { Avatar, Button, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
 import { prefetchRoute } from '@/features/prefetch';
+import { NavPending } from '@/components/NavPending';
 import { canUseFeature } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 
@@ -101,7 +102,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     // the route's code on hover; this starts the screen's *data* on the same
     // signal, so by the time the page mounts the query is usually already in
     // flight or answered. Repeat signals are free — a warm cache short-circuits.
-    const warm = () => prefetchRoute(item.href);
+    //
+    // The id and the guardian flag travel with it because a couple of these
+    // reads are keyed on the user, and /dashboard means a different screen
+    // depending on which one of them is asking.
+    const warm = () => prefetchRoute(item.href, { userId: user?.id, isGuardian });
     return (
       <Link
         href={item.href}
@@ -115,7 +120,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         }}
       >
         <Icon name={item.icon} size={19} color={active ? colors.primary : colors.inkMuted} />
-        <span className="truncate">{item.label}</span>
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        {/* Only ever visible when the warm-up didn't win the race — the wrapper
+            holds its size, and stays invisible for the first ~120ms. */}
+        <NavPending />
       </Link>
     );
   };
