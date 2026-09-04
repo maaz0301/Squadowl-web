@@ -253,6 +253,13 @@ export default function SettingsPage() {
     setBusyAssessor({ index, action: 'remove' });
     try {
       await updateTryout.mutateAsync({ id: tryout.id, updates: { assessors: newAssessors } });
+    } catch (e) {
+      // try/finally with no catch, same gap addAssessor had: a removal the
+      // database refused threw straight past the spinner as an unhandled
+      // rejection, so the row simply stayed on screen with nothing said about
+      // why. The list is rebuilt from the re-read tryout either way — what was
+      // missing was telling the coach the removal did not happen.
+      await alert('Error', e instanceof Error ? e.message : 'Could not remove this assessor.');
     } finally {
       setBusyAssessor(null);
     }

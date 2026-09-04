@@ -2903,7 +2903,25 @@ export class SupabaseDataSource implements DataSource {
 
     const toDelete = existing.filter((r) => !desiredKeys.has(rowKey(r))).map((r) => r.id);
     if (toDelete.length) {
-      unwrap(await supabase.from('tryout_assessors').delete().in('id', toDelete).select());
+      // The rows the delete actually took, not just its error. Under RLS a
+      // DELETE whose rows the policy filters out removes nothing and still
+      // answers with no error, so throwing this result away reported a removal
+      // that never happened: updateTryout() went on to re-read the tryout, the
+      // assessor came back with it, and Remove looked like a button that does
+      // nothing. Same failure, on this same table, that
+      // 20260831000000_remove_org_member_rpc.sql was written for.
+      const deleted = unwrap(
+        await supabase.from('tryout_assessors').delete().in('id', toDelete).select('id'),
+      ) as Row[];
+      if (deleted.length < toDelete.length) {
+        console.error(
+          `syncAssessors: asked to remove ${toDelete.length} assessor row(s) from tryout ${tryoutId}, ` +
+            `the delete took ${deleted.length} — the tryout_assessors DELETE policy most likely refused the rest.`,
+        );
+        throw new Error(
+          'Could not remove this assessor. You may not have permission to change who assesses this evaluation.',
+        );
+      }
     }
 
     if (desired.length > 1) await this.markOnboarding({ inviteAssessors: true });
