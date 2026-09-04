@@ -3,7 +3,7 @@ import { getSupabase } from '@/lib/supabase';
 import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
-import type { FeedbackSubmission } from '../extras';
+import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
 import {
   categoryAveragesAcrossEvals,
   generateCloudCode,
@@ -408,6 +408,12 @@ const REGISTRATION_CHUNK = 20;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
 const GUARDIAN_EMAIL_CONCURRENCY = 20;
 const GUARDIAN_RESOLVE_BATCH = 50;
+
+/** Private bucket holding feedback screenshots — reachable only via signed URLs. */
+const FEEDBACK_BUCKET = 'feedback-attachments';
+
+/** Long enough to open an attachment and look at it; short enough that a copied link goes stale. */
+const FEEDBACK_SIGNED_URL_TTL_SECONDS = 60 * 10;
 
 /** Players per `generate-test-players` call — sized so one Claude response stays
  * within a comfortable output length rather than risking a truncated batch. */
@@ -1320,7 +1326,11 @@ export class SupabaseDataSource implements DataSource {
     return tryoutRows.map((t) => {
       const settings = t.settings ?? { skaterWeights: {}, goalieWeights: {}, customRubrics: [] };
       const ai = t.ai_assessments ?? {};
-      const { teamBuilder, ...aiAssessments } = ai;
+      // `friendPackages` shares the ai_assessments JSON blob with `teamBuilder`
+      // rather than getting a column of its own — same reason: both are
+      // assessment-scoped documents the app owns end to end, and neither is
+      // ever queried by the database.
+      const { teamBuilder, friendPackages, ...aiAssessments } = ai;
       const roster = (pByT[t.id] ?? []).map((p) => this.rowToPlayer(p, assessorNameById));
       return {
         id: t.id,
@@ -1348,6 +1358,7 @@ export class SupabaseDataSource implements DataSource {
           : undefined,
         archived: t.archived,
         teamBuilder,
+        friendPackages,
         aiAssessments: Object.keys(aiAssessments).length ? aiAssessments : undefined,
       } as Tryout;
     });
@@ -2844,12 +2855,17 @@ export class SupabaseDataSource implements DataSource {
     if (updates.settings !== undefined) patch.settings = updates.settings;
     if (updates.archived !== undefined) patch.archived = updates.archived;
 
-    if (updates.teamBuilder !== undefined || updates.aiAssessments !== undefined) {
+    if (
+      updates.teamBuilder !== undefined ||
+      updates.friendPackages !== undefined ||
+      updates.aiAssessments !== undefined
+    ) {
       const current = (await supabase.from('tryouts').select('ai_assessments').eq('id', id).single())
         .data?.ai_assessments ?? {};
       const next = { ...current };
       if (updates.aiAssessments !== undefined) Object.assign(next, updates.aiAssessments);
       if (updates.teamBuilder !== undefined) next.teamBuilder = updates.teamBuilder;
+      if (updates.friendPackages !== undefined) next.friendPackages = updates.friendPackages;
       patch.ai_assessments = next;
     }
 
@@ -4504,7 +4520,14 @@ export class SupabaseDataSource implements DataSource {
         );
       }
       if (parsed?.positionCap) applied.push(`at most ${parsed.positionCap} of any one position per team`);
-      if (result.config.keepFriendPackages) applied.push('friend groups kept together');
+      if (result.config.keepFriendPackages) {
+        const kept = result.friendPackages?.length ?? 0;
+        // Naming the count is what tells a coach their hand-built packages were
+        // actually picked up, rather than the instruction just being echoed back.
+        applied.push(
+          kept > 0 ? `${kept} friend group${kept === 1 ? '' : 's'} kept together` : 'friend groups kept together',
+        );
+      }
       result.explanation = `${applied.join('; ')}.`;
     } else {
       result = buildTeams(tryout, config);
@@ -6366,9 +6389,143 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // ─── Misc ──────────────────────────────────────────────────────────────────────
+  // ─── Feedback ────────────────────────────────────────────────────────────────
+
+  /**
+   * The submitter's identity, without requiring a tenant account.
+   *
+   * ctx() resolves an account and raises when there isn't one, which is the
+   * ordinary state for a guardian — and a guardian's feedback is worth as much
+   * as a coach's, so the account is looked up separately and allowed to come
+   * back null rather than failing the submission.
+   */
+  private async feedbackIdentity(): Promise<{
+    supabase: SupabaseClient;
+    userId: string;
+    accountId: string | null;
+    email?: string;
+    displayName?: string;
+  }> {
+    const supabase = getSupabase();
+    const { data } = await supabase.auth.getSession();
+    const user = data.session?.user;
+    if (!user?.id) throw new Error('User not authenticated');
+
+    let accountId: string | null = null;
+    try {
+      accountId = (await this.ctx()).accountId;
+    } catch {
+      // No membership — a guardian, or an account still being provisioned.
+    }
+
+    return {
+      supabase,
+      userId: user.id,
+      accountId,
+      email: user.email ?? undefined,
+      displayName: (user.user_metadata?.display_name as string | undefined) ?? undefined,
+    };
+  }
+
+  async uploadFeedbackAttachment(file: File): Promise<FeedbackAttachment> {
+    const { supabase, userId } = await this.feedbackIdentity();
+
+    // The first path segment is what the storage policies check, so it has to
+    // be the uploader's id. The middle segment groups one form's files together
+    // and keeps two uploads of the same filename apart.
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-120) || 'attachment';
+    const path = `${userId}/${generateId('fb')}/${safeName}`;
+
+    const { error } = await supabase.storage
+      .from(FEEDBACK_BUCKET)
+      .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
+    if (error) throw new Error(`Could not upload ${file.name}: ${error.message}`);
+
+    return {
+      path,
+      name: file.name,
+      size: file.size,
+      contentType: file.type || 'application/octet-stream',
+    };
+  }
+
+  async deleteFeedbackAttachment(path: string): Promise<void> {
+    const { supabase } = await this.feedbackIdentity();
+    const { error } = await supabase.storage.from(FEEDBACK_BUCKET).remove([path]);
+    if (error) throw new Error(error.message);
+  }
+
   async submitFeedback(submission: FeedbackSubmission): Promise<void> {
-    // No feedback table yet; log + accept so the UI flow completes.
-    console.log('[feedback]', JSON.stringify(submission));
+    const { supabase, userId, accountId, email, displayName } = await this.feedbackIdentity();
+
+    unwrap(
+      await supabase
+        .from('feedback_submissions')
+        .insert({
+          user_id: userId,
+          account_id: accountId,
+          email,
+          display_name: displayName,
+          overall_experience: submission.overallExperience,
+          ease_of_use: submission.easeOfUse,
+          team_hub_scheduling: submission.teamHubScheduling,
+          value_for_money: submission.valueForMoney,
+          what_is_working_well: submission.whatIsWorkingWell,
+          what_can_be_improved: submission.whatCanBeImproved,
+          attachments: submission.attachments ?? [],
+        })
+        .select('id')
+        .single(),
+    );
+  }
+
+  async isFeedbackReviewer(): Promise<boolean> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc('is_feedback_reviewer');
+    // A missing function (the migration not yet applied) is a "no", not a
+    // broken screen — the portal simply stays hidden until it is deployed.
+    if (error) {
+      console.warn('Could not check feedback reviewer access:', error.message);
+      return false;
+    }
+    return data === true;
+  }
+
+  async listFeedbackSubmissions(): Promise<FeedbackReport[]> {
+    const supabase = getSupabase();
+    // No reviewer check here: the select policy already narrows a non-reviewer
+    // to their own rows, so this is safe to call from anywhere and can't be
+    // widened by lying to the client.
+    const rows = unwrap(
+      await supabase
+        .from('feedback_submissions')
+        .select('*')
+        .order('created_at', { ascending: false }),
+    ) as Row[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      userId: r.user_id,
+      email: r.email ?? undefined,
+      displayName: r.display_name ?? undefined,
+      overallExperience: r.overall_experience,
+      easeOfUse: r.ease_of_use,
+      teamHubScheduling: r.team_hub_scheduling,
+      valueForMoney: r.value_for_money,
+      whatIsWorkingWell: r.what_is_working_well ?? '',
+      whatCanBeImproved: r.what_can_be_improved ?? '',
+      attachments: Array.isArray(r.attachments) ? (r.attachments as FeedbackAttachment[]) : [],
+      createdAt: toMs(r.created_at),
+    }));
+  }
+
+  async getFeedbackAttachmentUrl(path: string): Promise<string> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.storage
+      .from(FEEDBACK_BUCKET)
+      .createSignedUrl(path, FEEDBACK_SIGNED_URL_TTL_SECONDS);
+    if (error || !data?.signedUrl) throw new Error(error?.message ?? 'Could not open that attachment.');
+    return data.signedUrl;
   }
 
   // ─── Org Members ─────────────────────────────────────────────────────────────

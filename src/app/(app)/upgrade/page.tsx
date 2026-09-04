@@ -9,23 +9,29 @@ import {
   formatPlanPrice,
   getPlanDefinition,
   getTeamAllowance,
+  getTierRank,
   sellsExtraTeams,
 } from '@/data/plans';
+import type { PlanTier } from '@/data/types';
+import {
+  buildDowngradeImpact,
+  downgradeRoute,
+  hasLiveSubscription,
+  planChangeDirection,
+} from '@/lib/planChange';
 import { useUser } from '@/state/authStore';
 import { getDataSource } from '@/data';
-import { useApplyReferralCodeMutation, useReferralSummaryQuery } from '@/features/queries';
-
-const TIER_RANKS: Record<string, number> = {
-  free: 0,
-  coach: 1,
-  coach_plus: 2,
-  club: 3,
-};
+import {
+  useApplyReferralCodeMutation,
+  useAssessmentCountQuery,
+  useReferralSummaryQuery,
+  useTeamCountQuery,
+} from '@/features/queries';
 
 export default function UpgradePage() {
   const colors = useThemeColors();
   const user = useUser();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [loadingPortal, setLoadingPortal] = useState(false);
   const [extraTeams, setExtraTeams] = useState(1);
@@ -33,6 +39,12 @@ export default function UpgradePage() {
   // Monthly billing is temporarily hidden — every checkout goes through yearly for now,
   // matching the mobile app.
   const billingInterval = 'year' as const;
+
+  // Usage behind the downgrade warning: what the account has today, measured
+  // against the lower plan's caps. Both are the cheap count-only reads, and
+  // both are already cached by the screens that create teams and evaluations.
+  const teamCountQuery = useTeamCountQuery();
+  const assessmentCountQuery = useAssessmentCountQuery();
 
   // Loyalty program: spend existing credit, and enter someone else's code.
   const referralQuery = useReferralSummaryQuery();
@@ -64,6 +76,10 @@ export default function UpgradePage() {
       setLoadingPortal(true);
       const res = await getDataSource().createPortalSession();
       if (res?.url) {
+        // Same leaving-the-SPA navigation as the checkout below, and the same
+        // reason for the exemption — flagged here only now that switchPlan()
+        // calls this one too.
+        // eslint-disable-next-line react-hooks/immutability
         window.location.href = res.url;
       }
     } catch (err) {
@@ -73,7 +89,7 @@ export default function UpgradePage() {
     }
   };
 
-  const upgrade = async (tier: typeof PLAN_DEFINITIONS[number]['tier']) => {
+  const startCheckout = async (tier: PlanTier) => {
     try {
       setLoadingTier(tier);
       const res = await getDataSource().createCheckoutSession(tier, billingInterval, {
@@ -93,15 +109,56 @@ export default function UpgradePage() {
     }
   };
 
-  const currentRank = TIER_RANKS[user?.planTier ?? 'free'] ?? 0;
-  const currentTier = user?.planTier ?? 'free';
+  const currentTier: PlanTier = user?.planTier ?? 'free';
+  const currentRank = getTierRank(currentTier);
   const currentLicenses = user?.extraTeamLicenses ?? 0;
   const currentPlan = getPlanDefinition(currentTier);
   const canBuyTeams = sellsExtraTeams(currentTier);
   const extraTeamPrice = currentPlan.extraTeamPriceCents ?? 0;
 
+  /**
+   * Switches to any tier, in either direction.
+   *
+   * A downgrade is confirmed first — with what it actually costs the account,
+   * built from the two plans and the current usage — and then routed by
+   * downgradeRoute(): the Stripe Customer Portal while a subscription is live,
+   * because swapping the plan there replaces the existing subscription instead
+   * of starting a second one alongside it, and an ordinary Checkout only when
+   * there is no live subscription for the portal to manage.
+   */
+  const switchPlan = async (tier: PlanTier) => {
+    if (planChangeDirection(currentTier, tier) !== 'downgrade') {
+      await startCheckout(tier);
+      return;
+    }
+
+    const impact = buildDowngradeImpact({
+      from: currentTier,
+      to: tier,
+      teamCount: teamCountQuery.data,
+      assessmentCount: assessmentCountQuery.data,
+      extraTeamLicenses: currentLicenses,
+    });
+    const target = getPlanDefinition(tier);
+    const ok = await confirm({
+      title: `Switch down to ${target.name}?`,
+      message: impact.length
+        ? `${impact.join('\n\n')}\n\nYou'll finish the change in Stripe, where the new price and any credit for the rest of this term are shown before you confirm.`
+        : `${target.name} covers everything you're using today. You'll finish the change in Stripe, where the new price and any credit for the rest of this term are shown before you confirm.`,
+      confirmLabel: `Switch to ${target.name}`,
+      destructive: true,
+    });
+    if (!ok) return;
+
+    if (downgradeRoute(tier, user?.subscriptionStatus) === 'portal') {
+      await openPortal();
+      return;
+    }
+    await startCheckout(tier);
+  };
+
   // Extra teams are an add-on subscription on top of the current plan (Club only), so
-  // this checkout must not go through `upgrade` — that one switches the plan tier.
+  // this checkout must not go through `switchPlan` — that one switches the plan tier.
   const buyTeams = async () => {
     try {
       setBuyingTeams(true);
@@ -142,10 +199,7 @@ export default function UpgradePage() {
 
       {/* Referral code entry — only meaningful before the first paid plan, and
           only once, so it disappears as soon as one has been attached. */}
-      {referralQuery.data &&
-      !referralQuery.data.redeemedByCode &&
-      user?.subscriptionStatus !== 'active' &&
-      user?.subscriptionStatus !== 'trialing' ? (
+      {referralQuery.data && !referralQuery.data.redeemedByCode && !hasLiveSubscription(user?.subscriptionStatus) ? (
         <Card className="mb-6 flex flex-col gap-2">
           <h3 className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Have a referral code?
@@ -222,7 +276,7 @@ export default function UpgradePage() {
         </Card>
       ) : null}
 
-      {user?.subscriptionStatus === 'active' || user?.subscriptionStatus === 'trialing' ? (
+      {hasLiveSubscription(user?.subscriptionStatus) ? (
         <Card accent className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div>
             <h3 className="font-bold text-base" style={{ color: colors.ink }}>
@@ -244,14 +298,45 @@ export default function UpgradePage() {
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {PLAN_DEFINITIONS.map((item) => {
           const isCurrent = user?.planTier === item.tier;
-          const targetRank = TIER_RANKS[item.tier] ?? 0;
+          const targetRank = getTierRank(item.tier);
           const yearly = formatPlanPrice(item, billingInterval);
+          const isDowngrade = !isCurrent && targetRank < currentRank;
+          const isUpgrade = !isCurrent && targetRank > currentRank;
+          // List-price difference against the plan in force, so the direction of
+          // the change is legible before reading any feature list. Stripe still
+          // shows what is actually owed today — proration is settled there, not
+          // here — so this is deliberately worded per year, not "you'll be charged".
+          const priceDelta =
+            item.pricing && currentPlan.pricing
+              ? item.pricing[billingInterval].amountCents - currentPlan.pricing[billingInterval].amountCents
+              : item.pricing
+                ? item.pricing[billingInterval].amountCents
+                : currentPlan.pricing
+                  ? -currentPlan.pricing[billingInterval].amountCents
+                  : 0;
           return (
             <Card
               key={item.tier}
-              accent={item.highlight}
-              className="flex flex-col justify-between h-full gap-4 relative"
+              accent={item.highlight || isCurrent}
+              className="flex flex-col justify-between h-full gap-4 relative overflow-hidden"
+              style={
+                isCurrent
+                  ? {
+                      // The plan you're on should be findable at a glance in a row
+                      // of four near-identical cards.
+                      borderColor: colors.primary,
+                      boxShadow: `0 0 0 1px ${colors.primary}55, 0 10px 30px ${colors.primary}1f`,
+                    }
+                  : undefined
+              }
             >
+              {isCurrent ? (
+                <span
+                  aria-hidden
+                  className="absolute inset-x-0 top-0 h-1"
+                  style={{ backgroundColor: colors.primary }}
+                />
+              ) : null}
               <div>
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <h3
@@ -313,20 +398,62 @@ export default function UpgradePage() {
                 </p>
               </div>
 
-              {targetRank > currentRank ? (
-                <div className="pt-4 mt-auto">
+              {isCurrent ? (
+                <div className="pt-4 mt-auto flex flex-col gap-1">
                   <Button
-                    label={`Switch to ${item.name}`}
-                    variant={item.highlight ? 'primary' : 'secondary'}
-                    onClick={() => upgrade(item.tier)}
-                    loading={loadingTier === item.tier}
+                    label="✓ Your Plan"
+                    variant="secondary"
+                    disabled
+                    style={{
+                      opacity: 1,
+                      fontWeight: 'bold',
+                      fontFamily: 'var(--font-space-grotesk)',
+                      color: colors.primary,
+                      borderColor: colors.primary,
+                      backgroundColor: 'rgba(255,107,43,0.10)',
+                    }}
                   />
                 </div>
-              ) : isCurrent ? (
-                <div className="pt-4 mt-auto">
-                  <Button label="Active Plan" variant="ghost" disabled style={{ opacity: 1, fontWeight: "bold", fontFamily: "var(--font-space-grotesk)", font:"25" }} />
+              ) : (
+                <div className="pt-4 mt-auto flex flex-col gap-2">
+                  {/* Direction and price change read together, above the button:
+                      the one thing every card in this row needs to answer is
+                      "is this a step up or down, and by how much". */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge
+                      label={isUpgrade ? '↑ Upgrade' : '↓ Move down'}
+                      variant={isUpgrade ? 'brand' : 'info'}
+                    />
+                    {priceDelta !== 0 ? (
+                      <span
+                        className="text-[11px] font-bold tabular-nums"
+                        style={{ color: priceDelta > 0 ? colors.inkMuted : colors.success }}
+                      >
+                        {priceDelta > 0 ? '+' : '−'}
+                        {formatCad(Math.abs(priceDelta))}
+                        {billingInterval === 'year' ? '/yr' : '/mo'}
+                      </span>
+                    ) : null}
+                  </div>
+                  <Button
+                    label={isUpgrade ? `Switch to ${item.name}` : `Move down to ${item.name}`}
+                    // Both directions get a real, visible button — a downgrade
+                    // people can't find is the bug this screen started with. The
+                    // upgrade on the recommended tier is the only filled one, so
+                    // the row still has a single loudest action.
+                    variant={isUpgrade && item.highlight ? 'primary' : 'secondary'}
+                    onClick={() => switchPlan(item.tier)}
+                    loading={loadingTier === item.tier || (isDowngrade && loadingPortal)}
+                  />
+                  {isDowngrade ? (
+                    <p className="text-[11px] text-center leading-snug" style={{ color: colors.inkFaint }}>
+                      {downgradeRoute(item.tier, user?.subscriptionStatus) === 'portal'
+                        ? 'Confirmed in Stripe, with any credit for the rest of your term.'
+                        : 'Starts a new subscription at the lower price.'}
+                    </p>
+                  ) : null}
                 </div>
-              ) : null}
+              )}
             </Card>
           );
         })}

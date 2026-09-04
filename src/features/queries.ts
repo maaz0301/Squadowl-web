@@ -2100,9 +2100,39 @@ export function useImportLibraryPlayersMutation() {
 }
 
 export function useSubmitFeedbackMutation() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (submission: import('../data/extras').FeedbackSubmission) =>
       getDataSource().submitFeedback(submission),
+    // A reviewer who submits their own feedback should see it in the portal
+    // without a reload; for everyone else this invalidates a query nobody has.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.feedbackSubmissions });
+    },
+  });
+}
+
+/**
+ * Whether the signed-in user may read everyone's feedback.
+ *
+ * `staleTime: Infinity` — the allowlist is edited in the database by hand, so
+ * it cannot change mid-session, and this gates a nav item that every route
+ * renders.
+ */
+export function useIsFeedbackReviewerQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.feedbackReviewer,
+    queryFn: () => getDataSource().isFeedbackReviewer(),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
+export function useFeedbackSubmissionsQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.feedbackSubmissions,
+    queryFn: () => getDataSource().listFeedbackSubmissions(),
+    enabled,
   });
 }
 

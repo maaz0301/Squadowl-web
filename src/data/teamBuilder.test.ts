@@ -4,6 +4,7 @@ import {
   movePlayerToTeam,
   parseTeamCountFromPrompt,
   parseTiersFromPrompt,
+  resolveFriendPackages,
   type TeamBuilderState,
 } from './teamBuilder';
 import { computePlayerResults } from './scoring';
@@ -245,6 +246,31 @@ describe('buildTeams', () => {
     expect(teamOf('p0')).toBe(teamOf('p1'));
   });
 
+  it('keeps a coach-built friend package on the same team', () => {
+    const { roster, evals } = makeRoster(40);
+    const tryout = makeTryout(roster, evals);
+    // Three players with nothing in common on their registration forms — only
+    // the package the coach built by hand ties them together.
+    tryout.friendPackages = [{ id: 'pkg_1', name: 'Carpool', playerIds: ['p3', 'p17', 'p31'] }];
+
+    const state = buildTeams(tryout, { teamCount: 4, keepFriendPackages: true });
+
+    const teamOf = (id: string) => state.teams.findIndex((t) => t.players.includes(id));
+    expect(teamOf('p3')).toBe(teamOf('p17'));
+    expect(teamOf('p3')).toBe(teamOf('p31'));
+    expect(state.friendPackages).toHaveLength(1);
+  });
+
+  it('ignores coach-built packages when friend packages are turned off', () => {
+    const { roster, evals } = makeRoster(40);
+    const tryout = makeTryout(roster, evals);
+    tryout.friendPackages = [{ id: 'pkg_1', name: 'Carpool', playerIds: ['p3', 'p17'] }];
+
+    const state = buildTeams(tryout, { teamCount: 4, keepFriendPackages: false });
+
+    expect(state.friendPackages).toEqual([]);
+  });
+
   it('splits skaters and goalies consistently with the assigned players', () => {
     const { roster, evals } = makeRoster(40, { goalieEvery: 5 });
     const tryout = makeTryout(roster, evals);
@@ -474,5 +500,49 @@ describe('movePlayerToTeam', () => {
   it('returns the same state for an unknown team', () => {
     const before = movableState();
     expect(movePlayerToTeam(before, 'p1', 'nope', false)).toBe(before);
+  });
+});
+
+describe('resolveFriendPackages', () => {
+  it('drops members who have left the roster, and packages left below two', () => {
+    const { roster, evals } = makeRoster(6);
+    const tryout = makeTryout(roster, evals);
+    tryout.friendPackages = [
+      { id: 'pkg_1', name: 'Still a group', playerIds: ['p0', 'p1', 'gone'] },
+      { id: 'pkg_2', name: 'Now alone', playerIds: ['p2', 'also-gone'] },
+    ];
+
+    const resolved = resolveFriendPackages(tryout);
+
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].playerIds).toEqual(['p0', 'p1']);
+  });
+
+  it('lets a coach-built package win over a detected group that overlaps it', () => {
+    const { roster, evals } = makeRoster(6);
+    // The registration form pairs p0 with p1...
+    roster[0].friend1Name = 'First1 Last1';
+    const tryout = makeTryout(roster, evals);
+    // ...but the coach has since put p0 with p5 instead.
+    tryout.friendPackages = [{ id: 'pkg_1', name: 'Coach group', playerIds: ['p0', 'p5'] }];
+
+    const resolved = resolveFriendPackages(tryout);
+
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].id).toBe('pkg_1');
+  });
+
+  it('keeps detected groups that do not overlap a coach-built package', () => {
+    const { roster, evals } = makeRoster(6);
+    roster[2].friend1Name = 'First3 Last3';
+    const tryout = makeTryout(roster, evals);
+    tryout.friendPackages = [{ id: 'pkg_1', name: 'Coach group', playerIds: ['p0', 'p5'] }];
+
+    const resolved = resolveFriendPackages(tryout);
+
+    expect(resolved.map((p) => p.playerIds)).toEqual([
+      ['p0', 'p5'],
+      ['p2', 'p3'],
+    ]);
   });
 });

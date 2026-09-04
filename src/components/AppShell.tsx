@@ -10,6 +10,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Button, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
+import { useIsFeedbackReviewerQuery } from '@/features/queries';
 import { prefetchRoute } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 import { canUseFeature } from '@/data/plans';
@@ -21,6 +22,14 @@ interface NavItem {
   icon: IconName;
   /** Highlight for any route beneath this prefix. */
   match?: string;
+  /**
+   * Highlight only on this exact path, not on the routes nested under it.
+   *
+   * For the pair of entries that share a prefix — /feedback and the reviewers'
+   * /feedback/reports — where the default prefix match would light both up at
+   * once on the deeper one.
+   */
+  exact?: boolean;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -60,6 +69,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const planTier = user?.planTier ?? 'free';
 
+  // The feedback portal is limited to an email allowlist held in the database
+  // (`feedback_reviewers`), not to a plan or a role — so whether to draw the
+  // link is a question only the server can answer. Guardians never see the
+  // secondary nav at all, so they are not asked.
+  const { data: isFeedbackReviewer } = useIsFeedbackReviewerQuery(!isGuardian);
+
   const primary: NavItem[] = isGuardian
     ? [
         { href: '/dashboard', label: 'My Athletes', icon: 'teams' },
@@ -87,12 +102,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           : []),
         { href: '/loyalty', label: 'Loyalty Program', icon: 'gift' },
         { href: '/upgrade', label: 'Plans & Billing', icon: 'upgrade' },
-        { href: '/feedback', label: 'Feedback', icon: 'feedback' },
+        { href: '/feedback', label: 'Feedback', icon: 'feedback', exact: true },
+        ...(isFeedbackReviewer
+          ? ([{ href: '/feedback/reports', label: 'Feedback Portal', icon: 'feedback' }] as NavItem[])
+          : []),
       ];
 
   const isActive = (item: NavItem) =>
     pathname === item.href ||
-    pathname.startsWith(`${item.href}/`) ||
+    (!item.exact && pathname.startsWith(`${item.href}/`)) ||
     (!!item.match && pathname.startsWith(item.match));
 
   const NavLink = ({ item }: { item: NavItem }) => {

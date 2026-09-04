@@ -292,6 +292,20 @@ export function isTierAtLeast(tier: PlanTier, min: PlanTier): boolean {
 }
 
 /**
+ * Position of `tier` in the free < coach < coach_plus < club hierarchy, for
+ * telling an upgrade from a downgrade.
+ *
+ * A tier with no PLAN_DEFINITIONS entry ranks as Free, matching
+ * getPlanDefinition()'s fail-safe: the DB enum still carries the retired
+ * 'pro'/'association' values, and ranking an unknown one high would present a
+ * genuine upgrade as a downgrade and route it through the cancellation flow.
+ */
+export function getTierRank(tier: PlanTier): number {
+  const idx = TIER_ORDER.indexOf(tier);
+  return idx === -1 ? 0 : idx;
+}
+
+/**
  * The plan tier that should gate a team-scoped feature (exports, AI summaries,
  * Team Builder, custom rubrics, fee collection). Normally the caller's own
  * account tier — but when `team` is one delegated to them (CLUB mode), the
