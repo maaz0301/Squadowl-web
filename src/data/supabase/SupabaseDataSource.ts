@@ -1444,6 +1444,20 @@ export class SupabaseDataSource implements DataSource {
       },
     });
     if (error) throw new Error(authErrorMessage(error.message, 'Failed to create your account. Please try again.'));
+
+    // Signing up an address that already has an account is not an error as far
+    // as Supabase is concerned: rather than confirm the address is taken, it
+    // returns a success carrying an obfuscated user with an EMPTY `identities`
+    // array, and sends no email whatsoever. Without this check that lands the
+    // person on "Account created. Please confirm your email" and then a silent
+    // wait for a message that was never dispatched — the exact dead end that
+    // made the confirmation mail look broken while it was working fine.
+    if (data.user && (data.user.identities?.length ?? 0) === 0) {
+      throw new Error(
+        'An account already exists for this email. Try logging in, or use "Forgot password" to get back in.',
+      );
+    }
+
     let session = data.session;
     if (!session) {
       const { data: signIn, error: e2 } = await supabase.auth.signInWithPassword({ email, password });
