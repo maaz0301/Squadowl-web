@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { ErrorState, LoadingState, PageHeader } from '@/components/ui';
-import { useTeamsQuery, useSeasonsQuery } from '@/features/queries';
+import { useTeamsQuery, useSeasonSummariesQuery, useEnsureTeamSeasonMutation } from '@/features/queries';
 import { TeamChat } from '@/components/TeamChat';
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 
@@ -24,18 +24,29 @@ export default function TeamChatPage() {
   const colors = useThemeColors();
 
   const teamsQuery = useTeamsQuery();
-  const seasonsQuery = useSeasonsQuery();
+  // Summaries, not useSeasonsQuery(): all this screen wants from the list is
+  // one season's id. The full read pulls every event, every roster entry and
+  // every joined athlete row of every season in the account before the chat
+  // can paint — seconds on a club account, spent on data no message needs. It
+  // is also the read /team/[id] already made, so arriving from the Chat tab
+  // now finds it cached instead of starting a heavier one from scratch.
+  const seasonsQuery = useSeasonSummariesQuery();
+
+  const team = teamsQuery.data?.find((t) => t.id === id);
+  const seasonId = seasonsQuery.data?.find((s) => s.teamId === id)?.id;
+  // Ahead of the early returns below, because it is a hook. A team without a
+  // season still gets a working chat: this creates the season the first message
+  // needs, on the way to sending it.
+  const ensureSeason = useEnsureTeamSeasonMutation(id, team?.name ?? '', seasonId);
 
   if (teamsQuery.isLoading || seasonsQuery.isLoading) return <LoadingState message="Loading chat..." />;
   if (teamsQuery.isError || seasonsQuery.isError) {
     return <ErrorState message="Could not load chat." onRetry={() => { teamsQuery.refetch(); seasonsQuery.refetch(); }} />;
   }
 
-  const team = teamsQuery.data?.find((t) => t.id === id);
   if (!team) {
     return <TeamUnavailableState onRetry={() => teamsQuery.refetch()} />;
   }
-  const seasonId = seasonsQuery.data?.find((s) => s.teamId === id)?.id;
 
   return (
     // Same full-height brand-color wash as the team hub, so a personalized
@@ -64,7 +75,7 @@ export default function TeamChatPage() {
       />
       <TeamChat
         seasonId={seasonId}
-        noSeasonMessage="This team doesn't have a season yet. Add a practice or game under Schedule, and the chat opens for everyone on the roster and their guardians."
+        ensureSeason={() => ensureSeason.mutateAsync()}
         heightClassName="flex-1 min-h-[420px]"
       />
     </div>

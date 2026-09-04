@@ -163,11 +163,20 @@ function Bubble({
  */
 export function TeamChat({
   seasonId,
+  ensureSeason,
   noSeasonMessage = 'This athlete has not been added to a team yet. Once a coach adds them to a roster, the team chat opens up here.',
   heightClassName = 'h-[70dvh] min-h-[420px]',
 }: {
   seasonId?: string;
-  /** Shown when there's no season to chat in — the fix differs by audience. */
+  /**
+   * Creates the season this conversation lives in, resolving with its id.
+   * Passing it is what lets the chat open on a team that has no season yet:
+   * the composer works from the start and the first message brings the season
+   * into being. Only the team route can offer this — a guardian has no team of
+   * their own to create one on, so their side still waits on a coach.
+   */
+  ensureSeason?: () => Promise<string>;
+  /** Shown when there's no season to chat in and none can be made here. */
   noSeasonMessage?: string;
   /** Sizing classes for the outer panel — a fixed viewport-fraction height by
    *  default (chat sharing a tab with other content), or e.g. `flex-1` when
@@ -178,11 +187,18 @@ export function TeamChat({
   const currentUserId = useAuthStore((s) => s.session?.user?.id);
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  // A season created by sending the first message is usable immediately, while
+  // the seasons list this component's `seasonId` comes from is still refetching
+  // — so hold the new id here rather than making the sender wait for the prop
+  // to catch up with a message they have already sent.
+  const [createdSeasonId, setCreatedSeasonId] = useState<string>();
+  const [creatingSeason, setCreatingSeason] = useState(false);
+  const activeSeasonId = seasonId ?? createdSeasonId;
 
-  const messagesQuery = useTeamMessagesQuery(seasonId);
+  const messagesQuery = useTeamMessagesQuery(activeSeasonId);
   const sendMessage = useSendTeamMessageMutation();
-  const deleteMessage = useDeleteTeamMessageMutation(seasonId ?? '');
-  useTeamChatRealtimeSync(seasonId);
+  const deleteMessage = useDeleteTeamMessageMutation(activeSeasonId ?? '');
+  useTeamChatRealtimeSync(activeSeasonId);
 
   const rows = useMemo(() => {
     const chronological = messagesQuery.data ?? [];
@@ -207,18 +223,26 @@ export function TeamChat({
   const markChatRead = useChatReadStore((s) => s.markChatRead);
   useEffect(() => {
     const newest = messagesQuery.data?.[messagesQuery.data.length - 1];
-    if (seasonId && newest) markChatRead(seasonId, newest.createdAt);
-  }, [seasonId, messagesQuery.data, markChatRead]);
+    if (activeSeasonId && newest) markChatRead(activeSeasonId, newest.createdAt);
+  }, [activeSeasonId, messagesQuery.data, markChatRead]);
 
   const send = async () => {
     const body = draft.trim();
-    if (!body || !seasonId) return;
+    if (!body || (!activeSeasonId && !ensureSeason)) return;
     setDraft('');
     try {
-      await sendMessage.mutateAsync({ seasonId, body });
+      let sid = activeSeasonId;
+      if (!sid) {
+        setCreatingSeason(true);
+        sid = await ensureSeason!();
+        setCreatedSeasonId(sid);
+      }
+      await sendMessage.mutateAsync({ seasonId: sid, body });
     } catch (e) {
       setDraft(body);
       alert(`Message Not Sent\n\n${(e as Error)?.message || 'Please try again.'}`);
+    } finally {
+      setCreatingSeason(false);
     }
   };
 
@@ -231,7 +255,10 @@ export function TeamChat({
     }
   };
 
-  if (!seasonId) {
+  // Only when nothing here can produce a season — the guardian side, where the
+  // athlete isn't on a roster yet. A team route hands over `ensureSeason` and
+  // opens the conversation empty instead.
+  if (!activeSeasonId && !ensureSeason) {
     return <EmptyState title="No team chat yet" message={noSeasonMessage} />;
   }
 
@@ -242,6 +269,11 @@ export function TeamChat({
   // Stands in for WhatsApp's wallpaper: a surface distinct from the page so
   // the bubbles read as a conversation rather than as page content.
   const wallpaper = isDark ? '#0b1220' : '#e7ecf5';
+
+  // The very first message on a season-less team also creates the season and
+  // syncs its roster, which is slower than a send and just as much a reason to
+  // hold the button.
+  const busy = sendMessage.isPending || creatingSeason;
 
   return (
     <div className={`flex ${heightClassName} flex-col overflow-hidden rounded-xl border`} style={{ borderColor: colors.border }}>
@@ -299,18 +331,18 @@ export function TeamChat({
         <button
           type="button"
           onClick={send}
-          disabled={!draft.trim() || sendMessage.isPending}
+          disabled={!draft.trim() || busy}
           className="flex items-center justify-center rounded-full"
           style={{
             backgroundColor: colors.primary,
-            opacity: !draft.trim() || sendMessage.isPending ? 0.5 : 1,
+            opacity: !draft.trim() || busy ? 0.5 : 1,
             width: 44,
             height: 44,
-            cursor: !draft.trim() || sendMessage.isPending ? 'default' : 'pointer',
+            cursor: !draft.trim() || busy ? 'default' : 'pointer',
           }}
           aria-label="Send message"
         >
-          {sendMessage.isPending ? (
+          {busy ? (
             <Spinner size={18} color="#fff" />
           ) : (
             <svg width={20} height={20} viewBox="0 0 24 24">

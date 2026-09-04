@@ -58,9 +58,15 @@ export function prefetchDashboard(): void {
   warm(queryKeys.assignedTryoutSummaries, () => getDataSource().listAssignedTryoutSummaries());
 }
 
+/**
+ * `seasonSummaries`, matching the query /teams actually subscribes to. Warming
+ * `seasons` here warmed a different cache entry with the heaviest read in the
+ * account — the screen still missed and refetched, so the hover bought nothing
+ * and cost everything. Same for /team/[id] and its Chat tab below.
+ */
 export function prefetchTeams(): void {
   warm(queryKeys.teams, () => getDataSource().listTeams());
-  warm(queryKeys.seasons, () => getDataSource().listSeasons());
+  warm(queryKeys.seasonSummaries, () => getDataSource().listSeasonSummaries());
 }
 
 export function prefetchArchivedAssessments(): void {
@@ -106,7 +112,7 @@ export function prefetchNewTeam(): void {
 /** What /team/[id] opens with. The team itself already comes from the cached list. */
 export function prefetchTeamDetail(teamId: string): void {
   warm(queryKeys.teamRoster(teamId), () => getDataSource().listTeamRoster(teamId));
-  warm(queryKeys.seasons, () => getDataSource().listSeasons());
+  warm(queryKeys.seasonSummaries, () => getDataSource().listSeasonSummaries());
   // The team page's Assessments tab and add-players picker want full rosters.
   warm(queryKeys.tryouts(false), () => getDataSource().listTryouts(false));
 }

@@ -1349,11 +1349,50 @@ async function syncSeasonRosterFromTeam(
 }
 
 /**
- * Events belong to a season, but the UI only exposes them at the team level —
- * coaches add practices and games from the team screen and never see the season
- * machinery. A team that has no season yet gets one silently on its first event,
- * which also covers teams created before seasons were auto-provisioned.
+ * Events and chat both belong to a season, but the UI only exposes them at the
+ * team level — coaches add practices and games, and talk to their team, from
+ * the team screen and never see the season machinery. `/team/new` does
+ * provision a season up front, but non-fatally, so teams created before that
+ * and teams whose provisioning failed still arrive here without one. Whichever
+ * of the two first needs a season creates it, and both get the same shape.
  */
+async function ensureTeamSeason(teamId: string, teamName: string, seasonId: string | undefined): Promise<string> {
+  if (seasonId) return seasonId;
+  const season = await getDataSource().createSeason({
+    name: `${teamName} Season`,
+    teamName,
+    sport: 'Hockey',
+    teamId,
+  });
+  return season.id;
+}
+
+/**
+ * Gives the team chat a season to put its first message in, so a team that
+ * never got one still has a conversation.
+ *
+ * The roster sync is what makes that message reach anyone but its author:
+ * `can_access_season()` admits the account's staff plus the guardians of the
+ * athletes on the *season* roster, and a season created a moment ago doesn't
+ * carry the team's players yet. The same call an event's invite list is built
+ * from, for the same reason — only the returned roster isn't needed here,
+ * since a message goes to everyone the season admits rather than to a list.
+ */
+export function useEnsureTeamSeasonMutation(teamId: string, teamName: string, seasonId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const sid = await ensureTeamSeason(teamId, teamName, seasonId);
+      await syncSeasonRosterFromTeam(teamId, sid);
+      return sid;
+    },
+    onSuccess: (sid) => {
+      qc.invalidateQueries({ queryKey: queryKeys.seasons });
+      qc.invalidateQueries({ queryKey: queryKeys.season(sid) });
+    },
+  });
+}
+
 /**
  * onProgress covers the two serial phases a team's first event can spend real
  * time in for a large roster: syncing missing players onto the season roster,
@@ -1369,16 +1408,7 @@ export function useAddTeamEventMutation(
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (form: import('@/data/types').CreateEventForm) => {
-      let sid = seasonId;
-      if (!sid) {
-        const season = await getDataSource().createSeason({
-          name: `${teamName} Season`,
-          teamName,
-          sport: 'Hockey',
-          teamId,
-        });
-        sid = season.id;
-      }
+      const sid = await ensureTeamSeason(teamId, teamName, seasonId);
       // Everyone on the team's Players list is invited, so a player added to the
       // team after the season existed still gets the event (and their guardian
       // sees it in the portal).
