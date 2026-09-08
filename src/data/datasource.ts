@@ -88,6 +88,11 @@ export interface DataSource {
    * error for a link that actually saved. This is the write on its own.
    */
   setTryoutTeam(id: string, teamId: string | null): Promise<void>;
+  /**
+   * The friendPackages write on its own, for the same reason setTryoutTeam exists:
+   * avoiding a full assessment re-read that could outrun the client timeout.
+   */
+  setFriendPackages(id: string, packages: import('./teamBuilder').FriendPackage[]): Promise<void>;
   archiveTryout(id: string): Promise<Tryout>;
   deleteTryout(id: string): Promise<void>;
 
@@ -262,6 +267,28 @@ export interface DataSource {
   restoreTryout(id: string): Promise<Tryout>;
   importLibraryPlayers(tryoutId: string, entries: { first: string; last: string; jersey?: string; pos?: string }[]): Promise<Player[]>;
   submitFeedback(submission: import('./extras').FeedbackSubmission): Promise<void>;
+  /**
+   * Uploads one screenshot into the private feedback bucket and returns the
+   * stored file, to be handed back in `submitFeedback`'s `attachments`.
+   *
+   * Uploading before the submission exists means an abandoned form can leave a
+   * file behind; that is the trade for letting the coach see their screenshot
+   * attached, and removed again, before they commit to sending anything.
+   */
+  uploadFeedbackAttachment(file: File): Promise<import('./extras').FeedbackAttachment>;
+  /** Removes an attachment the user uploaded but then took off the form. */
+  deleteFeedbackAttachment(path: string): Promise<void>;
+  /** Whether the signed-in user may read everyone's feedback — see the `feedback_reviewers` allowlist. */
+  isFeedbackReviewer(): Promise<boolean>;
+  /** Every submission, newest first. RLS narrows this to the caller's own unless they are a reviewer. */
+  listFeedbackSubmissions(): Promise<import('./extras').FeedbackReport[]>;
+  /** A short-lived signed URL for one attachment in the private bucket. */
+  getFeedbackAttachmentUrl(path: string): Promise<string>;
+  /**
+   * Removes a submission from the portal, and any attachments it carried.
+   * RLS restricts the delete to reviewers — see `feedback_submissions_delete_reviewer`.
+   */
+  deleteFeedbackSubmission(id: string, attachments: import('./extras').FeedbackAttachment[]): Promise<void>;
   addSeasonPlayer(seasonId: string, player: Omit<import('./types').SeasonPlayer, 'id'>): Promise<import('./types').SeasonPlayer>;
   deleteSeasonPlayer(seasonId: string, playerId: string): Promise<void>;
   importSeasonPlayersFromTeam(seasonId: string): Promise<import('./types').SeasonPlayer[]>;

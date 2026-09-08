@@ -35,6 +35,7 @@ import { isAtAssessmentLimit } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 
 /**
  * How an invitation is reading right now, from the inviting coach's side.
@@ -110,6 +111,7 @@ export default function SettingsPage() {
   }
 
   const tryout = tryoutQuery.data;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="change or delete this evaluation" />;
   const rubrics = getDefaultRubrics(tryout.sport);
 
   const openEdit = () => {
@@ -355,7 +357,7 @@ export default function SettingsPage() {
             style={{ borderColor: colors.border }}
           >
             <div className="min-w-0 flex-1">
-              <p className="text-base font-bold break-words" style={{ color: colors.ink }}>
+              <p className="text-base font-bold wrap-break-word" style={{ color: colors.ink }}>
                 {a.name}
               </p>
               {a.email ? (
@@ -404,7 +406,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="flex flex-col items-start gap-2">
-        <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
+        <SectionLabel className="text-(--c-danger)!">Danger Zone</SectionLabel>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           <Button
             label="Archive Evaluation"

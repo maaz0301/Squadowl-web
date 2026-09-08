@@ -1,6 +1,6 @@
 import type { Tryout, ExportFormat } from '@/data/types';
 import { buildTeamBuilderExportRows, formatExportCsv, type TeamBuilderState } from '@/data/teamBuilder';
-import { buildFullResultsCsvRows, buildPlayerDetailSheets, buildPlayerFullResults, buildReportDocInfo, buildResultsSummary } from '@/data/resultsExport';
+import { buildFullResultsCsvRows, buildPlayerFullResults, buildReportDocInfo, buildResultsSummary } from '@/data/resultsExport';
 import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 
@@ -10,17 +10,14 @@ function csvCell(value: string | number | null | undefined): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Excel sheet names: no \ / ? * [ ] : , max 31 chars, unique (case-insensitive). */
-function uniqueSheetName(base: string, used: Set<string>): string {
-  const cleaned = base.replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 31) || 'Player';
-  let candidate = cleaned;
-  let n = 2;
-  while (used.has(candidate.toLowerCase())) {
-    const suffix = ` (${n++})`;
-    candidate = cleaned.slice(0, 31 - suffix.length) + suffix;
-  }
-  used.add(candidate.toLowerCase());
-  return candidate;
+/**
+ * Column widths for the full-results sheet: the first column holds row labels
+ * ("CAT/CRITERIA SCORE-RANK" is the widest), and the columns after it carry
+ * scores and free-text notes, so they get room before Excel clips them.
+ */
+function fullResultsColumnWidths(rows: (string | number)[][]): { wch: number }[] {
+  const widest = rows.reduce((max, r) => Math.max(max, r.length), 0);
+  return Array.from({ length: widest }, (_, i) => ({ wch: i === 0 ? 26 : 18 }));
 }
 
 const PAGE_WIDTH = 612;
@@ -202,8 +199,21 @@ export async function exportTryoutData(tryout: Tryout, format: ExportFormat): Pr
   }
 
   if (format === 'xlsx') {
-    const summary = buildResultsSummary(tryout);
+    // The full-results rows: the info header, then each player's
+    // PLYR/CAT/STR/IMP rows and eval tables, blocks separated by a blank row so
+    // one player's card stays readable on a printed page.
+    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout);
+    const rows: (string | number)[][] = [...infoLines, []];
+    playerBlocks.forEach((block, i) => {
+      if (i > 0) rows.push([]);
+      rows.push(...block);
+    });
+
     const wb = XLSX.utils.book_new();
+
+    // Sheet 1: the ranked summary table — one row per player, one column per
+    // rubric — for sorting and filtering the whole roster at a glance.
+    const summary = buildResultsSummary(tryout);
     const summarySheet = XLSX.utils.aoa_to_sheet([
       ...summary.infoLines,
       [],
@@ -212,16 +222,10 @@ export async function exportTryoutData(tryout: Tryout, format: ExportFormat): Pr
     ]);
     XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
 
-    const usedSheetNames = new Set<string>(['summary']);
-    for (const detail of buildPlayerDetailSheets(tryout)) {
-      const sheet = XLSX.utils.aoa_to_sheet([
-        ...detail.infoLines,
-        [],
-        detail.headers,
-        ...detail.rows,
-      ]);
-      XLSX.utils.book_append_sheet(wb, sheet, uniqueSheetName(detail.sheetTitle, usedSheetNames));
-    }
+    // Sheet 2: the same portrait, block-per-player layout as the CSV.
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet['!cols'] = fullResultsColumnWidths(rows);
+    XLSX.utils.book_append_sheet(wb, sheet, 'Full Results');
 
     download(
       fileName,

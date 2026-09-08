@@ -1,4 +1,5 @@
 'use client';
+'use no memo';
 
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -61,6 +62,7 @@ function NewAssessmentForm() {
   const user = useUser();
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [rubricError, setRubricError] = useState<string | null>(null);
 
   // Rubrics and assessors used to only be reachable on the settings screen
   // after creation — a second step for something coaches expect to finish in
@@ -162,6 +164,7 @@ function NewAssessmentForm() {
         weight: rubricWeightNum != null && !isNaN(rubricWeightNum) ? rubricWeightNum : undefined,
       },
     ]);
+    setRubricError(null);
     setRubricLabel('');
     setRubricType('skill');
     setRubricScale('1-5');
@@ -197,6 +200,10 @@ function NewAssessmentForm() {
   const teamId = watch('teamId');
 
   const onSubmit = handleSubmit(async (data) => {
+    if (pendingRubrics.length === 0) {
+      setRubricError('Add at least one rubric before creating the evaluation.');
+      return;
+    }
     setSubmitting(true);
     try {
       // The form renders before this has landed, so on a cold load the check
@@ -366,13 +373,17 @@ function NewAssessmentForm() {
 
             <div>
               <div className="mb-2 flex items-center justify-between">
-                <SectionLabel>Custom Rubrics (optional)</SectionLabel>
+                <SectionLabel>Rubrics *</SectionLabel>
                 <Button label="+ Add Rubric" variant="ghost" size="sm" onClick={() => setShowRubricForm(true)} />
               </div>
+              {rubricError && (
+                <p className="mb-1 text-xs font-medium" style={{ color: colors.danger }}>
+                  {rubricError}
+                </p>
+              )}
               {pendingRubrics.length === 0 ? (
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
-                  Every sport already scores on a default set of skills — add one here only if this
-                  evaluation needs something extra.
+                  Add at least one rubric to define how players will be scored in this evaluation.
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-2">

@@ -3,7 +3,7 @@ import { getSupabase } from '@/lib/supabase';
 import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
-import type { FeedbackSubmission } from '../extras';
+import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
 import {
   categoryAveragesAcrossEvals,
   generateCloudCode,
@@ -14,7 +14,7 @@ import {
   isGoaliePosition,
   weightedOverallAcrossEvals,
 } from '../rubrics';
-import type { TeamBuilderConfig, TeamBuilderState } from '../teamBuilder';
+import type { TeamBuilderConfig, TeamBuilderState, FriendPackage } from '../teamBuilder';
 import {
   buildTeams,
   formatExportCsv,
@@ -408,6 +408,21 @@ const REGISTRATION_CHUNK = 20;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
 const GUARDIAN_EMAIL_CONCURRENCY = 20;
 const GUARDIAN_RESOLVE_BATCH = 50;
+
+/**
+ * Marks a tryout row the caller reached as a coach of its *team* rather than
+ * through their own account — CLUB-mode delegation, or a club owner seeing an
+ * assessment a delegate created on their team. Both come back from RPCs, not
+ * from the account_id filter, so the flag is set where they are merged in and
+ * read again in assembleTryouts(); it never touches the database.
+ */
+const VIEWER_MANAGES_TEAM = '__viewerManagesTeam';
+
+/** Private bucket holding feedback screenshots — reachable only via signed URLs. */
+const FEEDBACK_BUCKET = 'feedback-attachments';
+
+/** Long enough to open an attachment and look at it; short enough that a copied link goes stale. */
+const FEEDBACK_SIGNED_URL_TTL_SECONDS = 60 * 10;
 
 /** Players per `generate-test-players` call — sized so one Claude response stays
  * within a comfortable output length rather than risking a truncated batch. */
@@ -1258,6 +1273,10 @@ export class SupabaseDataSource implements DataSource {
   private async assembleTryouts(tryoutRows: Row[]): Promise<Tryout[]> {
     if (tryoutRows.length === 0) return [];
     const supabase = getSupabase();
+    // Who is asking — every assembled tryout carries `viewerIsOwner`, and the
+    // screens read it to decide whether this caller gets results, settings and
+    // the danger zone or only the scoring flow.
+    const { userId, accountId } = await this.ctx();
     const ids = tryoutRows.map((t) => t.id);
 
     const [pRows, aRows, eRows, rRows] = await Promise.all([
@@ -1320,8 +1339,16 @@ export class SupabaseDataSource implements DataSource {
     return tryoutRows.map((t) => {
       const settings = t.settings ?? { skaterWeights: {}, goalieWeights: {}, customRubrics: [] };
       const ai = t.ai_assessments ?? {};
-      const { teamBuilder, ...aiAssessments } = ai;
+      // `friendPackages` shares the ai_assessments JSON blob with `teamBuilder`
+      // rather than getting a column of its own — same reason: both are
+      // assessment-scoped documents the app owns end to end, and neither is
+      // ever queried by the database.
+      const { teamBuilder, friendPackages, ...aiAssessments } = ai;
       const roster = (pByT[t.id] ?? []).map((p) => this.rowToPlayer(p, assessorNameById));
+      // The lead assessor is the coach who ran the assessment (createTryout
+      // seeds their own row as 'lead'), so they count as an owner even when
+      // the row sits on another account — a club's, say.
+      const myAssessorRole = (aByT[t.id] ?? []).find((a) => a.user_id === userId)?.role;
       return {
         id: t.id,
         name: t.name,
@@ -1347,7 +1374,10 @@ export class SupabaseDataSource implements DataSource {
           ? { id: t.registration_code, enabled: t.registration_open }
           : undefined,
         archived: t.archived,
+        viewerIsOwner:
+          t.account_id === accountId || t[VIEWER_MANAGES_TEAM] === true || myAssessorRole === 'lead',
         teamBuilder,
+        friendPackages,
         aiAssessments: Object.keys(aiAssessments).length ? aiAssessments : undefined,
       } as Tryout;
     });
@@ -1444,6 +1474,13 @@ export class SupabaseDataSource implements DataSource {
       avatarUrl: profile.avatar_url ?? undefined,
       planTier: (account?.plan_tier as UserProfile['planTier']) ?? 'free',
       subscriptionStatus: account?.subscription_status,
+      subscriptionCancelAt: account?.subscription_cancel_at
+        ? toMs(account.subscription_cancel_at as string)
+        : undefined,
+      pendingPlanTier: (account?.pending_plan_tier as UserProfile['planTier']) ?? undefined,
+      pendingPlanChangeAt: account?.pending_plan_change_at
+        ? toMs(account.pending_plan_change_at as string)
+        : undefined,
       extraTeamLicenses: account?.extra_team_licenses ?? 0,
       connectChargesEnabled: !!account?.stripe_connect_charges_enabled,
       connectPayoutsEnabled: !!account?.stripe_connect_payouts_enabled,
@@ -2090,7 +2127,7 @@ export class SupabaseDataSource implements DataSource {
   private async _addManualTeamPlayer(
     teamId: string,
     form: AddPlayerForm,
-    guard: WriteGuard,
+    _guard: WriteGuard,
   ): Promise<{ athleteId: string }> {
     const accountId = await this.writableAccountId();
     let athleteId = form.athleteId;
@@ -2529,7 +2566,7 @@ export class SupabaseDataSource implements DataSource {
         if (seen.has(t.id)) continue;
         if (t.deleted_at || (!includeArchived && t.archived)) continue;
         seen.add(t.id);
-        extra.push(t);
+        extra.push({ ...t, [VIEWER_MANAGES_TEAM]: true });
       }
     }
     return [...rows, ...extra];
@@ -2677,13 +2714,77 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async getTryout(id: string): Promise<Tryout | null> {
-    const { supabase } = await this.ctx();
+    const { supabase, accountId } = await this.ctx();
     const row = (
       await supabase.from('tryouts').select('*').eq('id', id).is('deleted_at', null).maybeSingle()
     ).data as Row | null;
     if (!row) return null;
-    const [assembled] = await this.assembleTryouts([row]);
+    // One row read straight from the table, so unlike listTryouts() there is no
+    // RPC merge to say whether a caller on another account is this team's coach
+    // or only an invited assessor. Only ask when the account doesn't already
+    // match — for the coach opening their own assessment, the common case, this
+    // costs nothing.
+    const tagged =
+      row.account_id !== accountId && (await this.viewerManagesTryoutTeam(id))
+        ? { ...row, [VIEWER_MANAGES_TEAM]: true }
+        : row;
+    const [assembled] = await this.assembleTryouts([tagged]);
     return assembled ?? null;
+  }
+
+  /**
+   * Whether the caller reaches this assessment as a coach of its team rather
+   * than through their own account: a team delegated to them (CLUB mode), or
+   * their own team that a delegate created the assessment under. These are the
+   * same two RPCs listTryouts() merges, so the coaches it lists keep an owner's
+   * rights here. A pre-migration instance without the functions answers no,
+   * which leaves ownership resting on account_id alone — the old behaviour.
+   */
+  private async viewerManagesTryoutTeam(id: string): Promise<boolean> {
+    const supabase = getSupabase();
+    const [managedRes, ownedTeamRes] = await Promise.all([
+      supabase.rpc('list_tryouts_for_managed_teams'),
+      supabase.rpc('list_tryouts_on_my_owned_teams'),
+    ]);
+    return [managedRes.data, ownedTeamRes.data].some((rows) =>
+      ((rows ?? []) as Row[]).some((t) => t.id === id),
+    );
+  }
+
+  /**
+   * Guards the two actions that take an assessment away from everyone else on
+   * it. Reported by a client coach: signed in on a second account that was only
+   * an assessor on someone else's tryout, they could still delete it — the web
+   * app hides Settings from assessors with a `?assessor=1` query parameter, and
+   * dropping the parameter from the URL brought the whole tab back, Danger Zone
+   * included.
+   *
+   * The real gate is soft_delete_tryout() (see the migration) which re-checks
+   * this server-side; this is the same check in front of it, so an unauthorized
+   * attempt fails with a sentence the coach can read rather than a raw
+   * Postgres error, and so archiving — a plain update, with no RPC of its own —
+   * is covered too.
+   */
+  private async assertCanManageTryout(id: string): Promise<void> {
+    const { supabase, userId, accountId } = await this.ctx();
+    const row = (
+      await supabase.from('tryouts').select('account_id').eq('id', id).maybeSingle()
+    ).data as Row | null;
+    if (row?.account_id === accountId) return;
+
+    const assessor = (
+      await supabase
+        .from('tryout_assessors')
+        .select('role')
+        .eq('tryout_id', id)
+        .eq('user_id', userId)
+        .maybeSingle()
+    ).data as Row | null;
+    if (assessor?.role === 'lead') return;
+
+    if (await this.viewerManagesTryoutTeam(id)) return;
+
+    throw new Error('Only the coach who created this evaluation can archive or delete it.');
   }
 
   async listAssignedTryouts(): Promise<Tryout[]> {
@@ -2844,12 +2945,17 @@ export class SupabaseDataSource implements DataSource {
     if (updates.settings !== undefined) patch.settings = updates.settings;
     if (updates.archived !== undefined) patch.archived = updates.archived;
 
-    if (updates.teamBuilder !== undefined || updates.aiAssessments !== undefined) {
+    if (
+      updates.teamBuilder !== undefined ||
+      updates.friendPackages !== undefined ||
+      updates.aiAssessments !== undefined
+    ) {
       const current = (await supabase.from('tryouts').select('ai_assessments').eq('id', id).single())
         .data?.ai_assessments ?? {};
       const next = { ...current };
       if (updates.aiAssessments !== undefined) Object.assign(next, updates.aiAssessments);
       if (updates.teamBuilder !== undefined) next.teamBuilder = updates.teamBuilder;
+      if (updates.friendPackages !== undefined) next.friendPackages = updates.friendPackages;
       patch.ai_assessments = next;
     }
 
@@ -2873,6 +2979,14 @@ export class SupabaseDataSource implements DataSource {
   async setTryoutTeam(id: string, teamId: string | null): Promise<void> {
     const { supabase } = await this.ctx();
     unwrap(await supabase.from('tryouts').update({ team_id: teamId }).eq('id', id).select('id').single());
+  }
+
+  async setFriendPackages(id: string, packages: FriendPackage[]): Promise<void> {
+    const { supabase } = await this.ctx();
+    const current = (await supabase.from('tryouts').select('ai_assessments').eq('id', id).single())
+      .data?.ai_assessments ?? {};
+    const next = { ...current, friendPackages: packages };
+    unwrap(await supabase.from('tryouts').update({ ai_assessments: next }).eq('id', id).select('id').single());
   }
 
   /** Reconcile the desired assessor list against the tryout_assessors table. */
@@ -2927,7 +3041,8 @@ export class SupabaseDataSource implements DataSource {
     if (desired.length > 1) await this.markOnboarding({ inviteAssessors: true });
   }
 
-  archiveTryout(id: string): Promise<Tryout> {
+  async archiveTryout(id: string): Promise<Tryout> {
+    await this.assertCanManageTryout(id);
     return this.updateTryout(id, { archived: true });
   }
 
@@ -2941,6 +3056,19 @@ export class SupabaseDataSource implements DataSource {
     // in the database so it still counts toward a player's permanent history,
     // it just disappears from every coach-facing view (see the deleted_at
     // filters on listTryouts/listAssignedTryouts/getTryout).
+    //
+    // Through the RPC rather than straight at the table: it authorizes the
+    // caller server-side, where an assessor can't get past it by editing a URL
+    // or calling PostgREST directly. See the migration for why the tryouts
+    // policies themselves aren't the place this is fixed from this repo.
+    const { error } = await supabase.rpc('soft_delete_tryout', { p_tryout_id: id });
+    if (!error) return;
+
+    const missingFunction = error.code === 'PGRST202' || error.code === '42883';
+    if (!missingFunction) throw new Error(error.message);
+    console.warn('soft_delete_tryout() not deployed — falling back to a client-authorized update.');
+
+    await this.assertCanManageTryout(id);
     unwrap(
       await supabase
         .from('tryouts')
@@ -4108,7 +4236,7 @@ export class SupabaseDataSource implements DataSource {
   private async _addRegistrationToRoster(
     tryoutId: string,
     registrationId: string,
-    guard: WriteGuard,
+    _guard: WriteGuard,
   ): Promise<Player> {
     const { supabase } = await this.ctx();
     const accountId = await this.writableAccountId();
@@ -4157,7 +4285,7 @@ export class SupabaseDataSource implements DataSource {
   private async _addRegistrationToTeam(
     teamId: string,
     registrationId: string,
-    guard: WriteGuard,
+    _guard: WriteGuard,
   ): Promise<TeamRosterPlayer[]> {
     const { supabase } = await this.ctx();
     const accountId = await this.writableAccountId();
@@ -4504,7 +4632,14 @@ export class SupabaseDataSource implements DataSource {
         );
       }
       if (parsed?.positionCap) applied.push(`at most ${parsed.positionCap} of any one position per team`);
-      if (result.config.keepFriendPackages) applied.push('friend groups kept together');
+      if (result.config.keepFriendPackages) {
+        const kept = result.friendPackages?.length ?? 0;
+        // Naming the count is what tells a coach their hand-built packages were
+        // actually picked up, rather than the instruction just being echoed back.
+        applied.push(
+          kept > 0 ? `${kept} friend group${kept === 1 ? '' : 's'} kept together` : 'friend groups kept together',
+        );
+      }
       result.explanation = `${applied.join('; ')}.`;
     } else {
       result = buildTeams(tryout, config);
@@ -6366,9 +6501,170 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // ─── Misc ──────────────────────────────────────────────────────────────────────
+  // ─── Feedback ────────────────────────────────────────────────────────────────
+
+  /**
+   * The submitter's identity, without requiring a tenant account.
+   *
+   * ctx() resolves an account and raises when there isn't one, which is the
+   * ordinary state for a guardian — and a guardian's feedback is worth as much
+   * as a coach's, so the account is looked up separately and allowed to come
+   * back null rather than failing the submission.
+   */
+  private async feedbackIdentity(): Promise<{
+    supabase: SupabaseClient;
+    userId: string;
+    accountId: string | null;
+    email?: string;
+    displayName?: string;
+  }> {
+    const supabase = getSupabase();
+    const { data } = await supabase.auth.getSession();
+    const user = data.session?.user;
+    if (!user?.id) throw new Error('User not authenticated');
+
+    let accountId: string | null = null;
+    try {
+      accountId = (await this.ctx()).accountId;
+    } catch {
+      // No membership — a guardian, or an account still being provisioned.
+    }
+
+    return {
+      supabase,
+      userId: user.id,
+      accountId,
+      email: user.email ?? undefined,
+      displayName: (user.user_metadata?.display_name as string | undefined) ?? undefined,
+    };
+  }
+
+  async uploadFeedbackAttachment(file: File): Promise<FeedbackAttachment> {
+    const { supabase, userId } = await this.feedbackIdentity();
+
+    // The first path segment is what the storage policies check, so it has to
+    // be the uploader's id. The middle segment groups one form's files together
+    // and keeps two uploads of the same filename apart.
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-120) || 'attachment';
+    const path = `${userId}/${generateId('fb')}/${safeName}`;
+
+    const { error } = await supabase.storage
+      .from(FEEDBACK_BUCKET)
+      .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
+    if (error) throw new Error(`Could not upload ${file.name}: ${error.message}`);
+
+    return {
+      path,
+      name: file.name,
+      size: file.size,
+      contentType: file.type || 'application/octet-stream',
+    };
+  }
+
+  async deleteFeedbackAttachment(path: string): Promise<void> {
+    const { supabase } = await this.feedbackIdentity();
+    const { error } = await supabase.storage.from(FEEDBACK_BUCKET).remove([path]);
+    if (error) throw new Error(error.message);
+  }
+
   async submitFeedback(submission: FeedbackSubmission): Promise<void> {
-    // No feedback table yet; log + accept so the UI flow completes.
-    console.log('[feedback]', JSON.stringify(submission));
+    const { supabase, userId, accountId, email, displayName } = await this.feedbackIdentity();
+
+    unwrap(
+      await supabase
+        .from('feedback_submissions')
+        .insert({
+          user_id: userId,
+          account_id: accountId,
+          email,
+          display_name: displayName,
+          overall_experience: submission.overallExperience,
+          ease_of_use: submission.easeOfUse,
+          team_hub_scheduling: submission.teamHubScheduling,
+          value_for_money: submission.valueForMoney,
+          what_is_working_well: submission.whatIsWorkingWell,
+          what_can_be_improved: submission.whatCanBeImproved,
+          attachments: submission.attachments ?? [],
+        })
+        .select('id')
+        .single(),
+    );
+  }
+
+  async isFeedbackReviewer(): Promise<boolean> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc('is_feedback_reviewer');
+    // A missing function (the migration not yet applied) is a "no", not a
+    // broken screen — the portal simply stays hidden until it is deployed.
+    if (error) {
+      console.warn('Could not check feedback reviewer access:', error.message);
+      return false;
+    }
+    return data === true;
+  }
+
+  async listFeedbackSubmissions(): Promise<FeedbackReport[]> {
+    const supabase = getSupabase();
+    // No reviewer check here: the select policy already narrows a non-reviewer
+    // to their own rows, so this is safe to call from anywhere and can't be
+    // widened by lying to the client.
+    const rows = unwrap(
+      await supabase
+        .from('feedback_submissions')
+        .select('*')
+        .order('created_at', { ascending: false }),
+    ) as Row[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      userId: r.user_id,
+      email: r.email ?? undefined,
+      displayName: r.display_name ?? undefined,
+      overallExperience: r.overall_experience,
+      easeOfUse: r.ease_of_use,
+      teamHubScheduling: r.team_hub_scheduling,
+      valueForMoney: r.value_for_money,
+      whatIsWorkingWell: r.what_is_working_well ?? '',
+      whatCanBeImproved: r.what_can_be_improved ?? '',
+      attachments: Array.isArray(r.attachments) ? (r.attachments as FeedbackAttachment[]) : [],
+      createdAt: toMs(r.created_at),
+    }));
+  }
+
+  async getFeedbackAttachmentUrl(path: string): Promise<string> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.storage
+      .from(FEEDBACK_BUCKET)
+      .createSignedUrl(path, FEEDBACK_SIGNED_URL_TTL_SECONDS);
+    if (error || !data?.signedUrl) throw new Error(error?.message ?? 'Could not open that attachment.');
+    return data.signedUrl;
+  }
+
+  async deleteFeedbackSubmission(id: string, attachments: FeedbackAttachment[]): Promise<void> {
+    const supabase = getSupabase();
+
+    // `.select('id')` is load-bearing: a DELETE that RLS filters down to zero
+    // rows comes back with no error and no data, so without it a blocked
+    // delete is indistinguishable from a successful one — the caller
+    // invalidates, refetches, and the submission is simply still there with
+    // nothing shown to the user. Same silent-no-op trap as deleteTeamMessage.
+    const rows = unwrap(
+      await supabase.from('feedback_submissions').delete().eq('id', id).select('id'),
+    ) as Row[] | null;
+    if (!rows || rows.length === 0) {
+      throw new Error(
+        'That submission could not be removed. feedback_submissions_delete_reviewer only allows accounts on the feedback_reviewers allowlist.',
+      );
+    }
+
+    if (attachments.length > 0) {
+      const { error } = await supabase.storage
+        .from(FEEDBACK_BUCKET)
+        .remove(attachments.map((a) => a.path));
+      // The submission is already gone — an attachment left behind in the
+      // bucket is orphaned but harmless, so this doesn't fail the removal.
+      if (error) console.warn('Could not remove feedback attachments:', error.message);
+    }
   }
 
   // ─── Org Members ─────────────────────────────────────────────────────────────
@@ -7000,51 +7296,27 @@ export class SupabaseDataSource implements DataSource {
   }
 
   private mapGuardianRosterRow(row: Row): import('../types').GuardianRosterAthlete {
+    // Only the event's tombstone reaches a guardian: what it is called, the
+    // sport, and when and where it is. Scores, session results and the
+    // make/release recommendation are the coach's to share — they are dropped
+    // here, at the one place every guardian screen reads its data from, rather
+    // than hidden per screen, so no future page can render them by accident.
+    // The fallback query below no longer asks for them either. get_guardian_rosters()
+    // lives in the backend repo and may still return them in its payload —
+    // dropping them from the function itself is the follow-up there.
     const tryoutsList = ((row.tryout_participants ?? []) as Row[])
       .map((tp) => {
         if (!tp.tryouts) return null;
-
-        const evals = (tp.evaluations ?? []) as Row[];
-        const sessionMap = new Map<string, { result: string; date: number; scores: Record<string, number> }>();
-
-        for (const e of evals) {
-          if (e.recommendation) {
-            const sessionName = e.session || 'Session 1';
-            const t = e.created_at ? new Date(e.created_at).getTime() : 0;
-            const existing = sessionMap.get(sessionName);
-
-            if (!existing || t > existing.date) {
-              const scoresRecord: Record<string, number> = {};
-              if (e.evaluation_scores && Array.isArray(e.evaluation_scores)) {
-                for (const score of e.evaluation_scores as Row[]) {
-                  if (score.rubric_key && typeof score.value === 'number') {
-                    scoresRecord[score.rubric_key] = score.value;
-                  }
-                }
-              }
-
-              sessionMap.set(sessionName, {
-                result: REC_FROM_DB[e.recommendation] || e.recommendation,
-                date: t,
-                scores: scoresRecord,
-              });
-            }
-          }
-        }
-
-        const sessions = Array.from(sessionMap.entries())
-          .map(([name, data]) => ({
-            name,
-            result: data.result,
-            date: data.date,
-            scores: Object.keys(data.scores).length > 0 ? data.scores : undefined,
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
+        const t = tp.tryouts as Row;
         return {
-          ...tp.tryouts,
+          id: t.id,
+          name: t.name,
+          sport: t.sport,
           participantId: tp.id,
-          sessions,
+          date: t.tryout_date ?? undefined,
+          startTime: t.start_time ?? undefined,
+          endTime: t.end_time ?? undefined,
+          location: t.location ?? undefined,
         };
       })
       .filter(Boolean);
@@ -7205,14 +7477,7 @@ export class SupabaseDataSource implements DataSource {
         tryout_participants(
           id,
           tryout_id,
-          tryouts(id, name, sport),
-          evaluations(
-            id,
-            session,
-            recommendation,
-            created_at,
-            evaluation_scores(rubric_key, value)
-          )
+          tryouts(id, name, sport, tryout_date, start_time, end_time, location)
         ),
         season_roster(
           id,

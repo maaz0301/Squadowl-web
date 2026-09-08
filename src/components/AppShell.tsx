@@ -10,8 +10,10 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Button, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
+import { useIsFeedbackReviewerQuery } from '@/features/queries';
 import { prefetchRoute } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
+import { SubscriptionEndingBanner } from '@/components/SubscriptionEndingBanner';
 import { canUseFeature } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 
@@ -21,6 +23,14 @@ interface NavItem {
   icon: IconName;
   /** Highlight for any route beneath this prefix. */
   match?: string;
+  /**
+   * Highlight only on this exact path, not on the routes nested under it.
+   *
+   * For the pair of entries that share a prefix — /feedback and the reviewers'
+   * /feedback/reports — where the default prefix match would light both up at
+   * once on the deeper one.
+   */
+  exact?: boolean;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -60,6 +70,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const planTier = user?.planTier ?? 'free';
 
+  // The feedback portal is limited to an email allowlist held in the database
+  // (`feedback_reviewers`), not to a plan or a role — so whether to draw the
+  // link is a question only the server can answer. Guardians never see the
+  // secondary nav at all, so they are not asked.
+  const { data: isFeedbackReviewer } = useIsFeedbackReviewerQuery(!isGuardian);
+
   const primary: NavItem[] = isGuardian
     ? [
         { href: '/dashboard', label: 'My Athletes', icon: 'teams' },
@@ -87,12 +103,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           : []),
         { href: '/loyalty', label: 'Loyalty Program', icon: 'gift' },
         { href: '/upgrade', label: 'Plans & Billing', icon: 'upgrade' },
-        { href: '/feedback', label: 'Feedback', icon: 'feedback' },
+        { href: '/feedback', label: 'Feedback', icon: 'feedback', exact: true },
+        ...(isFeedbackReviewer
+          ? ([{ href: '/feedback/reports', label: 'Feedback Portal', icon: 'feedback' }] as NavItem[])
+          : []),
       ];
 
   const isActive = (item: NavItem) =>
     pathname === item.href ||
-    pathname.startsWith(`${item.href}/`) ||
+    (!item.exact && pathname.startsWith(`${item.href}/`)) ||
     (!!item.match && pathname.startsWith(item.match));
 
   const NavLink = ({ item }: { item: NavItem }) => {
@@ -216,7 +235,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               await logout();
               router.push('/login');
             }}
-            className="flex min-h-[44px] flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors hover:brightness-125"
+            className="flex min-h-11 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors hover:brightness-125"
             style={{ color: colors.inkMuted }}
           >
             <Icon name="logout" size={19} color={colors.inkMuted} />
@@ -236,7 +255,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh" style={{ backgroundColor: colors.bg }}>
       {/* Desktop sidebar */}
       <aside
-        className="sticky top-0 hidden h-dvh w-[248px] shrink-0 flex-col overflow-y-auto border-r p-4 lg:flex"
+        className="sticky top-0 hidden h-dvh w-62 shrink-0 flex-col overflow-y-auto border-r p-4 lg:flex"
         style={{
           backgroundColor: colors.bgSecondary,
           borderColor: colors.border,
@@ -322,6 +341,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={cn('app-main w-full flex-1 px-4 py-6 sm:px-6 lg:px-8')}
           style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
         >
+          <SubscriptionEndingBanner />
           {children}
         </main>
       </div>

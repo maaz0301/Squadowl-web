@@ -77,11 +77,6 @@ export default function ShareDetailPage() {
   // usePermissions().isGuardian flag (false for an owner/coach account even
   // when that same person also matches this share by guardian_user_id).
   const isShareGuardian = !!currentUserId && shareQuery.data?.guardianUserId === currentUserId;
-  // The guardian already has direct RLS access to their own athlete's live
-  // evaluations (same grant the player-profile page relies on), so their
-  // view isn't limited to the frozen athlete_assessments snapshot the way the
-  // coach's is — see the render block below for why the coach still uses it.
-  const guardianProfileQuery = usePlayerProfileQuery(isShareGuardian ? shareQuery.data?.athleteId : undefined);
   // Once accepted, the coach's account holds a live grant on the same athlete
   // row (see athlete_account_access / accept_athlete_share), so profile
   // fields can come from a live query instead of the frozen share snapshot —
@@ -197,24 +192,20 @@ export default function ShareDetailPage() {
         </div>
       ) : null}
 
-      {/* Development history/trends are shown to both sides: the guardian gets
-          a live view via guardianProfileQuery (their own RLS grant on the
-          source athlete, not this share), while the coach sees the snapshot
-          frozen at share time, since their account has no RLS access to query
-          the original account's evaluations live — see the migration comment
-          on athlete_shares.athlete_assessments. Export stays coach-only by
-          product requirement. */}
-      {isShareGuardian
-        ? guardianProfileQuery.data && (
-            <AssessmentHistory assessments={guardianProfileQuery.data.assessments} colors={colors} />
-          )
-        : (
-            <AssessmentHistory
-              assessments={share.assessments}
-              colors={colors}
-              exportFileName={slugify(share.athlete.firstName, share.athlete.lastName)}
-            />
-          )}
+      {/* Coach side only. The receiving coach sees the snapshot frozen at share
+          time, since their account has no RLS access to query the original
+          account's evaluations live — see the migration comment on
+          athlete_shares.athlete_assessments. The guardian who shared the
+          athlete does not see scores here: assessment results stay with the
+          coaches running the assessments, the same rule the guardian portal
+          and the player profile now follow. */}
+      {isShareGuardian ? null : (
+        <AssessmentHistory
+          assessments={share.assessments}
+          colors={colors}
+          exportFileName={slugify(share.athlete.firstName, share.athlete.lastName)}
+        />
+      )}
 
       <p className="text-md mb-3 mt-2 font-display font-bold" style={{ color: colors.ink }}>Comments</p>
       {comments.length === 0 ? (

@@ -261,6 +261,15 @@ export const TryoutSchema = z.object({
   settings: TryoutSettingsSchema,
   cloud: CloudSessionSchema.optional(),
   archived: z.boolean().default(false),
+  /**
+   * Whether the signed-in user owns this assessment: their account created it,
+   * or they are its lead assessor. Everyone else who can reach it — an invited
+   * assessor, a helper working someone else's tryout — may score players and
+   * edit the roster, nothing more: no results, settings, rubrics, export,
+   * archive or delete. Computed per read by the datasource from the caller's
+   * identity; never stored on the row, so it cannot be edited into being true.
+   */
+  viewerIsOwner: z.boolean().default(false),
   teamBuilder: z.any().optional(),
   friendPackages: z.array(z.object({
     id: z.string(),
@@ -429,6 +438,20 @@ export const UserProfileSchema = z.object({
   avatarUrl: z.string().optional(),
   planTier: z.enum(PLAN_TIERS).default('coach'),
   subscriptionStatus: z.string().optional(),
+  /**
+   * When a scheduled cancellation takes effect, in ms. Portal cancellations are
+   * taken at period end, so the plan stays live — and this is the only thing
+   * that says it is ending. Undefined when the subscription renews normally.
+   */
+  subscriptionCancelAt: z.number().optional(),
+  /**
+   * A downgrade that has been chosen but not applied yet. Downgrades are
+   * deferred to the end of the paid term, so the account keeps its current
+   * tier until `pendingPlanChangeAt` and then moves to `pendingPlanTier`.
+   * Both undefined when no change is scheduled.
+   */
+  pendingPlanTier: z.enum(PLAN_TIERS).optional(),
+  pendingPlanChangeAt: z.number().optional(),
   /** Add-on team licenses purchased beyond the plan's included teams (Club: CAD$10/team/year). */
   extraTeamLicenses: z.number().int().min(0).default(0),
   /** Whether the account's Stripe Connect account can accept registration-fee charges/payouts. */
@@ -1038,17 +1061,21 @@ export interface GuardianRosterAthlete {
   firstName: string;
   lastName: string;
   avatarUrl?: string;
+  /**
+   * Deliberately the event's tombstone only — name, sport, when and where.
+   * Scores, session results and recommendations belong to the coach who ran
+   * the assessment, so they are never assembled into a guardian's payload;
+   * see mapGuardianRosterRow().
+   */
   tryouts: {
     id: string;
     name: string;
     sport: string;
-    participantId: string; // <-- ADD THIS LINE HERE
-    sessions: {
-      name: string;
-      result?: string;
-      date?: number;
-      scores?: Record<string, number>;
-    }[];
+    participantId: string;
+    date?: string;
+    startTime?: string;
+    endTime?: string;
+    location?: string;
   }[];
   seasons: {
     id: string;

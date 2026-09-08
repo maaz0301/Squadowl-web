@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { themeTokens } from '@/theme/tokens';
 import { Avatar, Badge, Button, Card, EmptyState, ErrorState, LoadingState } from '@/components/ui';
+import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useResultsQuery } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
 import { getScoreHeatLevel, playerDisplayName } from '@/data/rubrics';
@@ -19,6 +20,7 @@ export default function ResultsPage() {
 
   if (isLoading) return <LoadingState message="Loading results..." />;
   if (isError || !tryout) return <ErrorState message="Could not load results." onRetry={() => refetch()} />;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="see the results" />;
 
   const sorted = [...results].sort((a, b) => b.overall - a.overall);
   const skaters = sorted.filter((r) => r.player.pos?.toUpperCase() !== 'GTL');

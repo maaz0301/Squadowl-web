@@ -11,6 +11,7 @@ import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { PlanGate } from '@/components/PlanGate';
 import { QrCode } from '@/components/QrCode';
+import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import {
   Badge,
   Button,
@@ -103,6 +104,7 @@ export default function RegistrationsPage() {
   }
 
   const tryout = tryoutQuery.data;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="manage registrations" />;
   const cloudCode = tryout.cloud?.id ?? '------';
   const baseUrl =
     APP_CONFIG.webUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://www.tryouthq.ca');
