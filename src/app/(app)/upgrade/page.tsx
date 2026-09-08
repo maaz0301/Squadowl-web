@@ -96,10 +96,9 @@ export default function UpgradePage() {
   const startCheckout = async (tier: PlanTier) => {
     try {
       setLoadingTier(tier);
-const res = await getDataSource().createCheckoutSession(tier, billingInterval, {
-  applyCredits: useCredits,
-  origin: window.location.origin, // ✅ now allowed
-});
+      const res = await getDataSource().createCheckoutSession(tier, billingInterval, {
+        applyCredits: useCredits,
+      });
       if (res?.url) {
         // Full-page navigation to Stripe Checkout, not component state — the
         // compiler's immutability check flags any window.location write, but
