@@ -214,7 +214,8 @@ export interface DataSource {
   createCheckoutSession(
     planTier: string,
     interval: 'year' | 'month',
-    options?: { applyCredits?: boolean },
+    options?: { applyCredits?: boolean ; origin?: string},
+
   ): Promise<{ url: string }>;
   /** Checkout for add-on team licenses beyond the plan's included teams (Club: CAD$10/team/year). */
   createTeamLicenseCheckoutSession(
