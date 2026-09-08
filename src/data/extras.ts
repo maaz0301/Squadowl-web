@@ -18,6 +18,16 @@ export interface SearchResults {
   seasons: { id: string; name: string; teamName: string }[];
 }
 
+/** One uploaded screenshot (or PDF) attached to a feedback submission. */
+export interface FeedbackAttachment {
+  /** Key in the private `feedback-attachments` bucket: `<user id>/<submission id>/<filename>`. */
+  path: string;
+  /** The name as the user's machine had it, for display and download. */
+  name: string;
+  size: number;
+  contentType: string;
+}
+
 export interface FeedbackSubmission {
   overallExperience: number;
   easeOfUse: number;
@@ -25,6 +35,19 @@ export interface FeedbackSubmission {
   valueForMoney: number;
   whatIsWorkingWell: string;
   whatCanBeImproved: string;
+  /** Files already uploaded to the bucket; see uploadFeedbackAttachment(). */
+  attachments?: FeedbackAttachment[];
+}
+
+/** A stored submission as the reviewer portal reads it back. */
+export interface FeedbackReport extends Required<Omit<FeedbackSubmission, 'attachments'>> {
+  id: string;
+  userId: string;
+  /** Captured when the feedback was submitted, so it survives a later rename. */
+  email?: string;
+  displayName?: string;
+  attachments: FeedbackAttachment[];
+  createdAt: number;
 }
 
 export function buildRosterLibrary(tryouts: Tryout[], excludeTryoutId?: string): RosterLibraryEntry[] {

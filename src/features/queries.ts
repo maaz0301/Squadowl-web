@@ -526,6 +526,22 @@ export function useSetTryoutTeamMutation() {
   });
 }
 
+export function useSetFriendPackagesMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, packages }: { id: string; packages: import('@/data/teamBuilder').FriendPackage[] }) =>
+      withTimeout(getDataSource().setFriendPackages(id, packages), 15000),
+    onSuccess: (_result, { id, packages }) => {
+      qc.setQueryData<Tryout | undefined>(queryKeys.tryout(id), (old) => {
+        if (!old) return old;
+        return { ...old, friendPackages: packages };
+      });
+      void qc.invalidateQueries({ queryKey: queryKeys.tryout(id) });
+      void qc.invalidateQueries({ queryKey: ALL_TRYOUT_LISTS });
+    },
+  });
+}
+
 /**
  * Applies `update` to every cached tryout *list* under a key prefix, leaving
  * non-list entries under the same prefix (the ['tryouts','count'] number)
@@ -2100,9 +2116,55 @@ export function useImportLibraryPlayersMutation() {
 }
 
 export function useSubmitFeedbackMutation() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (submission: import('../data/extras').FeedbackSubmission) =>
       getDataSource().submitFeedback(submission),
+    // A reviewer who submits their own feedback should see it in the portal
+    // without a reload; for everyone else this invalidates a query nobody has.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.feedbackSubmissions });
+    },
+  });
+}
+
+/**
+ * Whether the signed-in user may read everyone's feedback.
+ *
+ * `staleTime: Infinity` — the allowlist is edited in the database by hand, so
+ * it cannot change mid-session, and this gates a nav item that every route
+ * renders.
+ */
+export function useIsFeedbackReviewerQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.feedbackReviewer,
+    queryFn: () => getDataSource().isFeedbackReviewer(),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
+export function useFeedbackSubmissionsQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.feedbackSubmissions,
+    queryFn: () => getDataSource().listFeedbackSubmissions(),
+    enabled,
+  });
+}
+
+export function useDeleteFeedbackSubmissionMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      attachments,
+    }: {
+      id: string;
+      attachments: import('../data/extras').FeedbackAttachment[];
+    }) => getDataSource().deleteFeedbackSubmission(id, attachments),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.feedbackSubmissions });
+    },
   });
 }
 

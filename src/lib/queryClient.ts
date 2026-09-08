@@ -68,6 +68,9 @@ export const queryKeys = {
   teamMessagesUnread: (seasonId: string, sinceMs: number) =>
     ['season', seasonId, 'messages', 'unread', sinceMs] as const,
   referralSummary: ['referral', 'summary'] as const,
+  /** Reviewer allowlist check behind the feedback portal's nav item and route guard. */
+  feedbackReviewer: ['feedback', 'reviewer'] as const,
+  feedbackSubmissions: ['feedback', 'submissions'] as const,
   coachDirectory: ['coachDirectory'] as const,
   athleteShares: (athleteId: string) => ['athleteShares', athleteId] as const,
   sharedAthletes: ['sharedAthletes'] as const,

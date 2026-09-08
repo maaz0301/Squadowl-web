@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
@@ -387,11 +387,14 @@ serve(async (req: Request) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
-  } catch (error: any) {
-    console.error('Edge Function Error:', error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    });
-  }
+  } catch (error: unknown) {
+  const message = error instanceof Error ? error.message : 'Unknown error';
+
+  console.error('Edge Function Error:', message);
+
+  return new Response(JSON.stringify({ error: message }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 400,
+  });
+}
 });

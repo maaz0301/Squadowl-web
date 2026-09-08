@@ -24,7 +24,10 @@ const TABS: TabDef[] = [
     owns: ['player', 'score', 'rinkside', 'team-builder', 'compare', 'roster-library', 'scan-sheet'],
   },
   { slug: 'registrations', label: 'Registrations', assessorHidden: true },
-  { slug: 'results', label: 'Results' },
+  // Results is the scoreboard — every player's overall, rank and the coach's
+  // recommendation. Assessors enter scores; reading the whole field back is
+  // the coach's, so this hides with the rest of the coach-only tabs.
+  { slug: 'results', label: 'Results', assessorHidden: true },
   { slug: 'settings', label: 'Settings', assessorHidden: true },
   { slug: 'export', label: 'Export', assessorHidden: true },
   { slug: 'rubrics', label: 'Rubrics', assessorHidden: true },
@@ -41,7 +44,13 @@ export default function AssessmentLayout({
   const colors = useThemeColors();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const isAssessorOnly = searchParams.get('assessor') === '1';
+  // The query parameter is how the dashboard opens an assessment someone was
+  // invited to assess, but it was also the *only* thing hiding the coach-only
+  // tabs: deleting it from the URL brought Settings — and its Delete button —
+  // back for an assessor. The tryout's own `viewerIsOwner` is now what decides,
+  // with the parameter kept so the tabs are already right on first paint,
+  // before the query resolves.
+  const assessorParam = searchParams.get('assessor') === '1';
 
   const setCurrentTryout = useSessionStore((s) => s.setCurrentTryout);
   useEffect(() => setCurrentTryout(id), [id, setCurrentTryout]);
@@ -52,6 +61,8 @@ export default function AssessmentLayout({
   const tryoutQuery = useTryoutQuery(id);
   const regsQuery = useRegistrationsQuery(id);
   const pendingRegs = (regsQuery.data ?? []).filter((r) => r.status === 'pending').length;
+
+  const isAssessorOnly = assessorParam || tryoutQuery.data?.viewerIsOwner === false;
 
   const segment = pathname.split('/')[3] ?? 'roster';
   const visibleTabs = TABS.filter((t) => !(isAssessorOnly && t.assessorHidden));

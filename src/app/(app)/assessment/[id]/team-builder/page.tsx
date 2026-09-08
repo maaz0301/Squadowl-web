@@ -19,6 +19,7 @@ import {
   useAlert,
 } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
+import { FriendPackagesCard } from '@/components/teamBuilder/FriendPackagesCard';
 import {
   useTryoutQuery,
   useGenerateTeamBuilderMutation,
@@ -529,6 +530,8 @@ export default function TeamBuilderPage() {
               </div>
             ) : null}
           </Card>
+
+          <FriendPackagesCard tryout={tryout} disabled={generate.isPending} />
 
           <Card className="flex flex-col gap-3">
             <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>

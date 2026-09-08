@@ -43,6 +43,7 @@ function makeTryout(overrides: Partial<Tryout> = {}): Tryout {
       customRubrics: [{ key: 'skating', label: 'Skating', scoringType: 'skill', scale: '1-5', rankingDirection: 'higher_is_better', role: 'skater' }],
     },
     archived: false,
+    viewerIsOwner: true,
     ...overrides,
   };
 }
