@@ -1,4 +1,5 @@
 'use client';
+'use no memo';
 
 import { useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';

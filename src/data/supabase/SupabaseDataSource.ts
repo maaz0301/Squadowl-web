@@ -2127,7 +2127,7 @@ export class SupabaseDataSource implements DataSource {
   private async _addManualTeamPlayer(
     teamId: string,
     form: AddPlayerForm,
-    guard: WriteGuard,
+    _guard: WriteGuard,
   ): Promise<{ athleteId: string }> {
     const accountId = await this.writableAccountId();
     let athleteId = form.athleteId;
@@ -4236,7 +4236,7 @@ export class SupabaseDataSource implements DataSource {
   private async _addRegistrationToRoster(
     tryoutId: string,
     registrationId: string,
-    guard: WriteGuard,
+    _guard: WriteGuard,
   ): Promise<Player> {
     const { supabase } = await this.ctx();
     const accountId = await this.writableAccountId();
@@ -4285,7 +4285,7 @@ export class SupabaseDataSource implements DataSource {
   private async _addRegistrationToTeam(
     teamId: string,
     registrationId: string,
-    guard: WriteGuard,
+    _guard: WriteGuard,
   ): Promise<TeamRosterPlayer[]> {
     const { supabase } = await this.ctx();
     const accountId = await this.writableAccountId();

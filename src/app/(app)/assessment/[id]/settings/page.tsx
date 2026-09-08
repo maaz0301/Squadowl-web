@@ -357,7 +357,7 @@ export default function SettingsPage() {
             style={{ borderColor: colors.border }}
           >
             <div className="min-w-0 flex-1">
-              <p className="text-base font-bold break-words" style={{ color: colors.ink }}>
+              <p className="text-base font-bold wrap-break-word" style={{ color: colors.ink }}>
                 {a.name}
               </p>
               {a.email ? (
@@ -406,7 +406,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="flex flex-col items-start gap-2">
-        <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
+        <SectionLabel className="text-(--c-danger)!">Danger Zone</SectionLabel>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           <Button
             label="Archive Evaluation"

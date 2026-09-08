@@ -235,7 +235,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               await logout();
               router.push('/login');
             }}
-            className="flex min-h-[44px] flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors hover:brightness-125"
+            className="flex min-h-11 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors hover:brightness-125"
             style={{ color: colors.inkMuted }}
           >
             <Icon name="logout" size={19} color={colors.inkMuted} />
@@ -255,7 +255,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh" style={{ backgroundColor: colors.bg }}>
       {/* Desktop sidebar */}
       <aside
-        className="sticky top-0 hidden h-dvh w-[248px] shrink-0 flex-col overflow-y-auto border-r p-4 lg:flex"
+        className="sticky top-0 hidden h-dvh w-62 shrink-0 flex-col overflow-y-auto border-r p-4 lg:flex"
         style={{
           backgroundColor: colors.bgSecondary,
           borderColor: colors.border,
