@@ -98,6 +98,7 @@ export default function UpgradePage() {
       setLoadingTier(tier);
       const res = await getDataSource().createCheckoutSession(tier, billingInterval, {
         applyCredits: useCredits,
+        origin: window.location.origin, 
       });
       if (res?.url) {
         // Full-page navigation to Stripe Checkout, not component state — the
