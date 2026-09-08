@@ -33,7 +33,7 @@ import {
   useTryoutQuery,
   useUploadPlayerPhotoMutation,
 } from '@/features/queries';
-import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
+import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
 import { tryoutBulkWriteKey } from '@/lib/queryClient';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
@@ -48,6 +48,8 @@ export default function RosterPage() {
   const router = useRouter();
   const { alert, confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
+  const assessorMode = useAssessorMode();
+  const isAssessorOnly = assessorMode || tryoutQuery.data?.viewerIsOwner === false;
   const addPlayer = useAddPlayerMutation(id!);
   const importPlayers = useImportTryoutPlayersMutation(id!);
   const uploadPhoto = useUploadPlayerPhotoMutation(id!);
@@ -334,7 +336,7 @@ export default function RosterPage() {
                 <span className="flex flex-col items-end gap-1">
                   {evalCount > 0 ? (
                     <Badge label={`${evalCount} eval${evalCount > 1 ? 's' : ''}`} variant="success" />
-                  ) : (
+                  ) : isAssessorOnly ? null : (
                     <Badge label="Unscored" variant="warning" />
                   )}
                   {item.registrationSource === 'qr' ? <Badge label="QR" variant="info" /> : null}
