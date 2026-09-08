@@ -14,7 +14,11 @@ import {
   PageHeader,
   useAlert,
 } from '@/components/ui';
-import { useFeedbackSubmissionsQuery, useIsFeedbackReviewerQuery } from '@/features/queries';
+import {
+  useDeleteFeedbackSubmissionMutation,
+  useFeedbackSubmissionsQuery,
+  useIsFeedbackReviewerQuery,
+} from '@/features/queries';
 import { getDataSource } from '@/data';
 import type { FeedbackAttachment, FeedbackReport } from '@/data/extras';
 
@@ -105,13 +109,15 @@ function StatTile({
  */
 export default function FeedbackReportsPage() {
   const colors = useThemeColors();
-  const { alert } = useAlert();
+  const { alert, confirm, toast } = useAlert();
   const reviewerQuery = useIsFeedbackReviewerQuery();
   const isReviewer = reviewerQuery.data === true;
   const submissionsQuery = useFeedbackSubmissionsQuery(isReviewer);
+  const deleteSubmission = useDeleteFeedbackSubmissionMutation();
 
   const [search, setSearch] = useState('');
   const [openingPath, setOpeningPath] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const reports = useMemo(() => submissionsQuery.data ?? [], [submissionsQuery.data]);
 
@@ -134,6 +140,28 @@ export default function FeedbackReportsPage() {
       await alert('Could not open', e instanceof Error ? e.message : 'That attachment is unavailable.');
     } finally {
       setOpeningPath(null);
+    }
+  };
+
+  const removeSubmission = async (report: FeedbackReport) => {
+    const [first, last] = nameParts(report);
+    const who = report.displayName || report.email || `${first} ${last}`.trim() || 'this submission';
+    const ok = await confirm({
+      title: 'Remove Submission',
+      message: `Are you sure you want to remove ${who}'s feedback? This can't be undone${report.attachments.length > 0 ? ', and its attachments will be deleted too.' : '.'}`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+
+    setRemovingId(report.id);
+    try {
+      await deleteSubmission.mutateAsync({ id: report.id, attachments: report.attachments });
+      toast('Submission removed.', 'success');
+    } catch (e) {
+      await alert('Could Not Remove', e instanceof Error ? e.message : 'Something went wrong.');
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -241,7 +269,16 @@ export default function FeedbackReportsPage() {
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
-                      <Badge label={`${avg.toFixed(1)}/5 avg`} variant={ratingVariant(Math.round(avg))} />
+                      <div className="flex items-center gap-2">
+                        <Badge label={`${avg.toFixed(1)}/5 avg`} variant={ratingVariant(Math.round(avg))} />
+                        <Button
+                          label="Remove"
+                          size="sm"
+                          variant="danger"
+                          loading={removingId === report.id}
+                          onClick={() => removeSubmission(report)}
+                        />
+                      </div>
                       <span className="text-xs" style={{ color: colors.inkFaint }}>
                         {formatDate(report.createdAt)}
                       </span>

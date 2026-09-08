@@ -6528,6 +6528,33 @@ export class SupabaseDataSource implements DataSource {
     return data.signedUrl;
   }
 
+  async deleteFeedbackSubmission(id: string, attachments: FeedbackAttachment[]): Promise<void> {
+    const supabase = getSupabase();
+
+    // `.select('id')` is load-bearing: a DELETE that RLS filters down to zero
+    // rows comes back with no error and no data, so without it a blocked
+    // delete is indistinguishable from a successful one — the caller
+    // invalidates, refetches, and the submission is simply still there with
+    // nothing shown to the user. Same silent-no-op trap as deleteTeamMessage.
+    const rows = unwrap(
+      await supabase.from('feedback_submissions').delete().eq('id', id).select('id'),
+    ) as Row[] | null;
+    if (!rows || rows.length === 0) {
+      throw new Error(
+        'That submission could not be removed. feedback_submissions_delete_reviewer only allows accounts on the feedback_reviewers allowlist.',
+      );
+    }
+
+    if (attachments.length > 0) {
+      const { error } = await supabase.storage
+        .from(FEEDBACK_BUCKET)
+        .remove(attachments.map((a) => a.path));
+      // The submission is already gone — an attachment left behind in the
+      // bucket is orphaned but harmless, so this doesn't fail the removal.
+      if (error) console.warn('Could not remove feedback attachments:', error.message);
+    }
+  }
+
   // ─── Org Members ─────────────────────────────────────────────────────────────
   /**
    * @param includeTeamManagers  Also list the coaches a club has delegated a

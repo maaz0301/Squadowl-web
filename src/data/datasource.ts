@@ -278,6 +278,11 @@ export interface DataSource {
   listFeedbackSubmissions(): Promise<import('./extras').FeedbackReport[]>;
   /** A short-lived signed URL for one attachment in the private bucket. */
   getFeedbackAttachmentUrl(path: string): Promise<string>;
+  /**
+   * Removes a submission from the portal, and any attachments it carried.
+   * RLS restricts the delete to reviewers — see `feedback_submissions_delete_reviewer`.
+   */
+  deleteFeedbackSubmission(id: string, attachments: import('./extras').FeedbackAttachment[]): Promise<void>;
   addSeasonPlayer(seasonId: string, player: Omit<import('./types').SeasonPlayer, 'id'>): Promise<import('./types').SeasonPlayer>;
   deleteSeasonPlayer(seasonId: string, playerId: string): Promise<void>;
   importSeasonPlayersFromTeam(seasonId: string): Promise<import('./types').SeasonPlayer[]>;

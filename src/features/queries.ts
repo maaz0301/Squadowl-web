@@ -2136,6 +2136,22 @@ export function useFeedbackSubmissionsQuery(enabled = true) {
   });
 }
 
+export function useDeleteFeedbackSubmissionMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      attachments,
+    }: {
+      id: string;
+      attachments: import('../data/extras').FeedbackAttachment[];
+    }) => getDataSource().deleteFeedbackSubmission(id, attachments),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.feedbackSubmissions });
+    },
+  });
+}
+
 export function useAddSeasonPlayerMutation() {
   const qc = useQueryClient();
   return useMutation({
