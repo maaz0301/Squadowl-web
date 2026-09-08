@@ -35,6 +35,7 @@ import { isAtAssessmentLimit } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
+import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 
 /**
  * How an invitation is reading right now, from the inviting coach's side.
@@ -110,6 +111,7 @@ export default function SettingsPage() {
   }
 
   const tryout = tryoutQuery.data;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="change or delete this evaluation" />;
   const rubrics = getDefaultRubrics(tryout.sport);
 
   const openEdit = () => {

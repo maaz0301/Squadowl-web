@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Card, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
+import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useTryoutQuery, useShareLinkMutation } from '@/features/queries';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
@@ -28,6 +29,7 @@ export default function ExportPage() {
   }
 
   const tryout = tryoutQuery.data;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="export this evaluation" />;
   const tier = user?.planTier ?? 'free';
   const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
   const allowedFormats = getPlanDefinition(tier).limits.exports;

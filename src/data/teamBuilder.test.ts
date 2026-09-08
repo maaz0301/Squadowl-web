@@ -36,6 +36,7 @@ function makeTryout(roster: Player[], evals: Evaluation[]): Tryout {
       ],
     },
     archived: false,
+    viewerIsOwner: true,
   };
 }
 

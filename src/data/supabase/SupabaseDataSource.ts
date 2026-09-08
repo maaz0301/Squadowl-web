@@ -14,7 +14,7 @@ import {
   isGoaliePosition,
   weightedOverallAcrossEvals,
 } from '../rubrics';
-import type { TeamBuilderConfig, TeamBuilderState } from '../teamBuilder';
+import type { TeamBuilderConfig, TeamBuilderState, FriendPackage } from '../teamBuilder';
 import {
   buildTeams,
   formatExportCsv,
@@ -408,6 +408,15 @@ const REGISTRATION_CHUNK = 20;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
 const GUARDIAN_EMAIL_CONCURRENCY = 20;
 const GUARDIAN_RESOLVE_BATCH = 50;
+
+/**
+ * Marks a tryout row the caller reached as a coach of its *team* rather than
+ * through their own account — CLUB-mode delegation, or a club owner seeing an
+ * assessment a delegate created on their team. Both come back from RPCs, not
+ * from the account_id filter, so the flag is set where they are merged in and
+ * read again in assembleTryouts(); it never touches the database.
+ */
+const VIEWER_MANAGES_TEAM = '__viewerManagesTeam';
 
 /** Private bucket holding feedback screenshots — reachable only via signed URLs. */
 const FEEDBACK_BUCKET = 'feedback-attachments';
@@ -1264,6 +1273,10 @@ export class SupabaseDataSource implements DataSource {
   private async assembleTryouts(tryoutRows: Row[]): Promise<Tryout[]> {
     if (tryoutRows.length === 0) return [];
     const supabase = getSupabase();
+    // Who is asking — every assembled tryout carries `viewerIsOwner`, and the
+    // screens read it to decide whether this caller gets results, settings and
+    // the danger zone or only the scoring flow.
+    const { userId, accountId } = await this.ctx();
     const ids = tryoutRows.map((t) => t.id);
 
     const [pRows, aRows, eRows, rRows] = await Promise.all([
@@ -1332,6 +1345,10 @@ export class SupabaseDataSource implements DataSource {
       // ever queried by the database.
       const { teamBuilder, friendPackages, ...aiAssessments } = ai;
       const roster = (pByT[t.id] ?? []).map((p) => this.rowToPlayer(p, assessorNameById));
+      // The lead assessor is the coach who ran the assessment (createTryout
+      // seeds their own row as 'lead'), so they count as an owner even when
+      // the row sits on another account — a club's, say.
+      const myAssessorRole = (aByT[t.id] ?? []).find((a) => a.user_id === userId)?.role;
       return {
         id: t.id,
         name: t.name,
@@ -1357,6 +1374,8 @@ export class SupabaseDataSource implements DataSource {
           ? { id: t.registration_code, enabled: t.registration_open }
           : undefined,
         archived: t.archived,
+        viewerIsOwner:
+          t.account_id === accountId || t[VIEWER_MANAGES_TEAM] === true || myAssessorRole === 'lead',
         teamBuilder,
         friendPackages,
         aiAssessments: Object.keys(aiAssessments).length ? aiAssessments : undefined,
@@ -1455,6 +1474,13 @@ export class SupabaseDataSource implements DataSource {
       avatarUrl: profile.avatar_url ?? undefined,
       planTier: (account?.plan_tier as UserProfile['planTier']) ?? 'free',
       subscriptionStatus: account?.subscription_status,
+      subscriptionCancelAt: account?.subscription_cancel_at
+        ? toMs(account.subscription_cancel_at as string)
+        : undefined,
+      pendingPlanTier: (account?.pending_plan_tier as UserProfile['planTier']) ?? undefined,
+      pendingPlanChangeAt: account?.pending_plan_change_at
+        ? toMs(account.pending_plan_change_at as string)
+        : undefined,
       extraTeamLicenses: account?.extra_team_licenses ?? 0,
       connectChargesEnabled: !!account?.stripe_connect_charges_enabled,
       connectPayoutsEnabled: !!account?.stripe_connect_payouts_enabled,
@@ -2540,7 +2566,7 @@ export class SupabaseDataSource implements DataSource {
         if (seen.has(t.id)) continue;
         if (t.deleted_at || (!includeArchived && t.archived)) continue;
         seen.add(t.id);
-        extra.push(t);
+        extra.push({ ...t, [VIEWER_MANAGES_TEAM]: true });
       }
     }
     return [...rows, ...extra];
@@ -2688,13 +2714,77 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async getTryout(id: string): Promise<Tryout | null> {
-    const { supabase } = await this.ctx();
+    const { supabase, accountId } = await this.ctx();
     const row = (
       await supabase.from('tryouts').select('*').eq('id', id).is('deleted_at', null).maybeSingle()
     ).data as Row | null;
     if (!row) return null;
-    const [assembled] = await this.assembleTryouts([row]);
+    // One row read straight from the table, so unlike listTryouts() there is no
+    // RPC merge to say whether a caller on another account is this team's coach
+    // or only an invited assessor. Only ask when the account doesn't already
+    // match — for the coach opening their own assessment, the common case, this
+    // costs nothing.
+    const tagged =
+      row.account_id !== accountId && (await this.viewerManagesTryoutTeam(id))
+        ? { ...row, [VIEWER_MANAGES_TEAM]: true }
+        : row;
+    const [assembled] = await this.assembleTryouts([tagged]);
     return assembled ?? null;
+  }
+
+  /**
+   * Whether the caller reaches this assessment as a coach of its team rather
+   * than through their own account: a team delegated to them (CLUB mode), or
+   * their own team that a delegate created the assessment under. These are the
+   * same two RPCs listTryouts() merges, so the coaches it lists keep an owner's
+   * rights here. A pre-migration instance without the functions answers no,
+   * which leaves ownership resting on account_id alone — the old behaviour.
+   */
+  private async viewerManagesTryoutTeam(id: string): Promise<boolean> {
+    const supabase = getSupabase();
+    const [managedRes, ownedTeamRes] = await Promise.all([
+      supabase.rpc('list_tryouts_for_managed_teams'),
+      supabase.rpc('list_tryouts_on_my_owned_teams'),
+    ]);
+    return [managedRes.data, ownedTeamRes.data].some((rows) =>
+      ((rows ?? []) as Row[]).some((t) => t.id === id),
+    );
+  }
+
+  /**
+   * Guards the two actions that take an assessment away from everyone else on
+   * it. Reported by a client coach: signed in on a second account that was only
+   * an assessor on someone else's tryout, they could still delete it — the web
+   * app hides Settings from assessors with a `?assessor=1` query parameter, and
+   * dropping the parameter from the URL brought the whole tab back, Danger Zone
+   * included.
+   *
+   * The real gate is soft_delete_tryout() (see the migration) which re-checks
+   * this server-side; this is the same check in front of it, so an unauthorized
+   * attempt fails with a sentence the coach can read rather than a raw
+   * Postgres error, and so archiving — a plain update, with no RPC of its own —
+   * is covered too.
+   */
+  private async assertCanManageTryout(id: string): Promise<void> {
+    const { supabase, userId, accountId } = await this.ctx();
+    const row = (
+      await supabase.from('tryouts').select('account_id').eq('id', id).maybeSingle()
+    ).data as Row | null;
+    if (row?.account_id === accountId) return;
+
+    const assessor = (
+      await supabase
+        .from('tryout_assessors')
+        .select('role')
+        .eq('tryout_id', id)
+        .eq('user_id', userId)
+        .maybeSingle()
+    ).data as Row | null;
+    if (assessor?.role === 'lead') return;
+
+    if (await this.viewerManagesTryoutTeam(id)) return;
+
+    throw new Error('Only the coach who created this evaluation can archive or delete it.');
   }
 
   async listAssignedTryouts(): Promise<Tryout[]> {
@@ -2891,6 +2981,14 @@ export class SupabaseDataSource implements DataSource {
     unwrap(await supabase.from('tryouts').update({ team_id: teamId }).eq('id', id).select('id').single());
   }
 
+  async setFriendPackages(id: string, packages: FriendPackage[]): Promise<void> {
+    const { supabase } = await this.ctx();
+    const current = (await supabase.from('tryouts').select('ai_assessments').eq('id', id).single())
+      .data?.ai_assessments ?? {};
+    const next = { ...current, friendPackages: packages };
+    unwrap(await supabase.from('tryouts').update({ ai_assessments: next }).eq('id', id).select('id').single());
+  }
+
   /** Reconcile the desired assessor list against the tryout_assessors table. */
   private async syncAssessors(tryoutId: string, desired: Assessor[]): Promise<void> {
     const supabase = getSupabase();
@@ -2943,7 +3041,8 @@ export class SupabaseDataSource implements DataSource {
     if (desired.length > 1) await this.markOnboarding({ inviteAssessors: true });
   }
 
-  archiveTryout(id: string): Promise<Tryout> {
+  async archiveTryout(id: string): Promise<Tryout> {
+    await this.assertCanManageTryout(id);
     return this.updateTryout(id, { archived: true });
   }
 
@@ -2957,6 +3056,19 @@ export class SupabaseDataSource implements DataSource {
     // in the database so it still counts toward a player's permanent history,
     // it just disappears from every coach-facing view (see the deleted_at
     // filters on listTryouts/listAssignedTryouts/getTryout).
+    //
+    // Through the RPC rather than straight at the table: it authorizes the
+    // caller server-side, where an assessor can't get past it by editing a URL
+    // or calling PostgREST directly. See the migration for why the tryouts
+    // policies themselves aren't the place this is fixed from this repo.
+    const { error } = await supabase.rpc('soft_delete_tryout', { p_tryout_id: id });
+    if (!error) return;
+
+    const missingFunction = error.code === 'PGRST202' || error.code === '42883';
+    if (!missingFunction) throw new Error(error.message);
+    console.warn('soft_delete_tryout() not deployed — falling back to a client-authorized update.');
+
+    await this.assertCanManageTryout(id);
     unwrap(
       await supabase
         .from('tryouts')
@@ -7184,51 +7296,27 @@ export class SupabaseDataSource implements DataSource {
   }
 
   private mapGuardianRosterRow(row: Row): import('../types').GuardianRosterAthlete {
+    // Only the event's tombstone reaches a guardian: what it is called, the
+    // sport, and when and where it is. Scores, session results and the
+    // make/release recommendation are the coach's to share — they are dropped
+    // here, at the one place every guardian screen reads its data from, rather
+    // than hidden per screen, so no future page can render them by accident.
+    // The fallback query below no longer asks for them either. get_guardian_rosters()
+    // lives in the backend repo and may still return them in its payload —
+    // dropping them from the function itself is the follow-up there.
     const tryoutsList = ((row.tryout_participants ?? []) as Row[])
       .map((tp) => {
         if (!tp.tryouts) return null;
-
-        const evals = (tp.evaluations ?? []) as Row[];
-        const sessionMap = new Map<string, { result: string; date: number; scores: Record<string, number> }>();
-
-        for (const e of evals) {
-          if (e.recommendation) {
-            const sessionName = e.session || 'Session 1';
-            const t = e.created_at ? new Date(e.created_at).getTime() : 0;
-            const existing = sessionMap.get(sessionName);
-
-            if (!existing || t > existing.date) {
-              const scoresRecord: Record<string, number> = {};
-              if (e.evaluation_scores && Array.isArray(e.evaluation_scores)) {
-                for (const score of e.evaluation_scores as Row[]) {
-                  if (score.rubric_key && typeof score.value === 'number') {
-                    scoresRecord[score.rubric_key] = score.value;
-                  }
-                }
-              }
-
-              sessionMap.set(sessionName, {
-                result: REC_FROM_DB[e.recommendation] || e.recommendation,
-                date: t,
-                scores: scoresRecord,
-              });
-            }
-          }
-        }
-
-        const sessions = Array.from(sessionMap.entries())
-          .map(([name, data]) => ({
-            name,
-            result: data.result,
-            date: data.date,
-            scores: Object.keys(data.scores).length > 0 ? data.scores : undefined,
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
+        const t = tp.tryouts as Row;
         return {
-          ...tp.tryouts,
+          id: t.id,
+          name: t.name,
+          sport: t.sport,
           participantId: tp.id,
-          sessions,
+          date: t.tryout_date ?? undefined,
+          startTime: t.start_time ?? undefined,
+          endTime: t.end_time ?? undefined,
+          location: t.location ?? undefined,
         };
       })
       .filter(Boolean);
@@ -7389,14 +7477,7 @@ export class SupabaseDataSource implements DataSource {
         tryout_participants(
           id,
           tryout_id,
-          tryouts(id, name, sport),
-          evaluations(
-            id,
-            session,
-            recommendation,
-            created_at,
-            evaluation_scores(rubric_key, value)
-          )
+          tryouts(id, name, sport, tryout_date, start_time, end_time, location)
         ),
         season_roster(
           id,

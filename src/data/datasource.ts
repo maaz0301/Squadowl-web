@@ -88,6 +88,11 @@ export interface DataSource {
    * error for a link that actually saved. This is the write on its own.
    */
   setTryoutTeam(id: string, teamId: string | null): Promise<void>;
+  /**
+   * The friendPackages write on its own, for the same reason setTryoutTeam exists:
+   * avoiding a full assessment re-read that could outrun the client timeout.
+   */
+  setFriendPackages(id: string, packages: import('./teamBuilder').FriendPackage[]): Promise<void>;
   archiveTryout(id: string): Promise<Tryout>;
   deleteTryout(id: string): Promise<void>;
 

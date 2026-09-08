@@ -5,9 +5,7 @@ import {
   getPlayerCategories,
   getPlayerSubskills,
   isBinaryScoringType,
-  isGoaliePosition,
   playerDisplayName,
-  weightedOverall,
 } from './rubrics';
 
 /** One rubric column shared by the summary table and a player's eval-history table. */
@@ -21,13 +19,6 @@ export interface ResultsExportColumn {
 
 export interface ResultsSummary {
   infoLines: string[][];
-  headers: string[];
-  rows: (string | number)[][];
-}
-
-export interface PlayerDetailSheet {
-  sheetTitle: string;
-  infoLines: (string | number)[][];
   headers: string[];
   rows: (string | number)[][];
 }
@@ -245,42 +236,6 @@ export function buildResultsSummary(tryout: Tryout): ResultsSummary {
   });
 
   return { infoLines, headers, rows };
-}
-
-/** One eval-history sheet per roster player, ranked highest overall first. */
-export function buildPlayerDetailSheets(tryout: Tryout): PlayerDetailSheet[] {
-  const results = computePlayerResults(tryout).slice().sort((a, b) => b.overall - a.overall);
-  const evalsByPlayer = evalsByPlayerId(tryout);
-
-  return results.map((r, i) => {
-    const player = r.player;
-    const categories = getPlayerCategories(tryout.sport, player.pos, tryout.settings.customRubrics);
-    const weights = isGoaliePosition(player.pos) ? tryout.settings.goalieWeights : tryout.settings.skaterWeights;
-    const playerEvals = evalsByPlayer.get(player.id) ?? [];
-    const columns = playerColumns(tryout, player);
-
-    const infoLines: (string | number)[][] = [
-      ['Player', playerDisplayName(player), 'Jersey', player.jersey ?? '', 'Position', player.pos ?? '', 'Shoots', player.shoots ?? ''],
-      ['Overall Score', r.evalCount ? round2(r.overall) : '', 'Rank', `${i + 1}/${results.length}`, 'Evaluations', r.evalCount],
-      ['Recommendation', r.latestRecommendation],
-      ['Strengths', aggregateNotes(playerEvals, 'strengths')],
-      ['Areas to Improve', aggregateNotes(playerEvals, 'improve')],
-    ];
-
-    const headers = ['Eval #', 'Date', 'Evaluator', 'Session', 'Recommendation', ...columns.map((c) => c.label), 'Overall'];
-
-    const rows = playerEvals.map((e, idx) => [
-      idx + 1,
-      e.date,
-      e.evaluator,
-      e.session,
-      e.recommendation,
-      ...columns.map((c) => formatEvalScore(e.scores?.[c.key], c)),
-      round2(weightedOverall(e.scores ?? {}, categories, weights)),
-    ]);
-
-    return { sheetTitle: playerDisplayName(player), infoLines, headers, rows };
-  });
 }
 
 /** Title + subtitle line for the printed full-results report. */

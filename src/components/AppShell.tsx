@@ -13,6 +13,7 @@ import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
 import { useIsFeedbackReviewerQuery } from '@/features/queries';
 import { prefetchRoute } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
+import { SubscriptionEndingBanner } from '@/components/SubscriptionEndingBanner';
 import { canUseFeature } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 
@@ -340,6 +341,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={cn('app-main w-full flex-1 px-4 py-6 sm:px-6 lg:px-8')}
           style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
         >
+          <SubscriptionEndingBanner />
           {children}
         </main>
       </div>

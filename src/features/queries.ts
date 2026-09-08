@@ -526,6 +526,22 @@ export function useSetTryoutTeamMutation() {
   });
 }
 
+export function useSetFriendPackagesMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, packages }: { id: string; packages: import('@/data/teamBuilder').FriendPackage[] }) =>
+      withTimeout(getDataSource().setFriendPackages(id, packages), 15000),
+    onSuccess: (_result, { id, packages }) => {
+      qc.setQueryData<Tryout | undefined>(queryKeys.tryout(id), (old) => {
+        if (!old) return old;
+        return { ...old, friendPackages: packages };
+      });
+      void qc.invalidateQueries({ queryKey: queryKeys.tryout(id) });
+      void qc.invalidateQueries({ queryKey: ALL_TRYOUT_LISTS });
+    },
+  });
+}
+
 /**
  * Applies `update` to every cached tryout *list* under a key prefix, leaving
  * non-list entries under the same prefix (the ['tryouts','count'] number)

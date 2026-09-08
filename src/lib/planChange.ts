@@ -17,7 +17,7 @@ export function planChangeDirection(from: PlanTier, to: PlanTier): PlanChangeDir
 }
 
 /**
- * How a downgrade is carried out.
+ * How a plan change is carried out.
  *
  * `portal` — the Stripe Customer Portal, which is the only safe route while a
  * subscription is live: the plan swap has to replace the existing subscription
@@ -25,7 +25,7 @@ export function planChangeDirection(from: PlanTier, to: PlanTier): PlanChangeDir
  * Checkout would leave the account paying for two. Cancelling down to Free is
  * the same story.
  *
- * `checkout` — an ordinary Checkout for the lower tier, used when there is no
+ * `checkout` — an ordinary Checkout for the target tier, used when there is no
  * live subscription to replace (a lapsed or cancelled account whose profile
  * still carries the old tier). There is nothing for the portal to manage there.
  */
@@ -36,7 +36,21 @@ export function hasLiveSubscription(subscriptionStatus: string | undefined): boo
   return subscriptionStatus === 'active' || subscriptionStatus === 'trialing';
 }
 
-export function downgradeRoute(
+/**
+ * The route for a switch *down* to `target` — a lower tier, or Free.
+ *
+ * Upgrades deliberately do not consult this. They always go through Checkout,
+ * because they are billed in full for a fresh year rather than prorated, and
+ * the portal's switch flow can only ever charge the prorated difference. The
+ * superseded subscription is cancelled by stripe-webhook once that checkout
+ * completes, which is what keeps "Checkout always creates a new subscription"
+ * from meaning "the account now pays for two".
+ *
+ * A downgrade has no such constraint: it changes nothing today, so the portal
+ * (where Stripe schedules it for the end of the paid term) is the right home
+ * for it whenever there is a live subscription to schedule against.
+ */
+export function planChangeRoute(
   target: PlanTier,
   subscriptionStatus: string | undefined,
 ): PlanChangeRoute {

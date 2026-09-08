@@ -80,16 +80,20 @@ export default function PlayerProfilePage() {
         <Row label="Medical" value={profile.medicalInfo} colors={colors} />
       </Card>
 
-      {/* Guardians can view development history/trends, but export stays
-          coach-only by product requirement — exportFileName is simply omitted
-          for guardians, which hides the Export button (see AssessmentHistory).
+      {/* Assessment history is scores: the season-over-season averages, the
+          trend and every evaluation's overall. It belongs to the coach who ran
+          the assessments, so guardians get the profile without it rather than a
+          read-only copy of it — they see the event's date, time and location in
+          their own portal, and their athlete's results from the coach directly.
           Rows are non-interactive for everyone here — this profile is a
           read-only summary, not an entry point into the scoring flow. */}
-      <AssessmentHistory
-        assessments={profile.assessments}
-        colors={colors}
-        exportFileName={isGuardian ? undefined : slugify(profile.first, profile.last)}
-      />
+      {isGuardian ? null : (
+        <AssessmentHistory
+          assessments={profile.assessments}
+          colors={colors}
+          exportFileName={slugify(profile.first, profile.last)}
+        />
+      )}
     </>
   );
 }

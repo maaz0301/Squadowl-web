@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Badge, Button, Card, Checkbox, Input, Modal, ModalFooter, useAlert } from '@/components/ui';
-import { useUpdateTryoutMutation } from '@/features/queries';
+import { useSetFriendPackagesMutation } from '@/features/queries';
 import { generateId, playerDisplayName } from '@/data/rubrics';
 import type { FriendPackage } from '@/data/teamBuilder';
 import type { Player, Tryout } from '@/data/types';
@@ -37,7 +37,7 @@ interface Props {
 export function FriendPackagesCard({ tryout, disabled }: Props) {
   const colors = useThemeColors();
   const { confirm, alert } = useAlert();
-  const updateTryout = useUpdateTryoutMutation();
+  const setFriendPackages = useSetFriendPackagesMutation();
 
   const [editing, setEditing] = useState<FriendPackage | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -78,7 +78,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
   }, [sortedRoster, search]);
 
   const save = async (next: FriendPackage[]) => {
-    await updateTryout.mutateAsync({ id: tryout.id, updates: { friendPackages: next } });
+    await setFriendPackages.mutateAsync({ id: tryout.id, packages: next });
   };
 
   const openNew = () => {
@@ -280,7 +280,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
         footer={
           <ModalFooter>
             <Button label="Cancel" variant="ghost" onClick={() => setEditing(null)} />
-            <Button label="Save Package" onClick={handleSave} loading={updateTryout.isPending} />
+            <Button label="Save Package" onClick={handleSave} loading={setFriendPackages.isPending} />
           </ModalFooter>
         }
       >

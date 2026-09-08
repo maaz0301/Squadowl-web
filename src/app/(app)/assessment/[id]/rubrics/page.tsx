@@ -16,6 +16,7 @@ import {
 } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
+import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useTryoutQuery, useUpdateTryoutMutation } from '@/features/queries';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -69,6 +70,7 @@ export default function RubricsPage() {
   }
 
   const tryout = tryoutQuery.data;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="change this evaluation’s rubrics" />;
   const custom = tryout.settings.customRubrics ?? [];
   const existingCategories = Array.from(new Set(custom.map((r) => r.category).filter((c): c is string => !!c)));
   const plan = getPlanDefinition(tier);
