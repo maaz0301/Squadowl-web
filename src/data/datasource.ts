@@ -183,6 +183,13 @@ export interface DataSource {
   sendTeamAnnouncement(seasonId: string, title: string, message: string): Promise<void>;
   setEventAvailability(seasonId: string, eventId: string, playerId: string, response: 'yes' | 'maybe' | 'no'): Promise<void>;
   getAthleteHistory(athleteId: string): Promise<AthleteHistory>;
+  /**
+   * Highest session number each player in an assessment has already been
+   * scored under, keyed by player id. For assessors, whose read of the
+   * assessment's evaluations comes back empty — it carries the numbering they
+   * need to continue at the right session without exposing anyone's scores.
+   */
+  getSessionProgress(tryoutId: string): Promise<Record<string, number>>;
   listAthletes(): Promise<Athlete[]>;
   getPlayerProfile(athleteId: string): Promise<import('./types').PlayerProfile>;
 

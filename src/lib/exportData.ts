@@ -211,17 +211,6 @@ export async function exportTryoutData(tryout: Tryout, format: ExportFormat): Pr
 
     const wb = XLSX.utils.book_new();
 
-    // Sheet 1: the ranked summary table — one row per player, one column per
-    // rubric — for sorting and filtering the whole roster at a glance.
-    const summary = buildResultsSummary(tryout);
-    const summarySheet = XLSX.utils.aoa_to_sheet([
-      ...summary.infoLines,
-      [],
-      summary.headers,
-      ...summary.rows,
-    ]);
-    XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
-
     // Sheet 2: the same portrait, block-per-player layout as the CSV.
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     sheet['!cols'] = fullResultsColumnWidths(rows);

@@ -5915,6 +5915,27 @@ export class SupabaseDataSource implements DataSource {
     });
   }
 
+  async getSessionProgress(tryoutId: string): Promise<Record<string, number>> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.rpc('get_session_progress_for_tryout', {
+      p_tryout_id: tryoutId,
+    });
+    if (error) {
+      // An instance that hasn't deployed the function yet keeps the old
+      // behaviour — numbering off whatever evaluations the caller can read —
+      // rather than failing the scoring screen outright.
+      console.log('get_session_progress_for_tryout unavailable:', error.message);
+      return {};
+    }
+    const progress: Record<string, number> = {};
+    for (const row of (data as Row[]) ?? []) {
+      if (row.participant_id != null && row.max_session != null) {
+        progress[row.participant_id as string] = Number(row.max_session);
+      }
+    }
+    return progress;
+  }
+
   async getAthleteHistory(athleteId: string): Promise<AthleteHistory> {
     const { supabase } = await this.ctx();
 
@@ -6327,11 +6348,16 @@ export class SupabaseDataSource implements DataSource {
   async createCheckoutSession(
     planTier: string,
     interval: 'year' | 'month',
-    options?: { applyCredits?: boolean },
+    options?: { applyCredits?: boolean; origin?: string },
   ): Promise<{ url: string }> {
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-      body: { planTier, interval, origin: webOrigin(), applyCredits: options?.applyCredits === true }
+      body: {
+        planTier,
+        interval,
+        origin: options?.origin ?? webOrigin(),
+        applyCredits: options?.applyCredits === true,
+      },
     });
     if (error) {
       let detail = '';

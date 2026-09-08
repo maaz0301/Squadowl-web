@@ -30,7 +30,7 @@ import {
   useCreateAndInviteMemberMutation,
   useUploadPlayerPhotoMutation,
 } from '@/features/queries';
-import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
+import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
 import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition } from '@/data/rubrics';
 import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
 import { PlanGate } from '@/components/PlanGate';
@@ -42,6 +42,7 @@ const AI_LOADING_TEXTS = ['Gathering data...', 'Ranking evaluations...', 'Analyz
 export default function PlayerHubPage() {
   const id = useAssessmentId();
   const href = useAssessmentHref();
+  const assessorParam = useAssessorMode();
   const params = useParams();
   const playerId = Array.isArray(params?.playerId) ? params.playerId[0] : (params?.playerId as string);
   const colors = useThemeColors();
@@ -101,6 +102,7 @@ export default function PlayerHubPage() {
   if (!player) return <EmptyState title="Player not found" />;
 
   const tryout = tryoutQuery.data;
+  const isAssessorOnly = assessorParam || tryout.viewerIsOwner === false;
   const evals = tryout.evals.filter((e) => e.playerId === playerId).sort((a, b) => b.createdAt - a.createdAt);
   const heuristic = mockAiPlayerSummary(tryout, playerId);
   const deepDive = tryout.aiAssessments?.[playerId];
@@ -391,18 +393,23 @@ export default function PlayerHubPage() {
             </PlanGate>
           </Card>
 
-          <Card className="flex flex-col items-start gap-2">
-            <p className="font-display font-bold" style={{ color: colors.ink }}>Player Profile</p>
-            <p className="text-sm" style={{ color: colors.inkMuted }}>
-              View full evaluation history, score trends, and season-over-season comparison.
-            </p>
-            <Button
-              label="View Full Profile"
-              variant="secondary"
-              disabled={!player.athleteId}
-              onClick={() => router.push(`/player/${player.athleteId}`)}
-            />
-          </Card>
+          {/* The profile is season-over-season history, which an assessor
+              scores without — they only ever see the assessment in front of
+              them. */}
+          {isAssessorOnly ? null : (
+            <Card className="flex flex-col items-start gap-2">
+              <p className="font-display font-bold" style={{ color: colors.ink }}>Player Profile</p>
+              <p className="text-sm" style={{ color: colors.inkMuted }}>
+                View full evaluation history, score trends, and season-over-season comparison.
+              </p>
+              <Button
+                label="View Full Profile"
+                variant="secondary"
+                disabled={!player.athleteId}
+                onClick={() => router.push(`/player/${player.athleteId}`)}
+              />
+            </Card>
+          )}
 
           <div>
             <SectionLabel className="mb-3">Evaluations ({evals.length})</SectionLabel>

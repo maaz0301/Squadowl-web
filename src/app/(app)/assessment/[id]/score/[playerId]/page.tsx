@@ -26,7 +26,7 @@ import {
   weightedOverall,
 } from '@/data/rubrics';
 import { RECOMMENDATIONS, ScoreFormSchema, type ScoreForm } from '@/data/types';
-import { useSaveEvaluationMutation, useTryoutQuery } from '@/features/queries';
+import { useSaveEvaluationMutation, useSessionProgressQuery, useTryoutQuery } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -85,6 +85,24 @@ export default function ScorePage() {
     [tryoutQuery.data?.evals, playerId],
   );
 
+  // Same resolution as the layout's tab-hiding: the URL parameter so the first
+  // paint is already right, `viewerIsOwner` so stripping it doesn't undo this.
+  const isAssessorOnly = assessorMode || tryoutQuery.data?.viewerIsOwner === false;
+  // An assessor reads back none of this assessment's evaluations, so
+  // `scoredSessions` is empty for them and every player looked untouched from
+  // Session 1 — next to the coach's Sessions 1-5. The server answers with the
+  // numbering alone, no scores.
+  const sessionProgress = useSessionProgressQuery(id, isAssessorOnly).data;
+  const serverHighestSession = sessionProgress?.[playerId || ''] ?? 0;
+
+  const isServerScored = useCallback(
+    (s: string) => {
+      const num = Number(s.match(/^Session (\d+)$/)?.[1]);
+      return Number.isFinite(num) && num <= serverHighestSession;
+    },
+    [serverHighestSession],
+  );
+
   const baseHighestSessionNum = useMemo(
     () =>
       (tryoutQuery.data?.evals || []).reduce((max, ev) => {
@@ -93,8 +111,8 @@ export default function ScorePage() {
         if (!hasScores) return max;
         const match = ev.session.match(/^Session (\d+)$/);
         return match ? Math.max(max, parseInt(match[1], 10)) : max;
-      }, 0),
-    [tryoutQuery.data?.evals],
+      }, serverHighestSession),
+    [tryoutQuery.data?.evals, serverHighestSession],
   );
 
   const highestSessionNum = useMemo(() => {
@@ -118,7 +136,13 @@ export default function ScorePage() {
 
   const nextSession =
     existingEval?.session ??
-    SESSIONS.find((s) => !completedSessionsForPlayer.includes(s) && !scoredSessions.has(s) && s !== 'Extra View') ??
+    SESSIONS.find(
+      (s) =>
+        !completedSessionsForPlayer.includes(s) &&
+        !scoredSessions.has(s) &&
+        !isServerScored(s) &&
+        s !== 'Extra View',
+    ) ??
     'Session 1';
   const currentSession = routeSession ?? nextSession;
 
@@ -311,7 +335,7 @@ export default function ScorePage() {
 
   const overall = weightedOverall(scores ?? {}, categories, weights);
   const isEditing = !!evalId;
-  const firstUnscoredIdx = SESSIONS.findIndex((s) => !scoredSessions.has(s));
+  const firstUnscoredIdx = SESSIONS.findIndex((s) => !scoredSessions.has(s) && !isServerScored(s));
 
   const onSubmit = handleSubmit(async (data) => {
     try {
@@ -396,7 +420,12 @@ export default function ScorePage() {
       <div className="no-scrollbar mb-5 flex gap-2 overflow-x-auto pb-1">
         {SESSIONS.map((s, idx) => {
           const isScored = scoredSessions.has(s);
-          const disabled = !isScored && firstUnscoredIdx !== -1 && idx > firstUnscoredIdx;
+          // A session the server counts but this viewer can't read is an
+          // assessor looking at the coach's work: opening it would start a
+          // second evaluation beside one they never see.
+          const disabled =
+            (isServerScored(s) && !isScored) ||
+            (!isScored && firstUnscoredIdx !== -1 && idx > firstUnscoredIdx);
           return (
             <Chip
               key={s}

@@ -35,7 +35,7 @@ function slugify(...parts: (string | undefined)[]): string {
 export default function PlayerProfilePage() {
   const { athleteId } = useParams<{ athleteId: string }>();
   const colors = useThemeColors();
-  const { isGuardian } = usePermissions();
+  const { isGuardian, role } = usePermissions();
 
   const profileQuery = usePlayerProfileQuery(athleteId);
   const profile = profileQuery.data;
@@ -86,8 +86,10 @@ export default function PlayerProfilePage() {
           read-only copy of it — they see the event's date, time and location in
           their own portal, and their athlete's results from the coach directly.
           Rows are non-interactive for everyone here — this profile is a
-          read-only summary, not an entry point into the scoring flow. */}
-      {isGuardian ? null : (
+          read-only summary, not an entry point into the scoring flow.
+          Assessors are excluded for the same reason: they score the assessment
+          in front of them, and previous seasons are not theirs to read. */}
+      {isGuardian || role === 'assessor' ? null : (
         <AssessmentHistory
           assessments={profile.assessments}
           colors={colors}

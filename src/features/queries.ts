@@ -1600,6 +1600,14 @@ export function useSetAvailabilityMutation(seasonId: string) {
   });
 }
 
+export function useSessionProgressQuery(tryoutId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['sessionProgress', tryoutId],
+    queryFn: () => getDataSource().getSessionProgress(tryoutId!),
+    enabled: !!tryoutId && enabled,
+  });
+}
+
 export function useAthleteHistoryQuery(athleteId?: string) {
   return useQuery({
     queryKey: ['athleteHistory', athleteId],
