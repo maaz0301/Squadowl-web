@@ -385,7 +385,7 @@ export default function FeedbackPage() {
           </div>
 
           <div className="pt-2">
-            <Button label="Submit Feedback" loading={submit.isPending} disabled={uploading} />
+            <Button type="submit" label="Submit Feedback" loading={submit.isPending} disabled={uploading} />
           </div>
         </form>
       </Card>
