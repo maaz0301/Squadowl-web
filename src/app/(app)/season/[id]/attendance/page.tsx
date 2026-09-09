@@ -3,18 +3,30 @@
 import { useMemo } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Card, EmptyState, ErrorState, LoadingState } from '@/components/ui';
-import { useSeasonQuery } from '@/features/queries';
+import { useGuardianRostersQuery, useSeasonQuery } from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
+import { usePermissions } from '@/state/authStore';
 
 export default function SeasonAttendancePage() {
   const id = useSeasonId();
   const colors = useThemeColors();
   const seasonQuery = useSeasonQuery(id);
+  const { isGuardian } = usePermissions();
+  // Same scoping as the Availability tab: a guardian sees only their own
+  // linked athlete(s), never the whole roster's attendance.
+  const guardianRostersQuery = useGuardianRostersQuery(isGuardian);
+  const myAthleteIds = useMemo(
+    () => new Set((guardianRostersQuery.data ?? []).map((a) => a.id)),
+    [guardianRostersQuery.data],
+  );
 
   const stats = useMemo(() => {
     const season = seasonQuery.data;
     if (!season) return [];
-    return season.roster.map((player) => {
+    const roster = isGuardian
+      ? season.roster.filter((p) => p.athleteId && myAthleteIds.has(p.athleteId))
+      : season.roster;
+    return roster.map((player) => {
       let yes = 0;
       let maybe = 0;
       let no = 0;
@@ -30,9 +42,11 @@ export default function SeasonAttendancePage() {
       const rate = Math.round((yes / total) * 100);
       return { player, yes, maybe, no, pending, rate };
     });
-  }, [seasonQuery.data]);
+  }, [seasonQuery.data, isGuardian, myAthleteIds]);
 
-  if (seasonQuery.isLoading) return <LoadingState message="Loading attendance..." />;
+  if (seasonQuery.isLoading || (isGuardian && guardianRostersQuery.isLoading)) {
+    return <LoadingState message="Loading attendance..." />;
+  }
   if (seasonQuery.isError || !seasonQuery.data) {
     return <ErrorState message="Could not load attendance." onRetry={() => seasonQuery.refetch()} />;
   }
@@ -57,7 +71,14 @@ export default function SeasonAttendancePage() {
       </Card>
 
       {stats.length === 0 ? (
-        <EmptyState title="No roster" message="Add players to track attendance." />
+        <EmptyState
+          title={isGuardian ? 'No linked athlete here' : 'No roster'}
+          message={
+            isGuardian
+              ? "We couldn't find one of your athletes on this team's roster."
+              : 'Add players to track attendance.'
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {stats.map((item) => (

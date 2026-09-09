@@ -27,14 +27,13 @@ import {
 } from '@/data/rubrics';
 import { RECOMMENDATIONS, ScoreFormSchema, type ScoreForm } from '@/data/types';
 import { useSaveEvaluationMutation, useSessionProgressQuery, useTryoutQuery } from '@/features/queries';
-import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
+import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
 export default function ScorePage() {
   const id = useAssessmentId();
   const href = useAssessmentHref();
-  const assessorMode = useAssessorMode();
   const routeParams = useParams();
   const playerId = Array.isArray(routeParams?.playerId)
     ? routeParams.playerId[0]
@@ -48,6 +47,11 @@ export default function ScorePage() {
   const { alert } = useAlert();
   const [saving, setSaving] = useState(false);
   const tryoutQuery = useTryoutQuery(id);
+  // Same resolution as the layout's tab-hiding — see useIsAssessorOnly. Read
+  // here rather than beside its first use below so setParams can keep the URL
+  // honest too: a viewer this doesn't apply to sheds the parameter on the next
+  // rewrite instead of carrying it around inertly.
+  const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   const saveEval = useSaveEvaluationMutation(id!);
   const workingScores = useSessionStore((s) => s.workingScores);
   const setWorkingScores = useSessionStore((s) => s.setWorkingScores);
@@ -68,10 +72,11 @@ export default function ScorePage() {
         else params.delete('evalId');
       }
       if (next.session) params.set('session', next.session);
-      if (assessorMode) params.set('assessor', '1');
+      if (isAssessorOnly) params.set('assessor', '1');
+      else params.delete('assessor');
       router.replace(`/assessment/${id}/score/${playerId}?${params.toString()}`, { scroll: false });
     },
-    [search, router, id, playerId, assessorMode],
+    [search, router, id, playerId, isAssessorOnly],
   );
 
   const player = tryoutQuery.data?.roster.find((p) => p.id === playerId);
@@ -85,9 +90,6 @@ export default function ScorePage() {
     [tryoutQuery.data?.evals, playerId],
   );
 
-  // Same resolution as the layout's tab-hiding: the URL parameter so the first
-  // paint is already right, `viewerIsOwner` so stripping it doesn't undo this.
-  const isAssessorOnly = assessorMode || tryoutQuery.data?.viewerIsOwner === false;
   // An assessor reads back none of this assessment's evaluations, so
   // `scoredSessions` is empty for them and every player looked untouched from
   // Session 1 — next to the coach's Sessions 1-5. The server answers with the

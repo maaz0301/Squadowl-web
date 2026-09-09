@@ -75,10 +75,16 @@ export function getDefaultWeights(_sport: Sport): {
   return { skater: {}, goalie: {} };
 }
 
+/**
+ * Sport-specific goalie codes ('G' for Hockey/Ringette/Lacrosse, 'GK' for
+ * Soccer) alongside the legacy 'GTL' — see POSITION_OPTIONS_BY_SPORT.
+ */
+const GOALIE_CODES = new Set(['GTL', 'G', 'GK']);
+
 export function isGoaliePosition(pos?: string): boolean {
   if (!pos) return false;
   const p = pos.toUpperCase();
-  return p === 'GTL' || p.includes('GOAL');
+  return GOALIE_CODES.has(p) || p.includes('GOAL');
 }
 
 export function compareSubskillScores(

@@ -268,7 +268,7 @@ export interface DataSource {
   removeTeamManager(managerId: string): Promise<void>;
 
   // Extended UI operations
-  sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: Record<string, unknown>): Promise<void>;
+  sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation' | 'tryout_letter', to: string, payload: Record<string, unknown>): Promise<void>;
   copyTryout(id: string): Promise<Tryout>;
   restoreTryout(id: string): Promise<Tryout>;
   importLibraryPlayers(tryoutId: string, entries: { first: string; last: string; jersey?: string; pos?: string }[]): Promise<Player[]>;
@@ -381,6 +381,59 @@ export interface DataSource {
     contact: { name: string; relationship?: string; email?: string; phone?: string },
   ): Promise<import('./types').FamilyContact>;
   removeFamilyContact(id: string): Promise<void>;
+
+  // Player selection letters — the offer / roster-decision letters a coach
+  // sends when a tryout is decided. Templates are account-wide and reusable;
+  // a sent letter is snapshotted onto the player it went to. See letters.ts
+  // for the placeholder model and the tryout_letters migration for access.
+  listLetterTemplates(): Promise<import('./types').LetterTemplate[]>;
+  createLetterTemplate(input: {
+    name: string;
+    kind: import('./letters').LetterKind;
+    subject: string;
+    body: string;
+    tryoutId?: string;
+  }): Promise<import('./types').LetterTemplate>;
+  updateLetterTemplate(
+    id: string,
+    updates: Partial<{ name: string; kind: import('./letters').LetterKind; subject: string; body: string }>,
+  ): Promise<import('./types').LetterTemplate>;
+  deleteLetterTemplate(id: string): Promise<void>;
+
+  /** Every letter sent from this assessment, newest first — the send screen's history. */
+  listPlayerLetters(tryoutId: string): Promise<import('./types').PlayerLetter[]>;
+  /**
+   * Render a template for each selected player, email it, and attach the copy
+   * to their card.
+   *
+   * Players are independent, like importTryoutPlayers(): one player with no
+   * address on file (or a bounced send) is reported in the result, not thrown,
+   * so a 40-player send doesn't abort on the first bad row. The copy is stored
+   * either way — a failed letter is a draft the coach can fix and retry.
+   */
+  sendPlayerLetters(
+    tryoutId: string,
+    letters: {
+      playerId: string;
+      /** Echoed back on the result, so a partial-failure report can name people. */
+      playerName: string;
+      athleteId?: string;
+      templateId?: string;
+      kind: import('./letters').LetterKind;
+      subject: string;
+      body: string;
+      recipientEmail?: string;
+    }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<import('./types').PlayerLetterSendResult[]>;
+  /** Edit a stored copy without sending it — the coach fixing a typo before a re-send. */
+  updatePlayerLetter(
+    id: string,
+    updates: Partial<{ subject: string; body: string; recipientEmail: string }>,
+  ): Promise<import('./types').PlayerLetter>;
+  /** Re-send a stored letter as it currently reads, updating its copy in place. */
+  resendPlayerLetter(id: string): Promise<import('./types').PlayerLetter>;
+  deletePlayerLetter(id: string): Promise<void>;
 
   // Testing utilities (association/enterprise): bulk-generate dummy registrations
   // and/or scored roster players, stand up whole dummy teams, and clear either

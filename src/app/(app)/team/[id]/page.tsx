@@ -67,7 +67,7 @@ import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 import { TeamBanner } from '@/components/TeamBanner';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
-import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
+import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { getDataSource } from '@/data';
 
@@ -151,7 +151,7 @@ export default function TeamDetailPage() {
   const [attachingId, setAttachingId] = useState<string | null>(null);
   const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
-  const { canManageTeam } = usePermissions();
+  const { canManageTeam, canAssess } = usePermissions();
   const qc = useQueryClient();
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -248,13 +248,32 @@ export default function TeamDetailPage() {
    * `emails` is what the form's Invite toggles marked; without it every address
    * the player has on file is mailed.
    */
-  const addAndInviteManualPlayer = async (data: AddPlayerFormValues, emails?: string[]) => {
+  const addAndInviteManualPlayer = async (
+    data: AddPlayerFormValues,
+    emails?: string[],
+    extraFamilyContacts?: ExtraFamilyContact[],
+  ) => {
     let athleteId: string;
     try {
       athleteId = await saveManualPlayer(data);
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Could not add this player.');
       return;
+    }
+    const contacts = (extraFamilyContacts ?? []).filter((c) => c.name.trim() || c.email.trim());
+    if (athleteId && contacts.length > 0) {
+      try {
+        await Promise.all(
+          contacts.map((c) =>
+            getDataSource().addFamilyContact(athleteId, { name: c.name || c.email, email: c.email || undefined }),
+          ),
+        );
+      } catch (e) {
+        await alert(
+          'Family Members Not Saved',
+          `The player was saved, but the additional family members couldn't be added: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        );
+      }
     }
     // The player is on the roster from here on, whatever the invite does — so
     // the form closes first and the send reports itself on top of the roster.
@@ -274,8 +293,11 @@ export default function TeamDetailPage() {
     }
   };
 
-  const submitManualPlayer = (data: AddPlayerFormValues, inviteEmails?: string[]) =>
-    addAndInviteManualPlayer(data, inviteEmails);
+  const submitManualPlayer = (
+    data: AddPlayerFormValues,
+    inviteEmails?: string[],
+    extraFamilyContacts?: ExtraFamilyContact[],
+  ) => addAndInviteManualPlayer(data, inviteEmails, extraFamilyContacts);
 
   // Events live on the season attached to this team, but that's an implementation
   // detail — the team screen is the only place a coach touches them.
@@ -1451,6 +1473,7 @@ export default function TeamDetailPage() {
           loading={addManualPlayer.isPending || uploadTeamPlayerPhoto.isPending || sendInvites.isPending}
           onSubmit={submitManualPlayer}
           showInvite
+          showFamilyContacts={canEditTeam || canAssess}
           submitLabel="Save Player & Send Invite"
         />
       </Modal>

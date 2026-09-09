@@ -30,7 +30,7 @@ import {
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { movePlayerToTeam, type TeamBuilderState, type TeamBuilderTeam } from '@/data/teamBuilder';
 import { computePlayerResults } from '@/data/scoring';
-import { getScoreHeatLevel, playerDisplayName } from '@/data/rubrics';
+import { getScoreHeatLevel, isGoaliePosition, playerDisplayName } from '@/data/rubrics';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 
@@ -43,7 +43,13 @@ const UNASSIGNED = 'unassigned';
 const MAX_TEAM_COLUMNS = 10;
 
 /** Position tints, matched to the ring colours Avatar already uses. */
-const POS_TINTS: Record<string, string> = { FWD: '#ff6b2b', DEF: '#6366f1', GTL: '#f59e0b' };
+const POS_TINTS: Record<string, string> = {
+  FWD: '#ff6b2b',
+  DEF: '#6366f1',
+  GTL: '#f59e0b',
+  G: '#f59e0b',
+  GK: '#f59e0b',
+};
 
 function posTint(pos: string) {
   return POS_TINTS[pos.toUpperCase()] ?? '#8fa3c8';
@@ -275,7 +281,7 @@ export default function TeamBuilderPage() {
 
   const movePlayer = (playerId: string, from: string, to: string) => {
     if (from === to || !editedTeamBuilder) return;
-    const isGoalie = playerById.get(playerId)?.pos?.toUpperCase() === 'GTL';
+    const isGoalie = isGoaliePosition(playerById.get(playerId)?.pos);
     const next = movePlayerToTeam(editedTeamBuilder, playerId, to === UNASSIGNED ? null : to, isGoalie);
     setUndoStack((stack) =>
       [...stack, { teams: effectiveTeams, unassigned: effectiveUnassigned }].slice(-MAX_HISTORY),

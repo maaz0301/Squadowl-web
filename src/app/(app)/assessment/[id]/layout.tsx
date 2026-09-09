@@ -2,11 +2,12 @@
 
 import { use, useEffect, type ReactNode } from 'react';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge } from '@/components/ui';
 import { useRegistrationsQuery, useTryoutQuery, useTryoutRealtimeSync } from '@/features/queries';
+import { useIsAssessorOnly } from '@/features/useAssessmentId';
 import { useSessionStore } from '@/state/sessionStore';
 
 interface TabDef {
@@ -21,7 +22,7 @@ const TABS: TabDef[] = [
   {
     slug: 'roster',
     label: 'Roster',
-    owns: ['player', 'score', 'rinkside', 'team-builder', 'compare', 'roster-library', 'scan-sheet'],
+    owns: ['player', 'score', 'rinkside', 'team-builder', 'compare', 'roster-library', 'scan-sheet', 'letters'],
   },
   { slug: 'registrations', label: 'Registrations', assessorHidden: true },
   // Results is the scoreboard — every player's overall, rank and the coach's
@@ -43,14 +44,6 @@ export default function AssessmentLayout({
   const { id } = use(params);
   const colors = useThemeColors();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  // The query parameter is how the dashboard opens an assessment someone was
-  // invited to assess, but it was also the *only* thing hiding the coach-only
-  // tabs: deleting it from the URL brought Settings — and its Delete button —
-  // back for an assessor. The tryout's own `viewerIsOwner` is now what decides,
-  // with the parameter kept so the tabs are already right on first paint,
-  // before the query resolves.
-  const assessorParam = searchParams.get('assessor') === '1';
 
   const setCurrentTryout = useSessionStore((s) => s.setCurrentTryout);
   useEffect(() => setCurrentTryout(id), [id, setCurrentTryout]);
@@ -62,7 +55,11 @@ export default function AssessmentLayout({
   const regsQuery = useRegistrationsQuery(id);
   const pendingRegs = (regsQuery.data ?? []).filter((r) => r.status === 'pending').length;
 
-  const isAssessorOnly = assessorParam || tryoutQuery.data?.viewerIsOwner === false;
+  // See useIsAssessorOnly: the tryout's own `viewerIsOwner` decides, so
+  // deleting `?assessor=1` from the URL can't bring Settings — and its Delete
+  // button — back for an assessor, and carrying it can't take them away from
+  // an owner. The parameter only dresses the first paint.
+  const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
 
   const segment = pathname.split('/')[3] ?? 'roster';
   const visibleTabs = TABS.filter((t) => !(isAssessorOnly && t.assessorHidden));
@@ -90,11 +87,26 @@ export default function AssessmentLayout({
           {tryoutQuery.data?.name ?? 'Loading…'}
         </h1>
         {tryoutQuery.data ? (
-          <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
-            {tryoutQuery.data.sport} · {tryoutQuery.data.eventType}
-            {tryoutQuery.data.tryoutDate ? ` · ${tryoutQuery.data.tryoutDate}` : ''}
-            {isAssessorOnly ? ' · Assessor mode' : ''}
-          </p>
+          <>
+            <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
+              {tryoutQuery.data.sport} · {tryoutQuery.data.eventType}
+              {tryoutQuery.data.tryoutDate ? ` · ${tryoutQuery.data.tryoutDate}` : ''}
+              {tryoutQuery.data.startTime
+                ? ` · ${tryoutQuery.data.startTime}${tryoutQuery.data.endTime ? `–${tryoutQuery.data.endTime}` : ''}`
+                : ''}
+              {tryoutQuery.data.rink ? ` · ${tryoutQuery.data.rink}` : ''}
+              {isAssessorOnly ? ' · Assessor mode' : ''}
+            </p>
+            {tryoutQuery.data.headCoach || tryoutQuery.data.assessors.length > 0 ? (
+              <p className="mt-0.5 text-xs" style={{ color: colors.inkMuted }}>
+                {tryoutQuery.data.headCoach ? `Coach: ${tryoutQuery.data.headCoach}` : ''}
+                {tryoutQuery.data.headCoach && tryoutQuery.data.assessors.length > 0 ? ' · ' : ''}
+                {tryoutQuery.data.assessors.length > 0
+                  ? `Assessors: ${tryoutQuery.data.assessors.map((a) => a.name).join(', ')}`
+                  : ''}
+              </p>
+            ) : null}
+          </>
         ) : null}
       </div>
 

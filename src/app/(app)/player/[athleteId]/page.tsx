@@ -1,11 +1,17 @@
 'use client';
 
+import { useState } from 'react';
 import { useParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Avatar, Card, ErrorState, LoadingState, PageHeader } from '@/components/ui';
+import { Avatar, Button, Card, ErrorState, Input, LoadingState, Modal, PageHeader, SectionLabel, Spinner, useAlert } from '@/components/ui';
 import { AssessmentHistory } from '@/components/player/AssessmentHistory';
-import { usePlayerProfileQuery } from '@/features/queries';
+import {
+  usePlayerProfileQuery,
+  useFamilyContactsQuery,
+  useAddFamilyContactMutation,
+  useRemoveFamilyContactMutation,
+} from '@/features/queries';
 import { usePermissions } from '@/state/authStore';
 import { playerDisplayName } from '@/data/rubrics';
 import type { ThemeColors } from '@/theme/tokens';
@@ -35,10 +41,60 @@ function slugify(...parts: (string | undefined)[]): string {
 export default function PlayerProfilePage() {
   const { athleteId } = useParams<{ athleteId: string }>();
   const colors = useThemeColors();
-  const { isGuardian, role } = usePermissions();
+  const { alert, confirm } = useAlert();
+  const { isGuardian, role, canAssess } = usePermissions();
 
   const profileQuery = usePlayerProfileQuery(athleteId);
   const profile = profileQuery.data;
+
+  // Same extra-family-members feature as the assessment player page, added
+  // here too — this is the profile a coach actually lands on from Teams,
+  // Shared Athletes and Search, and it had no way to see or add them at all.
+  const familyContactsQuery = useFamilyContactsQuery(athleteId);
+  const addFamilyContactMut = useAddFamilyContactMutation(athleteId ?? '');
+  const removeFamilyContactMut = useRemoveFamilyContactMutation(athleteId ?? '');
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [contactName, setContactName] = useState('');
+  const [contactRelationship, setContactRelationship] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+
+  const submitFamilyContact = async () => {
+    if (!contactName.trim()) {
+      await alert('Missing Info', 'Enter at least a name.');
+      return;
+    }
+    try {
+      await addFamilyContactMut.mutateAsync({
+        name: contactName.trim(),
+        relationship: contactRelationship.trim() || undefined,
+        email: contactEmail.trim() || undefined,
+        phone: contactPhone.trim() || undefined,
+      });
+      setContactName('');
+      setContactRelationship('');
+      setContactEmail('');
+      setContactPhone('');
+      setShowAddContact(false);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not add this contact.');
+    }
+  };
+
+  const confirmRemoveContact = async (contactId: string, name: string) => {
+    const ok = await confirm({
+      title: 'Remove Contact',
+      message: `Remove ${name} from this athlete's family contacts?`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await removeFamilyContactMut.mutateAsync(contactId);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not remove this contact.');
+    }
+  };
 
   if (profileQuery.isLoading) return <LoadingState />;
   if (profileQuery.isError || !profile) {
@@ -80,6 +136,46 @@ export default function PlayerProfilePage() {
         <Row label="Medical" value={profile.medicalInfo} colors={colors} />
       </Card>
 
+      {/* Open to anyone who can assess, same as the assessment player page. */}
+      {canAssess ? (
+        <Card className="mb-4 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <SectionLabel>Family Contacts</SectionLabel>
+            <Button label="+ Add" size="sm" variant="ghost" onClick={() => setShowAddContact(true)} />
+          </div>
+          <p className="text-xs" style={{ color: colors.inkMuted }}>
+            A second parent, a grandparent, or anyone else who should get invites for this player.
+          </p>
+          {familyContactsQuery.isLoading ? (
+            <Spinner size={16} />
+          ) : (familyContactsQuery.data ?? []).length === 0 ? (
+            <span style={{ color: colors.inkFaint }}>No additional contacts added yet.</span>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {(familyContactsQuery.data ?? []).map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-2 border-b pb-2 last:border-b-0 last:pb-0" style={{ borderColor: colors.border }}>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium" style={{ color: colors.ink }}>
+                      {c.name}
+                      {c.relationship ? ` · ${c.relationship}` : ''}
+                    </p>
+                    {c.email ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p> : null}
+                    {c.phone ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.phone}</p> : null}
+                  </div>
+                  <Button
+                    label="Remove"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => confirmRemoveContact(c.id, c.name)}
+                    loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      ) : null}
+
       {/* Assessment history is scores: the season-over-season averages, the
           trend and every evaluation's overall. It belongs to the coach who ran
           the assessments, so guardians get the profile without it rather than a
@@ -96,6 +192,40 @@ export default function PlayerProfilePage() {
           exportFileName={slugify(profile.first, profile.last)}
         />
       )}
+
+      <Modal
+        visible={showAddContact}
+        title="Add Family Member"
+        onClose={() => {
+          if (addFamilyContactMut.isPending) return;
+          setShowAddContact(false);
+        }}
+        hideDefaultFooter
+      >
+        <div className="flex flex-col gap-3">
+          <Input label="Name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+          <Input
+            label="Relationship"
+            value={contactRelationship}
+            onChange={(e) => setContactRelationship(e.target.value)}
+            placeholder="e.g. Grandmother, Emergency Contact"
+          />
+          <Input
+            label="Email"
+            type="email"
+            autoCapitalize="none"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+          />
+          <Input label="Phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
+          <Button
+            label="Add Contact"
+            onClick={submitFamilyContact}
+            loading={addFamilyContactMut.isPending}
+            disabled={!contactName.trim()}
+          />
+        </div>
+      </Modal>
     </>
   );
 }

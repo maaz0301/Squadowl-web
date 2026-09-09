@@ -22,7 +22,7 @@ import {
   useAthleteHistoryQuery,
   useSessionProgressQuery,
 } from '@/features/queries';
-import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
+import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { useSessionStore } from '@/state/sessionStore';
 import {
   categoryAverage,
@@ -40,7 +40,6 @@ export default function RinksidePage() {
   const colors = useThemeColors();
   const router = useRouter();
   const { alert } = useAlert();
-  const assessorParam = useAssessorMode();
   const tryoutQuery = useTryoutQuery(id);
   const saveEval = useSaveEvaluationMutation(id!);
   const rinksideIndex = useSessionStore((s) => s.rinksideIndex);
@@ -60,9 +59,8 @@ export default function RinksidePage() {
   const roster = useMemo(() => tryoutQuery.data?.roster ?? [], [tryoutQuery.data?.roster]);
   const player = roster[rinksideIndex];
 
-  // Same resolution as the layout's tab-hiding: the URL parameter so the first
-  // paint is already right, `viewerIsOwner` so stripping it doesn't undo this.
-  const isAssessorOnly = assessorParam || tryoutQuery.data?.viewerIsOwner === false;
+  // Same resolution as the layout's tab-hiding — see useIsAssessorOnly.
+  const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   // Athlete history spans previous seasons, which an assessor may not see at
   // all — passing no id leaves the query disabled so it is never fetched.
   const historyQuery = useAthleteHistoryQuery(isAssessorOnly ? undefined : player?.athleteId);

@@ -9,10 +9,21 @@ interface EmptyStateProps {
   message?: string;
   actionLabel?: string;
   onAction?: () => void;
+  /** A second, lower-emphasis action alongside the primary one — e.g. "Import from File" beside "+ Add Player". */
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
   icon?: ReactNode;
 }
 
-export function EmptyState({ title, message, actionLabel, onAction, icon }: EmptyStateProps) {
+export function EmptyState({
+  title,
+  message,
+  actionLabel,
+  onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
+  icon,
+}: EmptyStateProps) {
   const colors = useThemeColors();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
@@ -25,7 +36,14 @@ export function EmptyState({ title, message, actionLabel, onAction, icon }: Empt
           {message}
         </p>
       ) : null}
-      {actionLabel && onAction ? <Button label={actionLabel} onClick={onAction} className="mt-1" /> : null}
+      {(actionLabel && onAction) || (secondaryActionLabel && onSecondaryAction) ? (
+        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+          {actionLabel && onAction ? <Button label={actionLabel} onClick={onAction} /> : null}
+          {secondaryActionLabel && onSecondaryAction ? (
+            <Button label={secondaryActionLabel} variant="secondary" onClick={onSecondaryAction} />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

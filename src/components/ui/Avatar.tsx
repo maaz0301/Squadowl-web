@@ -19,6 +19,8 @@ const posColors: Record<string, string> = {
   FWD: '#ff6b2b',
   DEF: '#6366f1',
   GTL: '#f59e0b',
+  G: '#f59e0b',
+  GK: '#f59e0b',
 };
 
 export function Avatar({ first, last, size = 44, pos, uri, ringColor }: AvatarProps) {
