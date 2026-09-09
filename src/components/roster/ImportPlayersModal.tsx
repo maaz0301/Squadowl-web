@@ -17,8 +17,13 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 
 const ACCEPT = '.csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods';
 
-/** Rows previewed before importing — enough to spot a bad mapping, not a second spreadsheet. */
-const PREVIEW_ROWS = 8;
+/**
+ * Safety ceiling on how many rows the preview table renders. The table itself
+ * scrolls so a normal roster (tens to a few hundred rows) is reviewable in
+ * full — this only guards against a pathological spreadsheet with tens of
+ * thousands of rows turning into that many table rows in the DOM at once.
+ */
+const MAX_PREVIEW_ROWS = 500;
 
 type Colors = ReturnType<typeof useThemeColors>;
 
@@ -316,7 +321,7 @@ function RowPreview({
   // Bad rows first: they are the ones the coach has to decide about, and a
   // wrong column mapping shows up in them before anywhere else.
   const ordered = [...rows].sort((a, b) => Number(b.errors.length > 0) - Number(a.errors.length > 0));
-  const shown = ordered.slice(0, PREVIEW_ROWS);
+  const shown = ordered.slice(0, MAX_PREVIEW_ROWS);
   const incomplete = rows.filter((r) => r.errors.length > 0);
 
   return (
@@ -349,9 +354,14 @@ function RowPreview({
           ) : null}
         </div>
       </div>
-      <div className="overflow-x-auto rounded-xl border" style={{ borderColor: colors.border }}>
+      {/* max-h + overflow-y-auto (alongside the x-scroll already needed for
+          narrow modals) is what makes every row reachable instead of only the
+          first handful — a 400-row sheet used to hard-stop at 8 with no way
+          to see or remove the rest. The header stays `sticky` so the column
+          labels don't scroll out of view on a long list. */}
+      <div className="max-h-[26rem] overflow-auto rounded-xl border" style={{ borderColor: colors.border }}>
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10">
             <tr style={{ backgroundColor: colors.tile }}>
               {['Row', 'Name', 'Email', 'Jersey', 'Pos', 'Born', '', ''].map((h, i) => (
                 <th
@@ -414,7 +424,12 @@ function RowPreview({
       </div>
       {rows.length > shown.length ? (
         <p className="mt-1.5 text-xs" style={{ color: colors.inkFaint }}>
-          Showing {shown.length} of {rows.length} rows.
+          Showing the first {shown.length} of {rows.length} rows. Remove some below, or split the file, to
+          review the rest.
+        </p>
+      ) : rows.length > 0 ? (
+        <p className="mt-1.5 text-xs" style={{ color: colors.inkFaint }}>
+          All {rows.length} {rows.length === 1 ? 'row is' : 'rows are'} listed above — scroll to see the rest.
         </p>
       ) : null}
     </div>
