@@ -12,6 +12,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Input,
   LoadingState,
   Modal,
   PageHeader,
@@ -29,10 +30,16 @@ import {
   useResendInviteMutation,
   useCreateAndInviteMemberMutation,
   useUploadPlayerPhotoMutation,
+  useFamilyContactsQuery,
+  useAddFamilyContactMutation,
+  useRemoveFamilyContactMutation,
+  usePlayerLettersQuery,
+  useResendPlayerLetterMutation,
 } from '@/features/queries';
-import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
+import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition } from '@/data/rubrics';
-import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
+import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
+import { LETTER_KIND_LABELS } from '@/data/letters';
 import { PlanGate } from '@/components/PlanGate';
 import { mockAiPlayerSummary } from '@/data/teamBuilder';
 
@@ -42,7 +49,6 @@ const AI_LOADING_TEXTS = ['Gathering data...', 'Ranking evaluations...', 'Analyz
 export default function PlayerHubPage() {
   const id = useAssessmentId();
   const href = useAssessmentHref();
-  const assessorParam = useAssessorMode();
   const params = useParams();
   const playerId = Array.isArray(params?.playerId) ? params.playerId[0] : (params?.playerId as string);
   const colors = useThemeColors();
@@ -50,6 +56,9 @@ export default function PlayerHubPage() {
   const { alert, confirm } = useAlert();
 
   const tryoutQuery = useTryoutQuery(id);
+  // A hook, so it belongs above the early returns below rather than beside
+  // the derived values it feeds.
+  const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   const updatePlayer = useUpdatePlayerMutation(id!);
   const deletePlayer = useDeletePlayerMutation(id!);
   const uploadPhoto = useUploadPlayerPhotoMutation(id!);
@@ -81,7 +90,34 @@ export default function PlayerHubPage() {
     : AI_IDLE_TEXT;
 
   const player = tryoutQuery.data?.roster.find((p) => p.athleteId === playerId || p.id === playerId);
-  const { canManageTeam } = usePermissions();
+  const { canManageTeam, canAssess } = usePermissions();
+
+  // Extra family members beyond the one guardian on the athlete row — added
+  // here or from the Edit Player form, and by the guardian themselves from
+  // their own portal. Not shown before now: this card is what surfaces them to
+  // the coach at all.
+  const familyContactsQuery = useFamilyContactsQuery(player?.athleteId);
+  const addFamilyContactMut = useAddFamilyContactMutation(player?.athleteId ?? '');
+  const removeFamilyContactMut = useRemoveFamilyContactMutation(player?.athleteId ?? '');
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [contactName, setContactName] = useState('');
+  const [contactRelationship, setContactRelationship] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+
+  // Letters sent to this player from the Letters tool — composing a new one
+  // lives there (it needs the template picker across the whole roster), so
+  // this card is a read-only history plus the re-send/retry a coach reaches
+  // for right from the player they're looking at.
+  const playerLettersQuery = usePlayerLettersQuery(id);
+  const resendLetterMut = useResendPlayerLetterMutation(id!);
+  // Filtered against the participant id (`player.id`), not the URL's
+  // `playerId` param — that can be the athleteId instead (see the lookup
+  // above), while a PlayerLetter's playerId is always the tryout_participants
+  // row a copy is attached to.
+  const playerLetters = (playerLettersQuery.data ?? [])
+    .filter((l) => l.playerId === player?.id)
+    .sort((a, b) => b.createdAt - a.createdAt);
 
   const categories = useMemo(() => {
     if (!tryoutQuery.data || !player) return [];
@@ -102,7 +138,14 @@ export default function PlayerHubPage() {
   if (!player) return <EmptyState title="Player not found" />;
 
   const tryout = tryoutQuery.data;
-  const isAssessorOnly = assessorParam || tryout.viewerIsOwner === false;
+  // Two different questions, and both have to answer yes. canManageTeam reads
+  // an account-wide role — it says nothing about *this* evaluation, and an
+  // admin can perfectly well be an invited assessor on someone else's tryout.
+  // isAssessorOnly is server-computed per tryout (Tryout.viewerIsOwner) and is
+  // what says whether this viewer owns the evaluation in front of them. A
+  // delegated team manager passes both (see usePermissions), so an evaluation
+  // they created on their team reads exactly as the club owner's own does.
+  const isCoachHere = canManageTeam && !isAssessorOnly;
   const evals = tryout.evals.filter((e) => e.playerId === playerId).sort((a, b) => b.createdAt - a.createdAt);
   const heuristic = mockAiPlayerSummary(tryout, playerId);
   const deepDive = tryout.aiAssessments?.[playerId];
@@ -173,6 +216,43 @@ export default function PlayerHubPage() {
       } else {
         await alert('Invite Failed', msg || 'Could not resend invite.');
       }
+    }
+  };
+
+  const submitFamilyContact = async () => {
+    if (!contactName.trim()) {
+      await alert('Missing Info', 'Enter at least a name.');
+      return;
+    }
+    try {
+      await addFamilyContactMut.mutateAsync({
+        name: contactName.trim(),
+        relationship: contactRelationship.trim() || undefined,
+        email: contactEmail.trim() || undefined,
+        phone: contactPhone.trim() || undefined,
+      });
+      setContactName('');
+      setContactRelationship('');
+      setContactEmail('');
+      setContactPhone('');
+      setShowAddContact(false);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not add this contact.');
+    }
+  };
+
+  const confirmRemoveContact = async (contactId: string, name: string) => {
+    const ok = await confirm({
+      title: 'Remove Contact',
+      message: `Remove ${name} from this athlete's family contacts?`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await removeFamilyContactMut.mutateAsync(contactId);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not remove this contact.');
     }
   };
 
@@ -252,7 +332,10 @@ export default function PlayerHubPage() {
         right={
           <>
             <Button label="Score Player" onClick={() => router.push(href(`score/${playerId}`))} />
-            {canManageTeam ? <Button label="Edit" variant="secondary" onClick={() => setShowEdit(true)} /> : null}
+            {/* Edit is open to anyone who can assess — including an invited
+                assessor — since fixing a wrong jersey number or position
+                shouldn't need the owning coach; Delete stays coach/admin-only. */}
+            {canAssess ? <Button label="Edit" variant="secondary" onClick={() => setShowEdit(true)} /> : null}
           </>
         }
       />
@@ -290,7 +373,7 @@ export default function PlayerHubPage() {
               <span style={{ color: colors.inkFaint }}>No guardian info provided.</span>
             ) : null}
 
-            {canManageTeam ? (
+            {isCoachHere ? (
               player.linkedGuardianId && player.guardianEmail ? (
                 <Button
                   label="Resend Invite"
@@ -310,7 +393,121 @@ export default function PlayerHubPage() {
             ) : null}
           </Card>
 
-          {canManageTeam ? (
+          {/* Open to anyone who can assess — including an invited assessor,
+              same as Edit above — so they can see and correct the same family
+              contacts a coach can. */}
+          {player.athleteId && canAssess ? (
+            <Card className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <SectionLabel>Family Contacts</SectionLabel>
+                <Button label="+ Add" size="sm" variant="ghost" onClick={() => setShowAddContact(true)} />
+              </div>
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                A second parent, a grandparent, or anyone else who should get invites for this player.
+              </p>
+              {familyContactsQuery.isLoading ? (
+                <Spinner size={16} />
+              ) : (familyContactsQuery.data ?? []).length === 0 ? (
+                <span style={{ color: colors.inkFaint }}>No additional contacts added yet.</span>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {(familyContactsQuery.data ?? []).map((c) => (
+                    <div key={c.id} className="flex items-center justify-between gap-2 border-b pb-2 last:border-b-0 last:pb-0" style={{ borderColor: colors.border }}>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium" style={{ color: colors.ink }}>
+                          {c.name}
+                          {c.relationship ? ` · ${c.relationship}` : ''}
+                        </p>
+                        {c.email ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p> : null}
+                        {c.phone ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.phone}</p> : null}
+                      </div>
+                      <Button
+                        label="Remove"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => confirmRemoveContact(c.id, c.name)}
+                        loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ) : null}
+
+          {/* Coach only, matching the Letters tool itself — an invited
+              assessor scores and edits the roster but doesn't decide who made
+              the team. */}
+          {isCoachHere ? (
+            <Card className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <SectionLabel>Letters</SectionLabel>
+                <Button
+                  label="Send a Letter"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => router.push(href('letters'))}
+                />
+              </div>
+              {playerLettersQuery.isLoading ? (
+                <Spinner size={16} />
+              ) : playerLetters.length === 0 ? (
+                <span style={{ color: colors.inkFaint }}>
+                  No offer or roster decision letters sent to this player yet.
+                </span>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {playerLetters.map((l) => (
+                    <div
+                      key={l.id}
+                      className="flex items-start justify-between gap-2 border-b pb-2 last:border-b-0 last:pb-0"
+                      style={{ borderColor: colors.border }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="truncate font-medium" style={{ color: colors.ink }}>
+                            {l.subject}
+                          </p>
+                          <Badge
+                            label={l.status}
+                            variant={l.status === 'sent' ? 'success' : l.status === 'failed' ? 'danger' : 'warning'}
+                          />
+                        </div>
+                        <p className="truncate text-xs" style={{ color: colors.inkMuted }}>
+                          {LETTER_KIND_LABELS[l.kind]}
+                          {l.recipientEmail ? ` · ${l.recipientEmail}` : ''}
+                          {l.sentAt ? ` · ${new Date(l.sentAt).toLocaleDateString()}` : ''}
+                        </p>
+                        {l.status === 'failed' && l.error ? (
+                          <p className="mt-0.5 text-xs" style={{ color: colors.danger }}>
+                            {l.error}
+                          </p>
+                        ) : null}
+                      </div>
+                      <Button
+                        label={l.status === 'sent' ? 'Re-send' : 'Retry'}
+                        variant="ghost"
+                        size="sm"
+                        loading={resendLetterMut.isPending && resendLetterMut.variables === l.id}
+                        onClick={async () => {
+                          try {
+                            const updated = await resendLetterMut.mutateAsync(l.id);
+                            if (updated.status === 'failed') {
+                              await alert('Not Sent', updated.error || 'The letter could not be sent.');
+                            }
+                          } catch (e) {
+                            await alert('Send Failed', e instanceof Error ? e.message : 'Could not re-send.');
+                          }
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ) : null}
+
+          {isCoachHere ? (
             <Button
               label="Delete Player"
               variant="danger"
@@ -411,6 +608,13 @@ export default function PlayerHubPage() {
             </Card>
           )}
 
+          {/* Every evaluator's scores, recommendation and notes, with an Edit
+              button on each — the same content the coach-only Results tab
+              exists to gate, and exactly what get_session_progress_for_tryout()
+              (see its migration) was built to give assessors numbering hints
+              *without* exposing, so a blind assessment can't be biased by
+              reading someone else's take first. */}
+          {isAssessorOnly ? null : (
           <div>
             <SectionLabel className="mb-3">Evaluations ({evals.length})</SectionLabel>
             {evals.length === 0 ? (
@@ -457,14 +661,17 @@ export default function PlayerHubPage() {
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 
       <Modal visible={showEdit} title="Edit Player" size="lg" onClose={() => setShowEdit(false)} hideDefaultFooter>
         <AddPlayerForm
           defaultValues={player}
+          sport={tryout.sport}
           loading={updatePlayer.isPending || uploadPhoto.isPending}
-          onSubmit={async (data) => {
+          showFamilyContacts={canAssess}
+          onSubmit={async (data, _inviteEmails, extraFamilyContacts) => {
             try {
               if (player.athleteId && data.avatarUrl?.startsWith('blob:')) {
                 try {
@@ -481,12 +688,65 @@ export default function PlayerHubPage() {
                 }
               }
               await updatePlayer.mutateAsync({ playerId, updates: data });
+              // Previously dropped silently: this callback only ever read
+              // `data`, so a family member added from inside Edit Player was
+              // typed in, appeared to save, and never reached the database —
+              // which is why it showed up nowhere, for anyone.
+              const contacts = (extraFamilyContacts ?? []).filter((c: ExtraFamilyContact) => c.name.trim() || c.email.trim());
+              if (player.athleteId && contacts.length > 0) {
+                try {
+                  await Promise.all(
+                    contacts.map((c: ExtraFamilyContact) =>
+                      addFamilyContactMut.mutateAsync({ name: c.name || c.email, email: c.email || undefined }),
+                    ),
+                  );
+                } catch (e) {
+                  await alert(
+                    'Family Members Not Saved',
+                    `The player was saved, but the additional family members couldn't be added: ${e instanceof Error ? e.message : 'Unknown error'}`,
+                  );
+                }
+              }
               setShowEdit(false);
             } catch (err) {
               await alert('Save Error', `Failed to update player: ${err instanceof Error ? err.message : ''}`);
             }
           }}
         />
+      </Modal>
+
+      <Modal
+        visible={showAddContact}
+        title="Add Family Member"
+        onClose={() => {
+          if (addFamilyContactMut.isPending) return;
+          setShowAddContact(false);
+        }}
+        hideDefaultFooter
+      >
+        <div className="flex flex-col gap-3">
+          <Input label="Name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+          <Input
+            label="Relationship"
+            value={contactRelationship}
+            onChange={(e) => setContactRelationship(e.target.value)}
+            placeholder="e.g. Grandmother, Emergency Contact"
+          />
+          <Input
+            label="Email"
+            type="email"
+            autoCapitalize="none"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+          />
+          <Input label="Phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
+          <Button
+            label="Add Contact"
+            onClick={submitFamilyContact}
+            loading={addFamilyContactMut.isPending}
+            disabled={!contactName.trim()}
+          />
+        </div>
       </Modal>
 
       <Modal visible={showGuardianLink} title="Link Guardian" onClose={() => setShowGuardianLink(false)}>

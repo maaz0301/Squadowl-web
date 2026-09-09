@@ -1,9 +1,11 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, EmptyState, ErrorState, LoadingState } from '@/components/ui';
-import { useSeasonQuery, useSetAvailabilityMutation } from '@/features/queries';
+import { useGuardianRostersQuery, useSeasonQuery, useSetAvailabilityMutation } from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
+import { usePermissions } from '@/state/authStore';
 
 const RESPONSE_VARIANT = {
   yes: 'success' as const,
@@ -17,8 +19,18 @@ export default function SeasonAvailabilityPage() {
   const colors = useThemeColors();
   const seasonQuery = useSeasonQuery(id);
   const setAvailability = useSetAvailabilityMutation(id ?? '');
+  const { isGuardian } = usePermissions();
+  // A guardian reaching this coach screen may adjust RSVPs for their own
+  // linked athlete(s) only — never the whole team's. `getGuardianRosters()` is
+  // the same authoritative "my children" list the guardian portal itself
+  // reads from, so this can't be fooled by a mismatched name/email on the row.
+  const guardianRostersQuery = useGuardianRostersQuery(isGuardian);
+  const myAthleteIds = useMemo(
+    () => new Set((guardianRostersQuery.data ?? []).map((a) => a.id)),
+    [guardianRostersQuery.data],
+  );
 
-  if (seasonQuery.isLoading) return <LoadingState />;
+  if (seasonQuery.isLoading || (isGuardian && guardianRostersQuery.isLoading)) return <LoadingState />;
   if (seasonQuery.isError || !seasonQuery.data) {
     return <ErrorState message="Could not load availability." onRetry={() => seasonQuery.refetch()} />;
   }
@@ -35,6 +47,19 @@ export default function SeasonAvailabilityPage() {
     return <EmptyState title="No events" message="Add an event to track availability." />;
   }
 
+  const visibleRoster = isGuardian
+    ? season.roster.filter((p) => p.athleteId && myAthleteIds.has(p.athleteId))
+    : season.roster;
+
+  if (isGuardian && visibleRoster.length === 0) {
+    return (
+      <EmptyState
+        title="No linked athlete here"
+        message="We couldn't find one of your athletes on this team's roster."
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {season.events.map((event) => (
@@ -42,7 +67,7 @@ export default function SeasonAvailabilityPage() {
           <p className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             {event.title} · {event.date}
           </p>
-          {season.roster.map((player) => {
+          {visibleRoster.map((player) => {
             const response = (event.availability?.[player.id] ?? 'pending') as keyof typeof RESPONSE_VARIANT;
             return (
               <div key={player.id} className="flex flex-col gap-2 border-b pb-2" style={{ borderColor: colors.border }}>

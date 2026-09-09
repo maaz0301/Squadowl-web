@@ -186,6 +186,35 @@ function tplReminder(title: string, message: string) {
   };
 }
 
+/**
+ * A player selection letter — the offer / roster-decision letter a coach wrote
+ * on the Letters screen, already rendered for one player.
+ *
+ * Unlike every other template here, the wording is entirely the coach's, so
+ * this one supplies the chrome and nothing else. The body arrives as plain text
+ * with the coach's own line breaks: escaped (it is user-authored text going
+ * into markup) and then split on blank lines into paragraphs, so a letter reads
+ * the way it was typed instead of collapsing into one block.
+ */
+function tplTryoutLetter(subject: string, body: string) {
+  const paragraphs = escapeHtml(body)
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map(
+      (p) =>
+        `<p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 18px;">${p.replace(/\n/g, '<br/>')}</p>`,
+    )
+    .join('');
+
+  return {
+    // Raw for the SendGrid header, escaped for the markup: the subject carries
+    // a player's name, which is user-authored like the body.
+    subject,
+    html: wrap(escapeHtml(subject), paragraphs || '<p style="color:#d1d5db;font-size:16px;">(No message)</p>'),
+  };
+}
+
 function tplRegistrationConfirm(playerName: string) {
   return {
     subject: `Registration Confirmed: ${playerName}`,
@@ -353,6 +382,10 @@ serve(async (req: Request) => {
     else if (type === 'schedule_update') ({ subject, html } = tplScheduleUpdate(payload?.eventName ?? 'New Event', payload?.date, payload?.time, payload?.location));
     else if (type === 'reminder') ({ subject, html } = tplReminder(payload?.title ?? 'Upcoming Event', payload?.message ?? 'This is a reminder for an upcoming event.'));
     else if (type === 'registration_confirmation') ({ subject, html } = tplRegistrationConfirm(payload?.playerName ?? 'Athlete'));
+    else if (type === 'tryout_letter') ({ subject, html } = tplTryoutLetter(
+      payload?.subject ?? 'A message from your coaching staff',
+      payload?.body ?? '',
+    ));
     else if (type === 'password_reset') ({ subject, html } = tplPasswordReset(payload?.code ?? '------'));
     else if (type === 'subscription_upgraded') ({ subject, html } = tplSubscriptionUpgraded(payload?.planTier ?? 'Pro'));
     else if (type === 'subscription_canceled') ({ subject, html } = tplSubscriptionCanceled());

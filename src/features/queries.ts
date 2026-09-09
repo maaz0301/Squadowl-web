@@ -4,6 +4,7 @@ import {
   getPlayerRubrics,
   type RubricCategory
 } from '@/data/rubrics';
+import type { LetterKind } from '@/data/letters';
 import type {
   AddPlayerForm,
   CreateAssessmentForm,
@@ -58,10 +59,19 @@ export function useProfileQuery() {
 }
 
 // ---- Teams ----
-export function useTeamsQuery() {
+/**
+ * `enabled` is for callers that only need the list conditionally —
+ * usePermissions() asks for it solely to tell a delegated team manager apart
+ * from an invited assessor, and it runs on every route, so it must not put
+ * listTeams() (three round trips) in front of screens that never look at a
+ * team. The cache key is shared, so a screen that does load teams answers it
+ * for free.
+ */
+export function useTeamsQuery(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.teams,
     queryFn: () => getDataSource().listTeams(),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -1984,6 +1994,124 @@ export function useRemoveFamilyContactMutation(athleteId: string) {
     mutationFn: (id: string) => getDataSource().removeFamilyContact(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: familyContactsKey(athleteId) });
+    },
+  });
+}
+
+// ---- Player selection letters ----
+
+const letterTemplatesKey = ['letterTemplates'] as const;
+const playerLettersKey = (tryoutId: string) => ['tryouts', tryoutId, 'letters'] as const;
+
+export function useLetterTemplatesQuery(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: letterTemplatesKey,
+    queryFn: () => getDataSource().listLetterTemplates(),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useCreateLetterTemplateMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; kind: LetterKind; subject: string; body: string; tryoutId?: string }) =>
+      getDataSource().createLetterTemplate(input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: letterTemplatesKey });
+    },
+  });
+}
+
+export function useUpdateLetterTemplateMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      updates,
+    }: {
+      id: string;
+      updates: Partial<{ name: string; kind: LetterKind; subject: string; body: string }>;
+    }) => getDataSource().updateLetterTemplate(id, updates),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: letterTemplatesKey });
+    },
+  });
+}
+
+export function useDeleteLetterTemplateMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().deleteLetterTemplate(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: letterTemplatesKey });
+    },
+  });
+}
+
+export function usePlayerLettersQuery(tryoutId: string | undefined) {
+  return useQuery({
+    queryKey: playerLettersKey(tryoutId ?? ''),
+    queryFn: () => getDataSource().listPlayerLetters(tryoutId!),
+    enabled: !!tryoutId,
+  });
+}
+
+export function useSendPlayerLettersMutation(
+  tryoutId: string,
+  onProgress?: (done: number, total: number) => void,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      letters: {
+        playerId: string;
+        playerName: string;
+        athleteId?: string;
+        templateId?: string;
+        kind: LetterKind;
+        subject: string;
+        body: string;
+        recipientEmail?: string;
+      }[],
+    ) => getDataSource().sendPlayerLetters(tryoutId, letters, onProgress),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: playerLettersKey(tryoutId) });
+    },
+  });
+}
+
+export function useUpdatePlayerLetterMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      updates,
+    }: {
+      id: string;
+      updates: Partial<{ subject: string; body: string; recipientEmail: string }>;
+    }) => getDataSource().updatePlayerLetter(id, updates),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: playerLettersKey(tryoutId) });
+    },
+  });
+}
+
+export function useResendPlayerLetterMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().resendPlayerLetter(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: playerLettersKey(tryoutId) });
+    },
+  });
+}
+
+export function useDeletePlayerLetterMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().deletePlayerLetter(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: playerLettersKey(tryoutId) });
     },
   });
 }

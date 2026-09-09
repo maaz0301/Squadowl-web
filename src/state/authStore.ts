@@ -214,12 +214,57 @@ export function useIsAuthenticated(): boolean {
   return useAuthStore((s) => !!s.session);
 }
 
-import { useOrgMembersQuery } from '@/features/queries';
+import { useOrgMembersQuery, useTeamsQuery } from '@/features/queries';
 
 export function usePermissions() {
   const user = useUser();
   const { data: members = [] } = useOrgMembersQuery();
-  
+
+  // For demo: if they are the primary coach@example.com account, default to admin if not found.
+  // In production, everyone must be an org member.
+  const isDemoAdmin = user?.email.toLowerCase() === 'coach@example.com';
+
+  // Find user's staff membership (ignore guardian roster entries)
+  const myStaffMember = user
+    ? members.find(
+        (m) => m.email.toLowerCase() === user.email.toLowerCase() && m.status === 'active' && m.role !== 'guardian'
+      )
+    : undefined;
+
+  // A user with no memberships row and no guardian-linked athlete is exactly
+  // what an assessor invited only through tryout_assessors looks like — the
+  // comment above says "everyone must be an org member" but that invite path
+  // never creates one. Falling back to 'coach' here (as this used to) handed
+  // that account canManageTeam/canCreateAssessments — full coach-level access
+  // to every team and evaluation on the account — everywhere in the app, not
+  // just the one evaluation they were actually invited to score. 'assessor' is
+  // this system's own least-privileged non-guardian role: canAssess still
+  // holds, so scoring and roster edits keep working, but nothing account-wide
+  // does.
+  const rawRole = !user
+    ? 'guardian'
+    : (user.role && user.role !== 'guardian')
+      ? user.role
+      : (myStaffMember?.role ?? user.role ?? (isDemoAdmin ? 'admin' : 'assessor'));
+  const membershipRole = rawRole === 'owner' ? 'admin' : rawRole;
+
+  // …but a delegated team manager (CLUB mode) looks membership-wise exactly
+  // like that bare assessor: the delegation lives in `team_managers` on the
+  // club's account, not in a memberships row anywhere, so the fallback above
+  // reads someone who has been handed a whole team as the least-privileged
+  // role there is. They ran the team, created the evaluation on it and were
+  // then shown the assessor's cut of it — no player profile, no evaluation
+  // history, no team editing.
+  //
+  // listTeams() flags a delegated team `managed`, which is the same signal
+  // team/[id] already trusts for its Edit gate, and holding one is exactly
+  // what a real assessor never does. Only asked for when the answer can
+  // change something — every role above 'assessor' already has these rights,
+  // and a guardian's portal must not start pulling the coach's team list.
+  const checkDelegation = !!user && membershipRole === 'assessor';
+  const { data: teams } = useTeamsQuery({ enabled: checkDelegation });
+  const managesDelegatedTeam = checkDelegation && (teams ?? []).some((t) => t.managed);
+
   if (!user) {
     return {
       role: 'guardian',
@@ -231,19 +276,10 @@ export function usePermissions() {
     };
   }
 
-  // For demo: if they are the primary coach@example.com account, default to admin if not found.
-  // In production, everyone must be an org member.
-  const isDemoAdmin = user.email.toLowerCase() === 'coach@example.com';
-
-  // Find user's staff membership (ignore guardian roster entries)
-  const myStaffMember = members.find(
-    (m) => m.email.toLowerCase() === user.email.toLowerCase() && m.status === 'active' && m.role !== 'guardian'
-  );
-
-  const rawRole = (user.role && user.role !== 'guardian')
-    ? user.role
-    : (myStaffMember?.role ?? user.role ?? (isDemoAdmin ? 'admin' : 'coach'));
-  const role = rawRole === 'owner' ? 'admin' : rawRole;
+  // 'coach', not 'admin': running a team is what the delegation grants, and it
+  // is the role Manage Organization already lists these people under. Nothing
+  // org-wide (canManageOrganization) comes with it.
+  const role = managesDelegatedTeam ? 'coach' : membershipRole;
 
   return {
     role,

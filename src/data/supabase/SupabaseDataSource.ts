@@ -14,6 +14,7 @@ import {
   isGoaliePosition,
   weightedOverallAcrossEvals,
 } from '../rubrics';
+import type { LetterKind } from '../letters';
 import type { TeamBuilderConfig, TeamBuilderState, FriendPackage } from '../teamBuilder';
 import {
   buildTeams,
@@ -63,6 +64,9 @@ import type {
   FamilyContact,
   Org,
   Player,
+  LetterTemplate,
+  PlayerLetter,
+  PlayerLetterSendResult,
   PlayerProfile,
   PlayerProfileAssessment,
   Recommendation,
@@ -107,6 +111,25 @@ function unwrapError(error: { message: string; code?: string }): Error & { code?
   const err = new Error(error.message) as Error & { code?: string };
   err.code = error.code;
   return err;
+}
+
+/**
+ * Runs a write that must have changed a row, and says whether it did.
+ *
+ * An UPDATE that RLS rejects is not an error in Postgres — it matches zero
+ * rows and reports success, which is how an assessor's Edit Player came to
+ * report a save it had not made. Chaining `.select().single()` turns that into
+ * PostgREST's PGRST116, which this reads as "refused" rather than throwing, so
+ * the caller can retry down a path that is authorized server-side. Any other
+ * error is a real failure and still throws.
+ */
+async function wroteRow(
+  query: PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>,
+): Promise<boolean> {
+  const res = await query;
+  if (!res.error) return true;
+  if (res.error.code === 'PGRST116') return false;
+  throw unwrapError(res.error);
 }
 
 /**
@@ -3079,7 +3102,7 @@ export class SupabaseDataSource implements DataSource {
     );
   }
 
-  async sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation', to: string, payload: Record<string, unknown>): Promise<void> {
+  async sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation' | 'tryout_letter', to: string, payload: Record<string, unknown>): Promise<void> {
     const { supabase } = await this.ctx();
     const { error } = await supabase.functions.invoke('send-email', {
       body: { type, to, payload },
@@ -3315,14 +3338,48 @@ export class SupabaseDataSource implements DataSource {
       participantPatch.assigned_assessor_id = assessorId;
     }
 
+    // The direct writes first, so a coach keeps going through the tables' own
+    // policies exactly as before and nothing here depends on the RPC's
+    // reconstruction of who may edit. `.select().single()` is what makes a
+    // refusal visible at all: RLS rejects an UPDATE by matching zero rows,
+    // which Postgres reports as an ordinary success, so without it this method
+    // wrote nothing and then re-read the unchanged row as if it had saved.
+    let refused = false;
+
     if (Object.keys(athletePatch).length) {
       const part = unwrap(
         await supabase.from('tryout_participants').select('athlete_id').eq('id', playerId).single(),
       ) as Row;
-      await supabase.from('athletes').update(athletePatch).eq('id', part.athlete_id);
+      refused = !(await wroteRow(
+        supabase.from('athletes').update(athletePatch).eq('id', part.athlete_id).select().single(),
+      ));
     }
-    if (Object.keys(participantPatch).length) {
-      await supabase.from('tryout_participants').update(participantPatch).eq('id', playerId);
+    if (!refused && Object.keys(participantPatch).length) {
+      refused = !(await wroteRow(
+        supabase.from('tryout_participants').update(participantPatch).eq('id', playerId).select().single(),
+      ));
+    }
+
+    // Refused means the caller reaches this evaluation some way the tables'
+    // policies don't admit — an invited assessor, who gets to an evaluation
+    // through a tryout_assessors row rather than a membership. The RPC does the
+    // same write behind a check that authorizes them explicitly; it re-applies
+    // both patches, which is harmless where one of the two already landed.
+    if (refused) {
+      const { error } = await supabase.rpc('update_tryout_player', {
+        p_participant_id: playerId,
+        p_athlete_patch: athletePatch,
+        p_participant_patch: participantPatch,
+      });
+      if (error) {
+        if (error.code === 'PGRST202' || error.code === '42883') {
+          console.warn('update_tryout_player() not deployed — an assessor cannot save player edits.');
+          throw new Error(
+            'Your account does not have permission to edit this player. Ask the coach who owns this evaluation to make the change.',
+          );
+        }
+        throw unwrapError(error);
+      }
     }
     return this.fetchPlayer(playerId);
   }
@@ -7413,6 +7470,19 @@ export class SupabaseDataSource implements DataSource {
 
   async listFamilyContacts(athleteId: string): Promise<FamilyContact[]> {
     const { supabase } = await this.ctx();
+    // Through the RPC unconditionally, not as a fallback after a failed direct
+    // read: RLS handles a read it rejects by filtering rows out, not by
+    // erroring, so an assessor's SELECT here would come back an empty array —
+    // identical to "this player genuinely has none" — with no signal to retry
+    // on. list_athlete_family_contacts() re-applies the same authorization
+    // add/removeFamilyContact() fall back to, so this is a superset read for a
+    // coach too, not just the assessor path.
+    const { data, error } = await supabase.rpc('list_athlete_family_contacts', { p_athlete_id: athleteId });
+    if (!error) return ((data ?? []) as Row[]).map((r) => this.rowToFamilyContact(r));
+
+    if (error.code !== 'PGRST202' && error.code !== '42883') throw unwrapError(error);
+    console.warn('list_athlete_family_contacts() not deployed — falling back to a direct read (staff only).');
+
     const rows = unwrap(
       await supabase
         .from('athlete_family_contacts')
@@ -7428,26 +7498,69 @@ export class SupabaseDataSource implements DataSource {
     contact: { name: string; relationship?: string; email?: string; phone?: string },
   ): Promise<FamilyContact> {
     const { supabase, userId } = await this.ctx();
-    const row = unwrap(
-      await supabase
-        .from('athlete_family_contacts')
-        .insert({
-          athlete_id: athleteId,
-          name: contact.name,
-          relationship: contact.relationship || null,
-          email: contact.email || null,
-          phone: contact.phone || null,
-          created_by: userId,
-        })
-        .select()
-        .single(),
-    ) as Row;
-    return this.rowToFamilyContact(row);
+    const res = await supabase
+      .from('athlete_family_contacts')
+      .insert({
+        athlete_id: athleteId,
+        name: contact.name,
+        relationship: contact.relationship || null,
+        email: contact.email || null,
+        phone: contact.phone || null,
+        created_by: userId,
+      })
+      .select()
+      .single();
+
+    // '42501' is Postgres's own code for an INSERT that failed its RLS WITH
+    // CHECK — unlike an UPDATE/DELETE the policy rejects (which silently
+    // matches zero rows and looks like success), an insert violation is a real
+    // error, thrown straight from the table. This is how an invited assessor —
+    // reaching the athlete through a tryout_assessors row, not a membership —
+    // hits the account-staff-only policy. add_athlete_family_contact() is the
+    // same write behind a check that authorizes them explicitly.
+    if (res.error?.code === '42501') {
+      const { data, error } = await supabase.rpc('add_athlete_family_contact', {
+        p_athlete_id: athleteId,
+        p_name: contact.name,
+        p_relationship: contact.relationship || null,
+        p_email: contact.email || null,
+        p_phone: contact.phone || null,
+      });
+      if (error) {
+        if (error.code === 'PGRST202' || error.code === '42883') {
+          console.warn('add_athlete_family_contact() not deployed — an assessor cannot add a family contact.');
+          throw new Error(
+            'Your account does not have permission to add a family contact for this player. Ask the coach who owns this evaluation to add it.',
+          );
+        }
+        throw unwrapError(error);
+      }
+      return this.rowToFamilyContact(data as Row);
+    }
+
+    return this.rowToFamilyContact(unwrap(res) as Row);
   }
 
   async removeFamilyContact(id: string): Promise<void> {
     const { supabase } = await this.ctx();
-    unwrap(await supabase.from('athlete_family_contacts').delete().eq('id', id));
+    // .select().single() so a DELETE an RLS policy silently drops (matches zero
+    // rows, which Postgres reports as an ordinary success) is told apart from
+    // one that actually removed the row — see wroteRow().
+    const wrote = await wroteRow(
+      supabase.from('athlete_family_contacts').delete().eq('id', id).select().single(),
+    );
+    if (wrote) return;
+
+    const { error } = await supabase.rpc('remove_athlete_family_contact', { p_contact_id: id });
+    if (error) {
+      if (error.code === 'PGRST202' || error.code === '42883') {
+        console.warn('remove_athlete_family_contact() not deployed — an assessor cannot remove a family contact.');
+        throw new Error(
+          'Your account does not have permission to remove this family contact. Ask the coach who owns this evaluation to remove it.',
+        );
+      }
+      throw unwrapError(error);
+    }
   }
 
   async leaveSeason(seasonRosterId: string): Promise<void> {
@@ -7807,6 +7920,260 @@ export class SupabaseDataSource implements DataSource {
       body: data.body,
       createdAt: toMs(data.created_at),
     };
+  }
+
+
+  // ─── Player selection letters ─────────────────────────────────────────────
+
+  private rowToLetterTemplate(r: Row): LetterTemplate {
+    return {
+      id: r.id,
+      name: r.name,
+      kind: r.kind as LetterKind,
+      subject: r.subject ?? '',
+      body: r.body ?? '',
+      tryoutId: r.tryout_id ?? undefined,
+      createdAt: toMs(r.created_at),
+      updatedAt: toMs(r.updated_at ?? r.created_at),
+    };
+  }
+
+  private rowToPlayerLetter(r: Row): PlayerLetter {
+    return {
+      id: r.id,
+      tryoutId: r.tryout_id,
+      playerId: r.participant_id,
+      athleteId: r.athlete_id ?? undefined,
+      templateId: r.template_id ?? undefined,
+      kind: r.kind as LetterKind,
+      subject: r.subject ?? '',
+      body: r.body ?? '',
+      recipientEmail: r.recipient_email ?? undefined,
+      status: (r.status ?? 'draft') as PlayerLetter['status'],
+      error: r.error ?? undefined,
+      sentAt: r.sent_at ? toMs(r.sent_at) : undefined,
+      createdAt: toMs(r.created_at),
+      updatedAt: toMs(r.updated_at ?? r.created_at),
+    };
+  }
+
+  async listLetterTemplates(): Promise<LetterTemplate[]> {
+    const { supabase, accountId } = await this.ctx();
+    const rows = unwrap(
+      await supabase
+        .from('letter_templates')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('updated_at', { ascending: false }),
+    ) as Row[] | null;
+    return (rows ?? []).map((r) => this.rowToLetterTemplate(r));
+  }
+
+  async createLetterTemplate(input: {
+    name: string;
+    kind: LetterKind;
+    subject: string;
+    body: string;
+    tryoutId?: string;
+  }): Promise<LetterTemplate> {
+    const { supabase, userId, accountId } = await this.ctx();
+    const row = unwrap(
+      await supabase
+        .from('letter_templates')
+        .insert({
+          account_id: accountId,
+          name: input.name,
+          kind: input.kind,
+          subject: input.subject,
+          body: input.body,
+          tryout_id: input.tryoutId ?? null,
+          created_by: userId,
+        })
+        .select()
+        .single(),
+    ) as Row;
+    return this.rowToLetterTemplate(row);
+  }
+
+  async updateLetterTemplate(
+    id: string,
+    updates: Partial<{ name: string; kind: LetterKind; subject: string; body: string }>,
+  ): Promise<LetterTemplate> {
+    const { supabase } = await this.ctx();
+    const patch: Row = {};
+    if (updates.name !== undefined) patch.name = updates.name;
+    if (updates.kind !== undefined) patch.kind = updates.kind;
+    if (updates.subject !== undefined) patch.subject = updates.subject;
+    if (updates.body !== undefined) patch.body = updates.body;
+
+    // .select().single() so an update RLS silently drops — zero rows matched,
+    // which Postgres reports as an ordinary success — surfaces instead of
+    // reporting a save that never happened. See wroteRow().
+    const row = unwrap(
+      await supabase.from('letter_templates').update(patch).eq('id', id).select().single(),
+    ) as Row;
+    return this.rowToLetterTemplate(row);
+  }
+
+  async deleteLetterTemplate(id: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    unwrap(await supabase.from('letter_templates').delete().eq('id', id).select().single());
+  }
+
+  async listPlayerLetters(tryoutId: string): Promise<PlayerLetter[]> {
+    const { supabase } = await this.ctx();
+    const rows = unwrap(
+      await supabase
+        .from('player_letters')
+        .select('*')
+        .eq('tryout_id', tryoutId)
+        .order('created_at', { ascending: false }),
+    ) as Row[] | null;
+    return (rows ?? []).map((r) => this.rowToPlayerLetter(r));
+  }
+
+  /**
+   * The send itself, shared by the bulk send and by a re-send of a stored copy.
+   *
+   * Returns the row as it now stands rather than throwing on a failed send: a
+   * letter that could not be delivered is still a letter the coach authored,
+   * and losing the copy would mean re-typing it to try again.
+   */
+  private async deliverLetter(
+    supabase: SupabaseClient,
+    userId: string,
+    letterId: string,
+    letter: { subject: string; body: string; recipientEmail?: string },
+  ): Promise<PlayerLetter> {
+    let error: string | null = null;
+    if (!letter.recipientEmail) {
+      error = 'No email address on file for this player.';
+    } else {
+      try {
+        await this.sendEmail('tryout_letter', letter.recipientEmail, {
+          subject: letter.subject,
+          body: letter.body,
+        });
+      } catch (e) {
+        error = e instanceof Error ? e.message : 'Failed to send the letter.';
+      }
+    }
+
+    const row = unwrap(
+      await supabase
+        .from('player_letters')
+        .update({
+          status: error ? 'failed' : 'sent',
+          error,
+          sent_at: error ? null : new Date().toISOString(),
+          sent_by: error ? null : userId,
+        })
+        .eq('id', letterId)
+        .select()
+        .single(),
+    ) as Row;
+    return this.rowToPlayerLetter(row);
+  }
+
+  async sendPlayerLetters(
+    tryoutId: string,
+    letters: {
+      playerId: string;
+      playerName: string;
+      athleteId?: string;
+      templateId?: string;
+      kind: LetterKind;
+      subject: string;
+      body: string;
+      recipientEmail?: string;
+    }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<PlayerLetterSendResult[]> {
+    const { supabase, userId } = await this.ctx();
+    const results: PlayerLetterSendResult[] = [];
+
+    // Serially, not Promise.all: each letter is an edge-function invocation
+    // that hands SendGrid one message, and firing forty of those at once is how
+    // a club's domain gets rate-limited on the day it matters most. The
+    // progress callback is what keeps the screen honest about the wait.
+    let done = 0;
+    for (const input of letters) {
+      try {
+        // Inserted before the send, so a copy exists on the player's card even
+        // if the tab is closed mid-run — the alternative loses the wording of a
+        // letter that may already be in someone's inbox.
+        const created = unwrap(
+          await supabase
+            .from('player_letters')
+            .insert({
+              tryout_id: tryoutId,
+              participant_id: input.playerId,
+              athlete_id: input.athleteId ?? null,
+              template_id: input.templateId ?? null,
+              kind: input.kind,
+              subject: input.subject,
+              body: input.body,
+              recipient_email: input.recipientEmail ?? null,
+              status: 'draft',
+            })
+            .select()
+            .single(),
+        ) as Row;
+
+        const letter = await this.deliverLetter(supabase, userId, created.id, input);
+        results.push({
+          playerId: input.playerId,
+          playerName: input.playerName,
+          letter,
+          error: letter.status === 'failed' ? letter.error : undefined,
+        });
+      } catch (e) {
+        // The insert itself failed — no copy was stored, so there is nothing to
+        // retry against. Reported per player, like an import row.
+        results.push({
+          playerId: input.playerId,
+          playerName: input.playerName,
+          error: e instanceof Error ? e.message : 'Failed to save the letter.',
+        });
+      }
+      onProgress?.(++done, letters.length);
+    }
+
+    return results;
+  }
+
+  async updatePlayerLetter(
+    id: string,
+    updates: Partial<{ subject: string; body: string; recipientEmail: string }>,
+  ): Promise<PlayerLetter> {
+    const { supabase } = await this.ctx();
+    const patch: Row = {};
+    if (updates.subject !== undefined) patch.subject = updates.subject;
+    if (updates.body !== undefined) patch.body = updates.body;
+    if (updates.recipientEmail !== undefined) patch.recipient_email = updates.recipientEmail || null;
+
+    const row = unwrap(
+      await supabase.from('player_letters').update(patch).eq('id', id).select().single(),
+    ) as Row;
+    return this.rowToPlayerLetter(row);
+  }
+
+  async resendPlayerLetter(id: string): Promise<PlayerLetter> {
+    const { supabase, userId } = await this.ctx();
+    const row = unwrap(
+      await supabase.from('player_letters').select('*').eq('id', id).single(),
+    ) as Row;
+    const current = this.rowToPlayerLetter(row);
+    return this.deliverLetter(supabase, userId, id, {
+      subject: current.subject,
+      body: current.body,
+      recipientEmail: current.recipientEmail,
+    });
+  }
+
+  async deletePlayerLetter(id: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    unwrap(await supabase.from('player_letters').delete().eq('id', id).select().single());
   }
 
 }

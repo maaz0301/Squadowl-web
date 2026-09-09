@@ -39,6 +39,7 @@ const LEVELS = ['AAA', 'AA', 'A', 'BB', 'House'];
  */
 export const POSITIONS_BY_SPORT: Record<Sport, string[]> = {
   Hockey: ['FWD', 'FWD', 'FWD', 'DEF', 'DEF', 'GTL'],
+  Ringette: ['FWD', 'FWD', 'DEF', 'DEF', 'DEF', 'GTL'],
   Soccer: ['Forward', 'Midfield', 'Midfield', 'Defender', 'Defender', 'Goalkeeper'],
   Football: ['QB', 'RB', 'WR', 'WR', 'OL', 'DL', 'LB', 'DB'],
   Basketball: ['PG', 'SG', 'SF', 'PF', 'C'],
@@ -46,6 +47,7 @@ export const POSITIONS_BY_SPORT: Record<Sport, string[]> = {
   Volleyball: ['Setter', 'Outside', 'Middle', 'Opposite', 'Libero'],
   Lacrosse: ['Attack', 'Midfield', 'Midfield', 'Defense', 'Goalie'],
   Baseball: ['Pitcher', 'Catcher', 'Infield', 'Infield', 'Outfield', 'Outfield'],
+  Cricket: ['Batsman', 'Batsman', 'Batsman', 'Bowler', 'Bowler', 'All-Rounder', 'Wicket-Keeper'],
   Other: ['FWD', 'DEF', 'GTL', 'Other'],
 };
 

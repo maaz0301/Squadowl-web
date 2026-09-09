@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useIsMutating } from '@tanstack/react-query';
 
-import { AddPlayerForm } from '@/components/assessment/AddPlayerForm';
+import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
@@ -23,21 +23,23 @@ import {
   useAlert,
 } from '@/components/ui';
 import { canUseFeature, isAtPlayerLimit } from '@/data/plans';
-import { playerDisplayName } from '@/data/rubrics';
+import { isGoaliePosition, playerDisplayName } from '@/data/rubrics';
+import { getDataSource } from '@/data';
 import type { AddPlayerForm as AddPlayerFormValues } from '@/data/types';
 import {
   useAddPlayerMutation,
+  useDeletePlayerMutation,
   useImportTryoutPlayersMutation,
   useClearTestDataMutation,
   useGenerateTestDataMutation,
   useTryoutQuery,
   useUploadPlayerPhotoMutation,
 } from '@/features/queries';
-import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
+import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { tryoutBulkWriteKey } from '@/lib/queryClient';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
-import { useUser } from '@/state/authStore';
+import { useUser, usePermissions } from '@/state/authStore';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
@@ -48,11 +50,11 @@ export default function RosterPage() {
   const router = useRouter();
   const { alert, confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
-  const assessorMode = useAssessorMode();
-  const isAssessorOnly = assessorMode || tryoutQuery.data?.viewerIsOwner === false;
+  const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   const addPlayer = useAddPlayerMutation(id!);
   const importPlayers = useImportTryoutPlayersMutation(id!);
   const uploadPhoto = useUploadPlayerPhotoMutation(id!);
+  const deletePlayer = useDeletePlayerMutation(id!);
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
   const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
   const clearTest = useClearTestDataMutation(id!);
@@ -62,6 +64,7 @@ export default function RosterPage() {
   const setActiveAssessor = useSessionStore((s) => s.setActiveAssessor);
   const setCurrentPlayer = useSessionStore((s) => s.setCurrentPlayer);
   const user = useUser();
+  const { canAssess } = usePermissions();
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showTools, setShowTools] = useState(false);
@@ -69,6 +72,9 @@ export default function RosterPage() {
   const [showTestGen, setShowTestGen] = useState(false);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [playerSearch, setPlayerSearch] = useState('');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deletingSelected, setDeletingSelected] = useState(false);
   // A bulk add started from another screen (the Registrations tab's dummy-data
   // dialog, typically) keeps writing players for minutes without this page's
   // query ever refetching — so without checking for it, an in-progress large
@@ -99,10 +105,10 @@ export default function RosterPage() {
         result = roster.filter((p) => !scoredIds.has(p.id));
         break;
       case 'goalies':
-        result = roster.filter((p) => p.pos?.toUpperCase() === 'GTL');
+        result = roster.filter((p) => isGoaliePosition(p.pos));
         break;
       case 'skaters':
-        result = roster.filter((p) => p.pos?.toUpperCase() !== 'GTL');
+        result = roster.filter((p) => !isGoaliePosition(p.pos));
         break;
       default:
         result = roster;
@@ -142,7 +148,11 @@ export default function RosterPage() {
   // On failure, offers a Retry instead of just dead-ending — re-running this
   // same submit (including the photo-upload follow-up) rather than only the
   // add-player mutation, so a retry that succeeds still finishes the flow.
-  const submitAddPlayer = async (data: AddPlayerFormValues) => {
+  const submitAddPlayer = async (
+    data: AddPlayerFormValues,
+    _inviteEmails?: string[],
+    extraFamilyContacts?: ExtraFamilyContact[],
+  ) => {
     try {
       const player = await addPlayer.mutateAsync(data);
       // A freshly picked file is a blob: URL until it's uploaded to storage.
@@ -160,11 +170,26 @@ export default function RosterPage() {
           );
         }
       }
+      const contacts = (extraFamilyContacts ?? []).filter((c) => c.name.trim() || c.email.trim());
+      if (player.athleteId && contacts.length > 0) {
+        try {
+          await Promise.all(
+            contacts.map((c) =>
+              getDataSource().addFamilyContact(player.athleteId!, { name: c.name || c.email, email: c.email || undefined }),
+            ),
+          );
+        } catch (e) {
+          await alert(
+            'Family Members Not Saved',
+            `The player was saved, but the additional family members couldn't be added: ${e instanceof Error ? e.message : 'Unknown error'}`,
+          );
+        }
+      }
       setShowAdd(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to add player.';
       const retry = await confirm({ title: 'Save Error', message, confirmLabel: 'Retry' });
-      if (retry) await submitAddPlayer(data);
+      if (retry) await submitAddPlayer(data, _inviteEmails, extraFamilyContacts);
     }
   };
 
@@ -192,6 +217,11 @@ export default function RosterPage() {
       label: 'Scan Sheet Import',
       desc: 'Import scores from printed OCR scanning sheets.',
       go: () => router.push(href('scan-sheet')),
+    },
+    {
+      label: 'Player Selection Letters',
+      desc: 'Create and send offer or roster decision letters, with a copy attached to each player.',
+      go: () => router.push(href('letters')),
     },
     ...(isAssociation
       ? [
@@ -229,12 +259,63 @@ export default function RosterPage() {
             count={tryout.roster.length}
             label="players in this roster"
           />
-          <div className="flex flex-wrap gap-2">
-            <Button label="Score Players" onClick={() => router.push(href('rinkside'))} />
-            <Button label="+ Add Player" variant="secondary" onClick={openAdd} />
-            <Button label="Import from File" variant="secondary" onClick={openImport} />
-            <Button label="Tools" variant="ghost" onClick={() => setShowTools(true)} />
-          </div>
+          {selectMode ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                label="← Back"
+                variant="ghost"
+                onClick={() => {
+                  setSelectMode(false);
+                  setSelectedIds(new Set());
+                }}
+              />
+              <Button
+                label={selectedIds.size === filteredRoster.length ? 'Deselect All' : 'Select All'}
+                variant="secondary"
+                onClick={() =>
+                  setSelectedIds(
+                    selectedIds.size === filteredRoster.length
+                      ? new Set()
+                      : new Set(filteredRoster.map((p) => p.id)),
+                  )
+                }
+              />
+              <Button
+                label={`Delete Selected${selectedIds.size ? ` (${selectedIds.size})` : ''}`}
+                variant="danger"
+                disabled={selectedIds.size === 0}
+                loading={deletingSelected}
+                onClick={async () => {
+                  const ids = [...selectedIds];
+                  const ok = await confirm({
+                    title: 'Delete players?',
+                    message: `${ids.length} player${ids.length === 1 ? '' : 's'} will be permanently removed from this roster.`,
+                    confirmLabel: 'Delete',
+                    destructive: true,
+                  });
+                  if (!ok) return;
+                  setDeletingSelected(true);
+                  try {
+                    await Promise.all(ids.map((pid) => deletePlayer.mutateAsync(pid)));
+                    setSelectedIds(new Set());
+                    setSelectMode(false);
+                  } catch (e) {
+                    await alert('Delete Failed', e instanceof Error ? e.message : 'Could not delete the selected players.');
+                  } finally {
+                    setDeletingSelected(false);
+                  }
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button label="Score Players" onClick={() => router.push(href('rinkside'))} />
+              <Button label="+ Add Player" variant="secondary" onClick={openAdd} />
+              <Button label="Import from File" variant="secondary" onClick={openImport} />
+              <Button label="Select" variant="secondary" onClick={() => setSelectMode(true)} />
+              <Button label="Tools" variant="ghost" onClick={() => setShowTools(true)} />
+            </div>
+          )}
 
           {tryout.assessors.length > 0 ? (
             <div>
@@ -294,6 +375,8 @@ export default function RosterPage() {
           message="Add players to this evaluation, then you can start scoring."
           actionLabel="+ Add Player"
           onAction={openAdd}
+          secondaryActionLabel="Import from File"
+          onSecondaryAction={openImport}
         />
       ) : filteredRoster.length === 0 ? (
         <EmptyState
@@ -313,17 +396,47 @@ export default function RosterPage() {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {filteredRoster.map((item) => {
             const evalCount = tryout.evals.filter((e) => e.playerId === item.id).length;
+            const isSelected = selectedIds.has(item.id);
+            const toggleSelected = () =>
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(item.id)) next.delete(item.id);
+                else next.add(item.id);
+                return next;
+              });
             return (
               <button
                 type="button"
                 key={item.id}
                 onClick={() => {
+                  if (selectMode) {
+                    toggleSelected();
+                    return;
+                  }
                   setCurrentPlayer(item.id);
                   router.push(href(`player/${item.id}`));
                 }}
                 className="flex items-center gap-3 rounded-2xl border p-4 text-left transition-transform hover:-translate-y-0.5"
-                style={{ backgroundColor: colors.card, borderColor: colors.border }}
+                style={{
+                  backgroundColor: colors.card,
+                  borderColor: isSelected ? colors.primary : colors.border,
+                }}
               >
+                {selectMode ? (
+                  // A plain indicator, not the interactive Checkbox — this
+                  // whole row is already a button that toggles selection, and
+                  // nesting another focusable control inside it would double-fire.
+                  <span
+                    aria-hidden
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] border text-[12px] font-bold text-white"
+                    style={{
+                      borderColor: isSelected ? colors.primary : colors.border,
+                      backgroundColor: isSelected ? colors.primary : 'transparent',
+                    }}
+                  >
+                    {isSelected ? '✓' : ''}
+                  </span>
+                ) : null}
                 <Avatar first={item.first} last={item.last} pos={item.pos} uri={item.avatarUrl} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-base font-bold" style={{ color: colors.ink }}>
@@ -355,7 +468,12 @@ export default function RosterPage() {
       />
 
       <Modal visible={showAdd} title="Add Player" size="lg" onClose={() => setShowAdd(false)} hideDefaultFooter>
-        <AddPlayerForm loading={addPlayer.isPending || uploadPhoto.isPending} onSubmit={submitAddPlayer} />
+        <AddPlayerForm
+          loading={addPlayer.isPending || uploadPhoto.isPending}
+          sport={tryout.sport}
+          showFamilyContacts={canAssess}
+          onSubmit={submitAddPlayer}
+        />
       </Modal>
 
       <Modal visible={showTools} title="Tools" onClose={() => setShowTools(false)}>

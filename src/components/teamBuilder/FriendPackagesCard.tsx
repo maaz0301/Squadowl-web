@@ -11,6 +11,9 @@ import type { Player, Tryout } from '@/data/types';
 /** A package needs at least two players to mean anything — one player is just a player. */
 const MIN_MEMBERS = 2;
 
+/** Generous ceiling on how many packages one evaluation can define. */
+const MAX_PACKAGES = 100;
+
 /**
  * One colour per package, cycled by position — the same device the team columns
  * use. The colour, not the name, is what makes a group scannable once there are
@@ -262,11 +265,15 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
         <Button
           label="＋ Create Friend Package"
           onClick={openNew}
-          disabled={disabled || tryout.roster.length < MIN_MEMBERS}
+          disabled={disabled || tryout.roster.length < MIN_MEMBERS || packages.length >= MAX_PACKAGES}
         />
         {tryout.roster.length < MIN_MEMBERS ? (
           <p className="text-[11px]" style={{ color: colors.inkFaint }}>
             Add at least two players to the roster first.
+          </p>
+        ) : packages.length >= MAX_PACKAGES ? (
+          <p className="text-[11px]" style={{ color: colors.inkFaint }}>
+            Limit of {MAX_PACKAGES} packages reached.
           </p>
         ) : null}
       </Card>

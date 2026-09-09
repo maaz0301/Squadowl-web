@@ -91,7 +91,12 @@ export function AlertProvider({ children }: { children: ReactNode }) {
           </ModalFooter>
         }
       >
-        <p className="text-[15px] leading-relaxed" style={{ color: colors.inkMuted }}>
+        {/* whitespace-pre-wrap: callers throughout the app join multi-point
+            messages with '\n\n' (see planChange.ts, roster/letters delete
+            confirmations, ...) expecting paragraph breaks — a plain <p>
+            collapses those, so every one of them rendered as a single
+            run-on wall of text. */}
+        <p className="whitespace-pre-wrap text-[15px] leading-relaxed" style={{ color: colors.inkMuted }}>
           {dialog?.message}
         </p>
       </Modal>

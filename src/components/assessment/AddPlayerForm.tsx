@@ -5,19 +5,32 @@ import { useMemo, useRef, useState } from 'react';
 import { useForm, Controller, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 
-import { AddPlayerFormSchema, type AddPlayerForm as AddPlayerFormType, type Athlete } from '@/data/types';
-import { Avatar, Button, FormLock, Input, Modal, PhoneField, Textarea, YearField, useAlert } from '@/components/ui';
-import { useAthletesQuery } from '@/features/queries';
+import { AddPlayerFormSchema, type AddPlayerForm as AddPlayerFormType, type Athlete, type Sport } from '@/data/types';
+import { Avatar, Button, FormLock, Input, Modal, PhoneField, Select, Spinner, Textarea, YearField, useAlert } from '@/components/ui';
+import { useAthletesQuery, useFamilyContactsQuery, useRemoveFamilyContactMutation } from '@/features/queries';
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { POSITION_OPTIONS_BY_SPORT } from '@/data/positions';
+
+/** A family member the coach adds alongside the primary guardian, invited once the player is saved. */
+export interface ExtraFamilyContact {
+  name: string;
+  email: string;
+}
 
 interface Props {
   loading?: boolean;
   defaultValues?: Partial<AddPlayerFormType>;
+  /** Drives the position picker's options — Hockey positions for a Hockey evaluation, and so on. */
+  sport?: Sport;
   /**
    * `inviteEmails` is the addresses the coach marked with the Invite buttons.
    * Undefined means they marked none and the caller decides who to mail.
+   *
+   * `extraFamilyContacts` are the additional family members (beyond the one
+   * primary guardian) added below — saved as the player's family contacts
+   * once it has an athlete id.
    */
-  onSubmit: (data: AddPlayerFormType, inviteEmails?: string[]) => Promise<void>;
+  onSubmit: (data: AddPlayerFormType, inviteEmails?: string[], extraFamilyContacts?: ExtraFamilyContact[]) => Promise<void>;
   /**
    * Show an Invite toggle beside each email — only where an invite has
    * somewhere to go (a team roster).
@@ -34,6 +47,13 @@ interface Props {
    * have to discover from the confirmation that "Save Player" sent an invite.
    */
   submitLabel?: string;
+  /**
+   * Show the "Additional Family Members" section — family PII, so this is
+   * coach/admin-only. Defaults to `true` for a caller that hasn't been told
+   * the viewer's role; pass the caller's own `canManageTeam` explicitly to
+   * keep it away from an assessor.
+   */
+  showFamilyContacts?: boolean;
 }
 
 /**
@@ -83,16 +103,37 @@ function InviteToggle({
 export function AddPlayerForm({
   loading,
   defaultValues,
+  sport,
   onSubmit,
   showInvite,
   submitLabel = 'Save Player',
+  showFamilyContacts = true,
 }: Props) {
   const colors = useThemeColors();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const athletesQuery = useAthletesQuery();
+  // Already-saved contacts, shown alongside the ones staged below — this form
+  // reopens on an existing player with nothing to show otherwise, since
+  // `familyContacts` only ever tracks what's being added in this sitting.
+  const existingContactsQuery = useFamilyContactsQuery(defaultValues?.athleteId);
+  const removeExistingContactMut = useRemoveFamilyContactMutation(defaultValues?.athleteId ?? '');
   const [modalVisible, setModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(defaultValues?.avatarUrl || null);
+
+  const positionOptions = (sport && POSITION_OPTIONS_BY_SPORT[sport]) || [];
+  // Free-text once the sport has no reference list (e.g. "Other"), or the coach
+  // picked "Other / custom" explicitly — otherwise a searchable list of the
+  // sport's own positions beats typing a code from memory.
+  const [positionIsCustom, setPositionIsCustom] = useState(
+    positionOptions.length === 0 ||
+      !!(defaultValues?.pos && !positionOptions.some((o) => o.code === defaultValues.pos)),
+  );
+
+  const [familyContacts, setFamilyContacts] = useState<ExtraFamilyContact[]>([]);
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [contactName, setContactName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
   /**
    * Which email fields the coach marked for an invite — the field, not the
    * address, so editing the address after marking it still sends to what ends
@@ -111,7 +152,11 @@ export function AddPlayerForm({
       first: defaultValues?.first || '',
       last: defaultValues?.last || '',
       jersey: defaultValues?.jersey || '',
-      pos: defaultValues?.pos || 'FWD',
+      // 'FWD' as a bare default only makes sense for the old free-text field —
+      // once a sport has its own position list, defaulting into a code that
+      // isn't actually on it would silently submit a mismatched position for
+      // anyone who never touches the picker.
+      pos: defaultValues?.pos || (positionOptions.length > 0 ? '' : 'FWD'),
       shoots: defaultValues?.shoots || '',
       yearOfBirth: defaultValues?.yearOfBirth || '',
       positionTryingOutFor: defaultValues?.positionTryingOutFor || '',
@@ -159,7 +204,11 @@ export function AddPlayerForm({
     setValue('guardianPhone', a.guardianPhone || '');
     setValue('medicalInfo', a.medicalInfo || '');
     setValue('aboutChild', a.aboutChild || '');
-    setValue('pos', a.currentPosition || 'FWD');
+    const pos = a.currentPosition || (positionOptions.length > 0 ? '' : 'FWD');
+    setPositionIsCustom(
+      positionOptions.length === 0 || (!!pos && !positionOptions.some((o) => o.code === pos)),
+    );
+    setValue('pos', pos);
     setValue('currentTeam', a.currentTeam || '');
     setValue('currentLevel', a.currentLevel || '');
     setValue('jersey', a.jersey || '');
@@ -185,8 +234,37 @@ export function AddPlayerForm({
       .filter((f) => invited[f])
       .map((f) => (data[f] || '').trim())
       .filter(Boolean);
-    await onSubmit(data, marked.length > 0 ? marked : undefined);
+    await onSubmit(data, marked.length > 0 ? marked : undefined, familyContacts);
   }, reportInvalid);
+
+  const addFamilyContact = () => {
+    const name = contactName.trim();
+    const email = contactEmail.trim();
+    if (!name && !email) return;
+    setFamilyContacts((prev) => [...prev, { name, email }]);
+    setContactName('');
+    setContactEmail('');
+    setShowAddContact(false);
+  };
+
+  const removeFamilyContact = (index: number) => {
+    setFamilyContacts((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeExistingContact = async (contactId: string, name: string) => {
+    const ok = await confirm({
+      title: 'Remove Contact',
+      message: `Remove ${name} from this player's family contacts?`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await removeExistingContactMut.mutateAsync(contactId);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not remove this contact.');
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4 pb-2">
@@ -276,14 +354,46 @@ export function AddPlayerForm({
           <Controller
             control={control}
             name="pos"
-            render={({ field, fieldState }) => (
-              <Input
-                label="Position (FWD/DEF/GTL)"
-                {...field}
-                onChange={(e) => field.onChange(e.target.value.toUpperCase())}
-                error={fieldState.error?.message}
-              />
-            )}
+            render={({ field, fieldState }) =>
+              positionOptions.length > 0 && !positionIsCustom ? (
+                <Select
+                  label="Position"
+                  value={field.value || ''}
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      setPositionIsCustom(true);
+                      field.onChange('');
+                      return;
+                    }
+                    field.onChange(e.target.value);
+                  }}
+                  options={[
+                    { value: '', label: 'Select a position…', disabled: true },
+                    ...positionOptions.map((o) => ({ value: o.code, label: o.label })),
+                    { value: '__custom__', label: 'Other / custom…' },
+                  ]}
+                  error={fieldState.error?.message}
+                />
+              ) : (
+                <Input
+                  label={positionOptions.length > 0 ? 'Position (custom)' : 'Position (FWD/DEF/GTL)'}
+                  {...field}
+                  onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                  error={fieldState.error?.message}
+                  rightAccessory={
+                    positionOptions.length > 0 ? (
+                      <Button
+                        label="Use list"
+                        variant="ghost"
+                        size="sm"
+                        className="min-h-[32px] px-2 py-1 text-xs"
+                        onClick={() => setPositionIsCustom(false)}
+                      />
+                    ) : undefined
+                  }
+                />
+              )
+            }
           />
           <Controller
             control={control}
@@ -361,7 +471,95 @@ export function AddPlayerForm({
           )}
         />
 
+        {showFamilyContacts ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold" style={{ color: colors.ink }}>
+                Additional Family Members
+              </span>
+              <Button label="+ Add" size="sm" variant="ghost" onClick={() => setShowAddContact(true)} />
+            </div>
+            <p className="text-xs" style={{ color: colors.inkMuted }}>
+              A second parent, a grandparent, or anyone else who should get invites for this player.
+            </p>
+
+            {existingContactsQuery.isLoading ? (
+              <Spinner size={16} />
+            ) : (existingContactsQuery.data ?? []).length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {(existingContactsQuery.data ?? []).map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between gap-2 rounded-xl px-3 py-2"
+                    style={{ backgroundColor: colors.tile }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold" style={{ color: colors.ink }}>
+                        {c.name}
+                        {c.relationship ? ` · ${c.relationship}` : ''}
+                      </p>
+                      {c.email ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p> : null}
+                      {c.phone ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.phone}</p> : null}
+                    </div>
+                    <Button
+                      label="Remove"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeExistingContact(c.id, c.name)}
+                      loading={removeExistingContactMut.isPending && removeExistingContactMut.variables === c.id}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {familyContacts.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {familyContacts.map((c, i) => (
+                  <div
+                    key={`${c.email}-${i}`}
+                    className="flex items-center justify-between gap-2 rounded-xl px-3 py-2"
+                    style={{ backgroundColor: colors.tile }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold" style={{ color: colors.ink }}>{c.name || c.email}</p>
+                      {c.name && c.email ? (
+                        <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p>
+                      ) : null}
+                      <p className="truncate text-[11px] italic" style={{ color: colors.inkFaint }}>Not saved yet — added when you save the player.</p>
+                    </div>
+                    <Button label="Remove" variant="ghost" size="sm" onClick={() => removeFamilyContact(i)} />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {existingContactsQuery.data?.length === 0 && familyContacts.length === 0 ? (
+              <span style={{ color: colors.inkFaint }}>No additional contacts added yet.</span>
+            ) : null}
+          </div>
+        ) : null}
+
       </FormLock>
+
+      <Modal
+        visible={showAddContact}
+        title="Add Family Member"
+        onClose={() => setShowAddContact(false)}
+        hideDefaultFooter
+      >
+        <div className="flex flex-col gap-3">
+          <Input label="Name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+          <Input
+            label="Email"
+            type="email"
+            autoCapitalize="none"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+          />
+          <Button label="Add" onClick={addFamilyContact} disabled={!contactName.trim() && !contactEmail.trim()} />
+        </div>
+      </Modal>
 
       <Button label={submitLabel} onClick={submit} loading={loading} size="lg" />
     </div>

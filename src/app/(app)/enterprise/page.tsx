@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, Tabs } from '@/components/ui';
+import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, Tabs, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import {
   useOrgQuery,
@@ -12,9 +12,11 @@ import {
   useTryoutsQuery,
   useTeamsQuery,
   useSeasonsQuery,
+  useRemoveMemberMutation,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
-import type { Tryout } from '@/data/types';
+import { usePermissions } from '@/state/authStore';
+import type { OrgMember, Tryout } from '@/data/types';
 
 const ENT_TABS = [
   { key: 'overview', label: 'Overview' },
@@ -78,9 +80,32 @@ function ShareBar({ parts }: { parts: { label: string; value: number; color: str
 
 export default function EnterprisePage() {
   const colors = useThemeColors();
+  const { alert, confirm } = useAlert();
+  const { canManageOrganization } = usePermissions();
   const [tab, setTab] = useState<EntTab>('overview');
   const orgQuery = useOrgQuery();
   const membersQuery = useOrgMembersQuery();
+  const removeMemberMut = useRemoveMemberMutation();
+
+  const handleRemoveMember = async (member: OrgMember) => {
+    const who = member.name || member.email;
+    const message =
+      member.role === 'guardian'
+        ? `Revoke ${who}'s access to this organization? They will no longer see their players here.`
+        : `Remove ${who} from this organization? They will lose access to its teams and evaluations.`;
+    const ok = await confirm({
+      title: member.role === 'guardian' ? 'Revoke Access' : 'Remove Member',
+      message,
+      confirmLabel: member.role === 'guardian' ? 'Revoke' : 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await removeMemberMut.mutateAsync(member.id);
+    } catch (e) {
+      await alert('Remove Failed', e instanceof Error ? e.message : 'Could not remove this member.');
+    }
+  };
   // Archived assessments are still the association's history. Excluding them
   // made this roll-up describe only whatever happened to be in flight, so a club
   // between seasons read as having almost no players or evaluations at all. The
@@ -448,17 +473,28 @@ export default function EnterprisePage() {
                 </div>
                 <div className="space-y-2">
                   {(membersQuery.data ?? []).map((m) => (
-                    <Card key={m.id} className="flex justify-between items-center">
-                      <div>
-                        <span className="font-bold block" style={{ color: colors.ink }}>{m.name || m.email}</span>
-                        <span className="text-xs block" style={{ color: colors.inkMuted }}>{m.email}</span>
+                    <Card key={m.id} className="flex justify-between items-center gap-3">
+                      <div className="min-w-0">
+                        <span className="font-bold block truncate" style={{ color: colors.ink }}>{m.name || m.email}</span>
+                        <span className="text-xs block truncate" style={{ color: colors.inkMuted }}>{m.email}</span>
                       </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <Badge label={m.role} variant="brand" />
-                        <Badge
-                          label={m.status}
-                          variant={m.status === 'active' ? 'success' : m.status === 'pending' ? 'warning' : 'default'}
-                        />
+                      <div className="flex shrink-0 items-center gap-2">
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge label={m.role} variant="brand" />
+                          <Badge
+                            label={m.status}
+                            variant={m.status === 'active' ? 'success' : m.status === 'pending' ? 'warning' : 'default'}
+                          />
+                        </div>
+                        {canManageOrganization && m.role !== 'admin' ? (
+                          <Button
+                            label={m.role === 'guardian' ? 'Revoke' : 'Remove'}
+                            variant="danger"
+                            size="sm"
+                            onClick={() => handleRemoveMember(m)}
+                            loading={removeMemberMut.isPending && removeMemberMut.variables === m.id}
+                          />
+                        ) : null}
                       </div>
                     </Card>
                   ))}

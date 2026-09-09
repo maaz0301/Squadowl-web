@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { LETTER_KINDS } from './letters';
+
 /**
  * Validate a guardian phone number as 10–15 digits.
  * PhoneField stores the value as "+<code> <number>" (e.g. "+1 1234567890"), while
@@ -25,6 +27,7 @@ const isValidOptionalEmail = (val?: string) =>
 
 export const SPORTS = [
   'Hockey',
+  'Ringette',
   'Soccer',
   'Football',
   'Basketball',
@@ -32,6 +35,7 @@ export const SPORTS = [
   'Volleyball',
   'Lacrosse',
   'Baseball',
+  'Cricket',
   'Other',
 ] as const;
 
@@ -1090,4 +1094,65 @@ export interface GuardianRosterAthlete {
     registrationFeeCents?: number;
     feeStatus: 'unpaid' | 'paid' | 'waived';
   }[];
+}
+// ---- Player selection letters ----
+
+/**
+ * A letter a coach authored, ready to be sent to players.
+ *
+ * Templates hang off the *account*, not one assessment: a club sends the same
+ * offer letter every tryout, and re-typing it each September is exactly what
+ * this feature exists to stop. `tryoutId` records where it was first written,
+ * for nothing more than ordering the coach's own templates sensibly.
+ */
+export const LetterTemplateSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(LETTER_KINDS),
+  subject: z.string(),
+  body: z.string(),
+  tryoutId: z.string().optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+
+export type LetterTemplate = z.infer<typeof LetterTemplateSchema>;
+
+/**
+ * The copy of a letter attached to a player's card.
+ *
+ * `subject` and `body` are the *rendered* text as it was sent, not a reference
+ * back to the template: editing a template afterwards must not rewrite history
+ * on letters already in someone's inbox. Editing a sent letter here and
+ * re-sending it does update this row — that is the coach correcting a letter
+ * they already sent, which is the flow the request asks for.
+ */
+export const PlayerLetterSchema = z.object({
+  id: z.string(),
+  tryoutId: z.string(),
+  /** tryout_participants row — the player as they exist in this assessment. */
+  playerId: z.string(),
+  athleteId: z.string().optional(),
+  /** Null once the template it came from is deleted; the copy outlives it. */
+  templateId: z.string().optional(),
+  kind: z.enum(LETTER_KINDS),
+  subject: z.string(),
+  body: z.string(),
+  recipientEmail: z.string().optional(),
+  status: z.enum(['draft', 'sent', 'failed']),
+  /** Why the last send failed, shown on the player card beside a Retry. */
+  error: z.string().optional(),
+  sentAt: z.number().optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+
+export type PlayerLetter = z.infer<typeof PlayerLetterSchema>;
+
+/** One player's outcome from a bulk send — see sendPlayerLetters(). */
+export interface PlayerLetterSendResult {
+  playerId: string;
+  playerName: string;
+  letter?: PlayerLetter;
+  error?: string;
 }

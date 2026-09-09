@@ -7,24 +7,24 @@ import { themeTokens } from '@/theme/tokens';
 import { Avatar, Badge, Button, Card, EmptyState, ErrorState, LoadingState } from '@/components/ui';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useResultsQuery } from '@/features/queries';
-import { useAssessmentHref, useAssessmentId, useAssessorMode } from '@/features/useAssessmentId';
-import { getScoreHeatLevel, playerDisplayName } from '@/data/rubrics';
+import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
+import { getScoreHeatLevel, isGoaliePosition, playerDisplayName } from '@/data/rubrics';
 
 export default function ResultsPage() {
   const id = useAssessmentId();
   const href = useAssessmentHref();
   const colors = useThemeColors();
   const router = useRouter();
-  const isAssessorOnly = useAssessorMode();
   const { data: tryout, results, isLoading, isError, refetch } = useResultsQuery(id);
+  const isAssessorOnly = useIsAssessorOnly(tryout?.viewerIsOwner);
 
   if (isLoading) return <LoadingState message="Loading results..." />;
   if (isError || !tryout) return <ErrorState message="Could not load results." onRetry={() => refetch()} />;
   if (!tryout.viewerIsOwner) return <CoachOnlyState what="see the results" />;
 
   const sorted = [...results].sort((a, b) => b.overall - a.overall);
-  const skaters = sorted.filter((r) => r.player.pos?.toUpperCase() !== 'GTL');
-  const goalies = sorted.filter((r) => r.player.pos?.toUpperCase() === 'GTL');
+  const skaters = sorted.filter((r) => !isGoaliePosition(r.player.pos));
+  const goalies = sorted.filter((r) => isGoaliePosition(r.player.pos));
 
   return (
     <>
