@@ -419,7 +419,10 @@ export default function ScorePage() {
         </div>
       ) : null}
 
-      <div className="no-scrollbar mb-5 flex gap-2 overflow-x-auto pb-1">
+      {/* edge-bleed runs the strip to the screen edge on phones so a
+          half-visible last session reads as "scroll me" instead of a hard
+          stop — same reasoning as the tab strip in the assessment layout. */}
+      <div className="no-scrollbar edge-bleed mb-5 flex gap-2 overflow-x-auto pb-1">
         {SESSIONS.map((s, idx) => {
           const isScored = scoredSessions.has(s);
           // A session the server counts but this viewer can't read is an
