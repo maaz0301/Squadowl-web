@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Badge, Button, Card, Input, PageHeader, Switch, useAlert } from '@/components/ui';
+import { Badge, Button, Card, Input, Modal, ModalFooter, PageHeader, Switch, useAlert } from '@/components/ui';
 import {
   PLAN_DEFINITIONS,
   formatCad,
@@ -11,6 +11,7 @@ import {
   getTeamAllowance,
   getTierRank,
   sellsExtraTeams,
+  type PlanDefinition,
 } from '@/data/plans';
 import type { PlanTier } from '@/data/types';
 import {
@@ -18,6 +19,7 @@ import {
   hasLiveSubscription,
   planChangeDirection,
   planChangeRoute,
+  type DowngradeImpactLine,
 } from '@/lib/planChange';
 import { useUser } from '@/state/authStore';
 import { getDataSource } from '@/data';
@@ -38,6 +40,15 @@ export default function UpgradePage() {
   const { alert, confirm } = useAlert();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [loadingPortal, setLoadingPortal] = useState(false);
+  // The downgrade confirmation's own dialog (see confirmDowngrade below) —
+  // its impact list needs real structure (grouped, bulleted) that the shared
+  // string-message Alert can't give it, so it keeps the same
+  // resolve-a-promise shape as useAlert().confirm() but renders its own Modal.
+  const [downgradeConfirm, setDowngradeConfirm] = useState<{
+    tier: PlanTier;
+    impact: DowngradeImpactLine[];
+    resolve: (value: boolean) => void;
+  } | null>(null);
   const [extraTeams, setExtraTeams] = useState(1);
   const [buyingTeams, setBuyingTeams] = useState(false);
   // Monthly billing is temporarily hidden — every checkout goes through yearly for now,
@@ -196,24 +207,23 @@ export default function UpgradePage() {
   };
 
   /** The "here's what this costs you" gate in front of a downgrade. */
-  const confirmDowngrade = async (tier: PlanTier) => {
-    const impact = buildDowngradeImpact({
-      from: currentTier,
-      to: tier,
-      teamCount: teamCountQuery.data,
-      assessmentCount: assessmentCountQuery.data,
-      extraTeamLicenses: currentLicenses,
+  const confirmDowngrade = (tier: PlanTier) =>
+    new Promise<boolean>((resolve) => {
+      const impact = buildDowngradeImpact({
+        from: currentTier,
+        to: tier,
+        teamCount: teamCountQuery.data,
+        assessmentCount: assessmentCountQuery.data,
+        extraTeamLicenses: currentLicenses,
+      });
+      setDowngradeConfirm({ tier, impact, resolve });
     });
-    const target = getPlanDefinition(tier);
-    const ok = await confirm({
-      title: `Switch down to ${target.name}?`,
-      message: impact.length
-        ? `${impact.join('\n\n')}\n\nYou'll finish the change in Stripe, where the new price and any credit for the rest of this term are shown before you confirm.`
-        : `${target.name} covers everything you're using today. You'll finish the change in Stripe, where the new price and any credit for the rest of this term are shown before you confirm.`,
-      confirmLabel: `Switch to ${target.name}`,
-      destructive: true,
+
+  const closeDowngradeConfirm = (value: boolean) => {
+    setDowngradeConfirm((d) => {
+      d?.resolve(value);
+      return null;
     });
-    return ok;
   };
 
   // Extra teams are an add-on subscription on top of the current plan (Club only), so
@@ -546,6 +556,126 @@ export default function UpgradePage() {
           );
         })}
       </div>
+
+      {downgradeConfirm ? (
+        <DowngradeConfirmModal
+          target={getPlanDefinition(downgradeConfirm.tier)}
+          impact={downgradeConfirm.impact}
+          onCancel={() => closeDowngradeConfirm(false)}
+          onConfirm={() => closeDowngradeConfirm(true)}
+        />
+      ) : null}
     </>
+  );
+}
+
+/**
+ * The structured downgrade-impact dialog `confirmDowngrade` opens.
+ *
+ * Kept off the shared string-message Alert on purpose: this content is a
+ * list of independent, differently-toned facts (a lost capability reads
+ * nothing like "you're already over this limit"), and cramming it into one
+ * paragraph — even a wrapped one — is what made this dialog hard to scan.
+ * Grouping by DowngradeImpactLine's `kind` and giving each group its own
+ * marker is the fix; the closing Stripe note stays visually separate so it
+ * doesn't get lost with everything above it.
+ */
+function DowngradeConfirmModal({
+  target,
+  impact,
+  onCancel,
+  onConfirm,
+}: {
+  target: PlanDefinition;
+  impact: DowngradeImpactLine[];
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const colors = useThemeColors();
+  const lost = impact.filter((line) => line.kind === 'lost');
+  const limits = impact.filter((line) => line.kind === 'limit');
+
+  return (
+    <Modal
+      visible
+      title={`Switch down to ${target.name}?`}
+      size="md"
+      onClose={onCancel}
+      footer={
+        <ModalFooter>
+          <Button label="Cancel" variant="ghost" onClick={onCancel} />
+          <Button label={`Switch to ${target.name}`} variant="danger" onClick={onConfirm} />
+        </ModalFooter>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {impact.length === 0 ? (
+          <p className="text-[15px] leading-relaxed" style={{ color: colors.inkMuted }}>
+            {target.name} covers everything you&rsquo;re using today.
+          </p>
+        ) : (
+          <>
+            {lost.length > 0 ? (
+              <ImpactGroup heading="No longer included" tone="danger" lines={lost} />
+            ) : null}
+            {limits.length > 0 ? (
+              <ImpactGroup heading="Limits that apply now" tone="warning" lines={limits} />
+            ) : null}
+          </>
+        )}
+
+        <p
+          className="rounded-xl px-3.5 py-3 text-sm leading-relaxed"
+          style={{ backgroundColor: colors.tile, color: colors.inkMuted }}
+        >
+          You&rsquo;ll finish the change in Stripe, where the new price and any credit for the rest of this
+          term are shown before you confirm.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+/** The rgba tints Badge already uses for these two tones, so the marker matches the app's existing color language. */
+const IMPACT_TONE_BG: Record<'danger' | 'warning', string> = {
+  danger: 'rgba(248,113,113,0.15)',
+  warning: 'rgba(251,146,60,0.15)',
+};
+
+function ImpactGroup({
+  heading,
+  tone,
+  lines,
+}: {
+  heading: string;
+  tone: 'danger' | 'warning';
+  lines: DowngradeImpactLine[];
+}) {
+  const colors = useThemeColors();
+  const marker = tone === 'danger' ? '−' : '!';
+  const fg = tone === 'danger' ? colors.danger : colors.warning;
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-bold uppercase tracking-wide" style={{ color: colors.inkFaint }}>
+        {heading}
+      </p>
+      <ul className="flex flex-col gap-2">
+        {lines.map((line, i) => (
+          <li key={i} className="flex items-start gap-2.5">
+            <span
+              aria-hidden
+              className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+              style={{ backgroundColor: IMPACT_TONE_BG[tone], color: fg }}
+            >
+              {marker}
+            </span>
+            <span className="text-[15px] leading-relaxed" style={{ color: colors.ink }}>
+              {line.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
