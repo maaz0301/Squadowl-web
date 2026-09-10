@@ -23,21 +23,10 @@ export function GuardianAthleteCard({
           </span>
         </div>
 
-        {athlete.tryouts.length === 0 && athlete.seasons.length === 0 ? (
+        {athlete.seasons.length === 0 ? (
           <p className="mt-3 text-sm" style={{ color: colors.inkMuted }}>
-            No active tryouts or seasons assigned yet.
+            No active seasons assigned yet.
           </p>
-        ) : null}
-
-        {athlete.tryouts.length > 0 ? (
-          <div className="mt-3">
-            <SectionLabel className="mb-1">Tryouts</SectionLabel>
-            {athlete.tryouts.map((t) => (
-              <p key={t.participantId} className="text-sm" style={{ color: colors.primary }}>
-                • {t.name} ({t.sport})
-              </p>
-            ))}
-          </div>
         ) : null}
 
         {athlete.seasons.length > 0 ? (

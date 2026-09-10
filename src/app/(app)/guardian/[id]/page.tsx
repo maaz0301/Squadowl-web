@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 
 import { useThemeColors, type AppTheme } from '@/theme/ThemeProvider';
@@ -309,11 +308,6 @@ export default function GuardianPortalPage() {
     return aDate - bDate;
   });
 
-  const overviewItems = [
-    ...athlete.seasons.map((s) => ({ ...s, _type: 'season' as const })),
-    ...athlete.tryouts.map((t) => ({ ...t, _type: 'tryout' as const })),
-  ];
-
   return (
     <>
       <PageHeader
@@ -330,7 +324,7 @@ export default function GuardianPortalPage() {
             {athlete.firstName} {athlete.lastName}
           </p>
           <p className="mt-1 text-base" style={{ color: colors.inkMuted }}>
-            {athlete.tryouts.length + athlete.seasons.length} Active Assignments
+            {athlete.seasons.length} Active Assignments
           </p>
         </div>
       </div>
@@ -354,41 +348,30 @@ export default function GuardianPortalPage() {
       />
 
       {tab === 'overview' ? (
-        overviewItems.length === 0 ? (
-          <EmptyState title="No assignments" message="This athlete isn't assigned to any tryouts or seasons yet." />
+        athlete.seasons.length === 0 ? (
+          <EmptyState title="No assignments" message="This athlete isn't assigned to any seasons yet." />
         ) : (
           <div>
-            {overviewItems.map((item) => {
-              const card = (
-                <Card accent={item._type === 'tryout'} className="mb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="mr-2 flex-1">
-                      <p
-                        className="mb-1 text-lg font-bold"
-                        style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-                      >
-                        {item.name}
-                      </p>
-                      <p className="mb-2 text-sm" style={{ color: colors.inkMuted }}>
-                        {item._type === 'season' ? `${item.teamName} · ${item.sport}` : `Tryout · ${item.sport}`}
-                      </p>
-                    </div>
-                    <Badge label={item._type === 'season' ? 'Season' : 'Tryout'} variant={item._type === 'season' ? 'info' : 'brand'} />
+            {athlete.seasons.map((season) => (
+              <Card key={season.id} className="mb-3">
+                <div className="flex items-start justify-between">
+                  <div className="mr-2 flex-1">
+                    <p
+                      className="mb-1 text-lg font-bold"
+                      style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+                    >
+                      {season.name}
+                    </p>
+                    <p className="mb-2 text-sm" style={{ color: colors.inkMuted }}>
+                      {season.teamName} · {season.sport}
+                    </p>
                   </div>
-                  {item._type === 'season' && item.collectsFees ? (
-                    <SeasonFeeRow season={item} playerId={playerId} />
-                  ) : null}
-                  {item._type === 'season' ? <LeaveTeamRow season={item} /> : null}
-                </Card>
-              );
-              return item._type === 'tryout' ? (
-                <Link key={`tryout-${item.id}`} href={`/guardian/${playerId}/assessment/${item.id}`}>
-                  {card}
-                </Link>
-              ) : (
-                <div key={`season-${item.id}`}>{card}</div>
-              );
-            })}
+                  <Badge label="Season" variant="info" />
+                </div>
+                {season.collectsFees ? <SeasonFeeRow season={season} playerId={playerId} /> : null}
+                <LeaveTeamRow season={season} />
+              </Card>
+            ))}
           </div>
         )
       ) : tab === 'schedule' ? (
@@ -491,7 +474,7 @@ export default function GuardianPortalPage() {
             </p>
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               This athlete is linked to your guardian account. You will receive notifications and updates
-              regarding their tryouts and team events.
+              regarding their seasons and team events.
             </p>
           </Card>
         </div>
