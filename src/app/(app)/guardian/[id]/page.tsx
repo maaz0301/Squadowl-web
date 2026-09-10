@@ -4,15 +4,12 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 
 import { useThemeColors, type AppTheme } from '@/theme/ThemeProvider';
-import { Avatar, Badge, Button, Card, EmptyState, ErrorState, Input, LoadingState, Modal, PageHeader, Spinner, Tabs, useAlert } from '@/components/ui';
+import { Avatar, Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, Spinner, Tabs, useAlert } from '@/components/ui';
 import {
-  useAddFamilyContactMutation,
   useCreateTeamFeePaymentMutation,
-  useFamilyContactsQuery,
   useGuardianRealtimeSync,
   useGuardianRostersQuery,
   useLeaveSeasonMutation,
-  useRemoveFamilyContactMutation,
   useSetAvailabilityMutation,
   useChatUnreadCount,
 } from '@/features/queries';
@@ -190,59 +187,13 @@ export default function GuardianPortalPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const colors = useThemeColors();
-  const { alert, confirm } = useAlert();
+  const { alert } = useAlert();
   const [tab, setTab] = useState('overview');
 
   const guardianQuery = useGuardianRostersQuery();
   // Keeps this page in sync with a coach's event edits without needing to
   // navigate away and back for the cache to refresh.
   useGuardianRealtimeSync();
-
-  const familyContactsQuery = useFamilyContactsQuery(playerId);
-  const addFamilyContact = useAddFamilyContactMutation(playerId);
-  const removeFamilyContact = useRemoveFamilyContactMutation(playerId);
-  const [showAddContact, setShowAddContact] = useState(false);
-  const [contactName, setContactName] = useState('');
-  const [contactRelationship, setContactRelationship] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
-  const [contactPhone, setContactPhone] = useState('');
-
-  const submitFamilyContact = async () => {
-    if (!contactName.trim()) {
-      await alert('Missing Info', 'Enter at least a name.');
-      return;
-    }
-    try {
-      await addFamilyContact.mutateAsync({
-        name: contactName.trim(),
-        relationship: contactRelationship.trim() || undefined,
-        email: contactEmail.trim() || undefined,
-        phone: contactPhone.trim() || undefined,
-      });
-      setContactName('');
-      setContactRelationship('');
-      setContactEmail('');
-      setContactPhone('');
-      setShowAddContact(false);
-    } catch (e) {
-      await alert('Error', e instanceof Error ? e.message : 'Could not add this contact.');
-    }
-  };
-
-  const confirmRemoveContact = async (id: string, name: string) => {
-    const ok = await confirm({
-      title: 'Remove Contact',
-      message: `Remove ${name} from this athlete's family contacts?`,
-      confirmLabel: 'Remove',
-      destructive: true,
-    });
-    if (!ok) return;
-    try {
-      await removeFamilyContact.mutateAsync(id);
-    } catch (e) {
-      await alert('Error', e instanceof Error ? e.message : 'Could not remove this contact.');
-    }
-  };
 
   // Stripe redirects back here after a team-fee checkout — the webhook that
   // flips fee_status to 'paid' can lag a moment behind, so refetch a few
@@ -427,47 +378,6 @@ export default function GuardianPortalPage() {
             </div>
           </Card>
 
-          <Card className="mb-3">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-lg font-bold" style={{ color: colors.ink }}>
-                Family Contacts
-              </p>
-              <Button label="+ Add" size="sm" variant="ghost" onClick={() => setShowAddContact(true)} />
-            </div>
-            <p className="mb-2 text-xs" style={{ color: colors.inkMuted }}>
-              Other family members — a second parent, a grandparent, an emergency contact.
-            </p>
-            {familyContactsQuery.isLoading ? (
-              <Spinner size={16} />
-            ) : (familyContactsQuery.data ?? []).length === 0 ? (
-              <p className="text-sm" style={{ color: colors.inkMuted }}>
-                No additional contacts added yet.
-              </p>
-            ) : (
-              (familyContactsQuery.data ?? []).map((c) => (
-                <div key={c.id} className="flex items-center justify-between border-b py-2" style={{ borderColor: colors.border }}>
-                  <div className="mr-2 flex-1">
-                    <p className="font-medium" style={{ color: colors.ink }}>
-                      {c.name}
-                      {c.relationship ? ` · ${c.relationship}` : ''}
-                    </p>
-                    {c.email ? <p className="text-xs" style={{ color: colors.inkMuted }}>{c.email}</p> : null}
-                    {c.phone ? <p className="text-xs" style={{ color: colors.inkMuted }}>{c.phone}</p> : null}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => confirmRemoveContact(c.id, c.name)}
-                    className="px-2 text-lg font-bold"
-                    style={{ color: colors.danger }}
-                    aria-label={`Remove ${c.name}`}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))
-            )}
-          </Card>
-
           <Card>
             <p className="mb-2 text-lg font-bold" style={{ color: colors.ink }}>
               Account Link
@@ -480,39 +390,6 @@ export default function GuardianPortalPage() {
         </div>
       )}
 
-      <Modal
-        visible={showAddContact}
-        title="Add Family Contact"
-        onClose={() => {
-          if (addFamilyContact.isPending) return;
-          setShowAddContact(false);
-        }}
-        hideDefaultFooter
-      >
-        <div className="flex flex-col gap-3">
-          <Input label="Name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
-          <Input
-            label="Relationship"
-            value={contactRelationship}
-            onChange={(e) => setContactRelationship(e.target.value)}
-            placeholder="e.g. Grandmother, Emergency Contact"
-          />
-          <Input
-            label="Email"
-            type="email"
-            autoCapitalize="none"
-            value={contactEmail}
-            onChange={(e) => setContactEmail(e.target.value)}
-          />
-          <Input label="Phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
-          <Button
-            label="Add Contact"
-            onClick={submitFamilyContact}
-            loading={addFamilyContact.isPending}
-            disabled={!contactName.trim()}
-          />
-        </div>
-      </Modal>
     </>
   );
 }
