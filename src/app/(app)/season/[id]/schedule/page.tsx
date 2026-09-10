@@ -29,6 +29,7 @@ import {
   useDeleteSeasonEventMutation,
 } from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
+import { AddToCalendar } from '@/components/AddToCalendar';
 import { getDataSource } from '@/data';
 import { CreateEventFormSchema, EVENT_KINDS, type CreateEventForm, type SeasonEvent } from '@/data/types';
 
@@ -242,7 +243,8 @@ export default function SeasonSchedulePage() {
                   {item.date} · {item.startTime ?? '—'}–{item.endTime ?? '—'}
                 </span>
                 {item.location ? <span style={{ color: colors.inkFaint }}>{item.location}</span> : null}
-                <div className="mt-2 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <AddToCalendar event={item} teamName={season.teamName} size="sm" />
                   <Button
                     label="Send Reminder"
                     variant="secondary"

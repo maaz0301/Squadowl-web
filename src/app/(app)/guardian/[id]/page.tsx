@@ -15,6 +15,7 @@ import {
 } from '@/features/queries';
 import type { GuardianRosterAthlete, SeasonEvent } from '@/data/types';
 import { ChatUnreadBadge } from '@/components/ChatUnreadBadge';
+import { AddToCalendar } from '@/components/AddToCalendar';
 
 type FlatEvent = SeasonEvent & { seasonName: string; teamName: string; seasonId: string };
 type GuardianSeason = GuardianRosterAthlete['seasons'][number];
@@ -144,9 +145,12 @@ function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: stri
       ) : null}
 
       <div className="mt-4 border-t pt-3" style={{ borderColor: colors.border }}>
-        <p className="mb-2 text-sm font-bold" style={{ color: colors.inkMuted }}>
-          RSVP
-        </p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-sm font-bold" style={{ color: colors.inkMuted }}>
+            RSVP
+          </p>
+          <AddToCalendar event={item} teamName={item.teamName} size="sm" />
+        </div>
         <div className="flex gap-2">
           <button
             type="button"

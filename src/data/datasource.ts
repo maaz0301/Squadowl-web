@@ -23,6 +23,8 @@ import type {
   ScoreForm,
   Season,
   SeasonEvent,
+  EventRsvpContext,
+  EventRsvpToken,
   SeasonSummary,
   Athlete,
   AthleteHistory,
@@ -182,6 +184,17 @@ export interface DataSource {
   sendPortalInvite(seasonId: string, playerId: string, email: string): Promise<void>;
   sendTeamAnnouncement(seasonId: string, title: string, message: string): Promise<void>;
   setEventAvailability(seasonId: string, eventId: string, playerId: string, response: 'yes' | 'maybe' | 'no'): Promise<void>;
+  /**
+   * RSVP straight from the schedule email. `issueEventRsvpTokens` mints one
+   * unguessable link per invited player for the coach's client to embed;
+   * `getEventRsvpContext`/`submitEventRsvp` are what the /rsvp/<token> landing
+   * page calls, and both work unauthenticated — the recipient usually has no
+   * account. The answer lands in the same `event_availability` row the in-app
+   * portal buttons write, so there is one source of truth for attendance.
+   */
+  issueEventRsvpTokens(eventId: string): Promise<EventRsvpToken[]>;
+  getEventRsvpContext(token: string): Promise<EventRsvpContext | null>;
+  submitEventRsvp(token: string, response: 'yes' | 'maybe' | 'no'): Promise<EventRsvpContext>;
   getAthleteHistory(athleteId: string): Promise<AthleteHistory>;
   /**
    * Highest session number each player in an assessment has already been

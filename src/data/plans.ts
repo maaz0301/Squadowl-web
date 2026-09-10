@@ -87,7 +87,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
       assessments: 1,
       players: 15,
       teams: 1,
-      customRubrics: 0,
+      customRubrics: 3,
       teamBuilder: false,
       aiSummaries: false,
       exports: [],

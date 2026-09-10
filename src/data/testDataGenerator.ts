@@ -97,6 +97,8 @@ export interface DummyDataResult {
   registrations: number;
   players: number;
   evaluations: number;
+  /** Athlete ids of any roster players just created — unset for a registrations-only run. */
+  athleteIds?: string[];
 }
 
 export interface DummyTeamResult extends DummyDataResult {

@@ -698,6 +698,44 @@ export const SeasonEventSchema = z.object({
 
 export type SeasonEvent = z.infer<typeof SeasonEventSchema>;
 
+/**
+ * What one emailed RSVP link resolves to.
+ *
+ * Deliberately narrow: the token in the URL is the only credential the
+ * recipient has, so it buys exactly this one event and the one player it was
+ * issued for — never the rest of the roster or the rest of the schedule. See
+ * `get_event_rsvp_context` in 20260910120000_event_rsvp_tokens.sql.
+ */
+export const EventRsvpContextSchema = z.object({
+  eventId: z.string(),
+  type: z.enum(EVENT_KINDS),
+  title: z.string(),
+  date: z.string(),
+  startTime: z.string().optional(),
+  endTime: z.string().optional(),
+  location: z.string().optional(),
+  notes: z.string().optional(),
+  seasonName: z.string(),
+  teamName: z.string(),
+  playerName: z.string(),
+  response: z.enum(['yes', 'maybe', 'no', 'pending']),
+});
+
+export type EventRsvpContext = z.infer<typeof EventRsvpContextSchema>;
+
+/**
+ * One player's RSVP link, as handed back when an event's links are minted.
+ * Carries the addresses so the caller can build one email per recipient without
+ * a second lookup.
+ */
+export interface EventRsvpToken {
+  rosterId: string;
+  playerName: string;
+  playerEmail?: string;
+  guardianEmail?: string;
+  token: string;
+}
+
 export const SeasonSchema = z.object({
   id: z.string(),
   name: z.string(),

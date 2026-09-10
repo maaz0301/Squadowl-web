@@ -76,6 +76,8 @@ import type {
   ScoreForm,
   Season,
   SeasonEvent,
+  EventRsvpContext,
+  EventRsvpToken,
   SeasonPlayer,
   SeasonSummary,
   Sport,
@@ -3673,6 +3675,7 @@ export class SupabaseDataSource implements DataSource {
 
     let players = 0;
     let evaluations = 0;
+    let athleteIds: string[] | undefined;
     if (wantsRoster) {
       const res = await this.insertDummyRoster(
         supabase,
@@ -3688,6 +3691,7 @@ export class SupabaseDataSource implements DataSource {
       );
       players = res.players;
       evaluations = res.evaluations;
+      athleteIds = res.athleteIds;
     }
     report(totalUnits);
 
@@ -3698,7 +3702,7 @@ export class SupabaseDataSource implements DataSource {
     if (evaluations > 0) steps.scorePlayers = true;
     if (Object.keys(steps).length) await this.markOnboarding(steps);
 
-    return { registrations, players, evaluations };
+    return { registrations, players, evaluations, athleteIds };
   }
 
   /**
@@ -4170,13 +4174,13 @@ export class SupabaseDataSource implements DataSource {
     // The chunk is additionally capped at IN_FILTER_CHUNK, because a delete
     // spends its ids on URL length rather than on statement cost — an
     // insert-sized chunk of them never reaches Postgres at all.
-    const collectIds = async (table: string): Promise<string[]> => {
-      const out: string[] = [];
+    const collectRows = async (table: string, columns: string): Promise<Row[]> => {
+      const out: Row[] = [];
       let cursor: string | null = null;
       for (;;) {
         let q = supabase
           .from(table)
-          .select('id')
+          .select(columns)
           .eq('tryout_id', tryoutId)
           .eq('current_team', TEST_DATA_TAG);
         // Keyset, not OFFSET — same reasoning as fetchAllByIn. An unranged
@@ -4184,30 +4188,63 @@ export class SupabaseDataSource implements DataSource {
         // leave a 1000-player batch permanently half-cleared.
         if (cursor !== null) q = q.gt('id', cursor);
         const page = ((unwrap(await q.order('id').limit(FETCH_PAGE_SIZE)) as Row[] | null) ?? []) as Row[];
-        out.push(...page.map((r) => r.id as string));
+        out.push(...page);
         if (page.length < FETCH_PAGE_SIZE) return out;
         cursor = page[page.length - 1].id as string;
       }
     };
 
-    const deleteByIds = async (table: string, ids: string[], size: number): Promise<number> => {
+    const deleteByIds = async (table: string, ids: string[], size: number, column = 'id'): Promise<number> => {
       if (ids.length === 0) return 0;
       const deleted = await insertChunked(ids, Math.min(size, IN_FILTER_CHUNK), async (chunk) => {
-        unwrap(await supabase.from(table).delete().in('id', chunk));
+        unwrap(await supabase.from(table).delete().in(column, chunk));
         return chunk;
       });
       return deleted.length;
     };
 
-    const participantIds = await collectIds('tryout_participants');
-    const removedPlayers = await deleteByIds('tryout_participants', participantIds, DUMMY_CHUNK.participants);
+    const participantRows = await collectRows('tryout_participants', 'id');
+    const removedPlayers = await deleteByIds(
+      'tryout_participants',
+      participantRows.map((r) => r.id as string),
+      DUMMY_CHUNK.participants,
+    );
+
+    // A team-linked evaluation's roster players are copied onto the team's own
+    // roster too (see addTeamRosterPlayers in generateTestData's caller), tagged
+    // there with source_tryout_id at insert time — a dedicated column, unlike
+    // tryout_participants.current_team, which doubles as a free-text field and
+    // isn't reliable to key off of. Queried directly rather than cross-referenced
+    // through participantRows above, so this still finds and removes them even
+    // if the evaluation side was already cleared or its rows were edited since.
+    const rosterRows = await (async () => {
+      const out: Row[] = [];
+      let cursor: string | null = null;
+      for (;;) {
+        let q = supabase.from('team_roster').select('id').eq('source_tryout_id', tryoutId);
+        if (cursor !== null) q = q.gt('id', cursor);
+        const page = ((unwrap(await q.order('id').limit(FETCH_PAGE_SIZE)) as Row[] | null) ?? []) as Row[];
+        out.push(...page);
+        if (page.length < FETCH_PAGE_SIZE) return out;
+        cursor = page[page.length - 1].id as string;
+      }
+    })();
+    const removedRoster = await deleteByIds(
+      'team_roster',
+      rosterRows.map((r) => r.id as string),
+      DUMMY_CHUNK.participants,
+    );
 
     // Generated registrations carry the same tag, so a pending queue filled by
     // the dummy button is cleared by the same action.
-    const registrationIds = await collectIds('registrations');
-    const removedRegs = await deleteByIds('registrations', registrationIds, DUMMY_CHUNK.registrations);
+    const registrationRows = await collectRows('registrations', 'id');
+    const removedRegs = await deleteByIds(
+      'registrations',
+      registrationRows.map((r) => r.id as string),
+      DUMMY_CHUNK.registrations,
+    );
 
-    return { removed: removedPlayers + removedRegs };
+    return { removed: removedPlayers + removedRoster + removedRegs };
   }
 
   // ─── Registration ───────────────────────────────────────────────────────────
@@ -5572,22 +5609,51 @@ export class SupabaseDataSource implements DataSource {
       // here alone. Emailing is best-effort per guardian, not for the batch as
       // a whole — one bounce or transient function error must not cost every
       // other guardian their invite.
-      const emails = Array.from(new Set(
-        season.roster
+      // Per-player RSVP links, so the email can be answered without opening the
+      // app at all. Grouped by address rather than by player: a guardian with
+      // two kids on this event gets one email asking about both, not two.
+      //
+      // Best-effort — if minting fails the notification still goes out, just
+      // without the buttons, which is strictly what happened before this
+      // existed. Never let it cost a guardian their invite.
+      const rsvpsByEmail = new Map<string, { playerName: string; token: string }[]>();
+      try {
+        for (const t of await this.issueEventRsvpTokens(eventId)) {
+          if (!t.guardianEmail) continue;
+          const list = rsvpsByEmail.get(t.guardianEmail) ?? [];
+          list.push({ playerName: t.playerName, token: t.token });
+          rsvpsByEmail.set(t.guardianEmail, list);
+        }
+      } catch (e) {
+        console.error('Could not issue RSVP links for this event', e);
+      }
+
+      const emails = Array.from(new Set([
+        ...rsvpsByEmail.keys(),
+        ...season.roster
           .filter(p => selectedPlayerIds.includes(p.id))
           .map(p => p.guardianEmail)
-          .filter((e): e is string => !!e)
-      ));
+          .filter((e): e is string => !!e),
+      ]));
 
       onProgress?.(0, emails.length);
       let sent = 0;
       await mapPool(emails, GUARDIAN_EMAIL_CONCURRENCY, async (email) => {
         try {
           await this.sendEmail('schedule_update', email, {
+            eventId,
             eventName: form.title,
             date: form.date,
-            time: form.startTime,
+            startTime: form.startTime,
+            endTime: form.endTime,
             location: form.location,
+            notes: form.notes,
+            teamName: season.teamName,
+            seasonName: season.name,
+            // Freshly created, so this is the first version of the invite any
+            // calendar client will see.
+            sequence: 0,
+            rsvps: rsvpsByEmail.get(email) ?? [],
           });
         } catch (e) {
           console.error('Failed to send schedule email to', email, e);
@@ -5619,34 +5685,68 @@ export class SupabaseDataSource implements DataSource {
     ) as Row;
 
     try {
-      const { data: availPlayers } = await supabase
-        .from('event_availability')
-        .select(`
-          roster_id,
-          season_roster(
-            player_email,
-            athletes(
-              guardian_email
-            )
-          )
-        `)
-        .eq('season_event_id', eventId);
-
       const playerEmails = new Set<string>();
       const guardianEmails = new Set<string>();
+      const rsvpsByEmail = new Map<string, { playerName: string; token: string }[]>();
 
-      if (availPlayers) {
-        for (const item of availPlayers) {
-          const sr = Array.isArray(item.season_roster) ? item.season_roster[0] : item.season_roster;
-          if (sr) {
-            if (sr.player_email) playerEmails.add(sr.player_email);
-            const athlete = Array.isArray(sr.athletes) ? sr.athletes[0] : sr.athletes;
-            if (athlete?.guardian_email) guardianEmails.add(athlete.guardian_email);
+      // issue_event_rsvp_tokens() already joins through to each invited
+      // player's own address and their guardian's, so it doubles as the
+      // recipient list this used to assemble with a nested select — and it
+      // returns the RSVP link alongside, letting the re-send carry buttons.
+      // Idempotent, so a link already in an inbox from the original invite
+      // keeps working after an edit.
+      let tokensIssued = false;
+      try {
+        for (const t of await this.issueEventRsvpTokens(eventId)) {
+          tokensIssued = true;
+          for (const addr of [t.playerEmail, t.guardianEmail]) {
+            if (!addr) continue;
+            if (addr === t.playerEmail) playerEmails.add(addr);
+            else guardianEmails.add(addr);
+            const list = rsvpsByEmail.get(addr) ?? [];
+            list.push({ playerName: t.playerName, token: t.token });
+            rsvpsByEmail.set(addr, list);
+          }
+        }
+      } catch (e) {
+        console.error('Could not issue RSVP links for this event', e);
+      }
+
+      // Minting failed — fall back to the plain address lookup so an edit still
+      // notifies everyone, just without the RSVP buttons.
+      if (!tokensIssued) {
+        const { data: availPlayers } = await supabase
+          .from('event_availability')
+          .select(`
+            roster_id,
+            season_roster(
+              player_email,
+              athletes(
+                guardian_email
+              )
+            )
+          `)
+          .eq('season_event_id', eventId);
+
+        if (availPlayers) {
+          for (const item of availPlayers) {
+            const sr = Array.isArray(item.season_roster) ? item.season_roster[0] : item.season_roster;
+            if (sr) {
+              if (sr.player_email) playerEmails.add(sr.player_email);
+              const athlete = Array.isArray(sr.athletes) ? sr.athletes[0] : sr.athletes;
+              if (athlete?.guardian_email) guardianEmails.add(athlete.guardian_email);
+            }
           }
         }
       }
 
       const allEmails = new Set([...playerEmails, ...guardianEmails]);
+
+      // A calendar client only replaces the copy it already holds when SEQUENCE
+      // is higher than the one it stored. Seconds since the event was created is
+      // monotonic per event and stays a small integer, so each edit supersedes
+      // the last instead of stacking up duplicates in someone's calendar.
+      const sequence = Math.max(0, Math.floor((toMs(row.updated_at) - toMs(row.created_at)) / 1000));
 
       if (playerEmails.size > 0) {
         supabase.functions.invoke('send-push-notification', {
@@ -5656,7 +5756,21 @@ export class SupabaseDataSource implements DataSource {
 
       for (const email of allEmails) {
         supabase.functions.invoke('send-email', {
-          body: { type: 'schedule_update', to: email, payload: { eventName: row.title, date: row.event_date, time: row.start_time, location: row.location } }
+          body: {
+            type: 'schedule_update',
+            to: email,
+            payload: {
+              eventId,
+              eventName: row.title,
+              date: row.event_date,
+              startTime: row.start_time,
+              endTime: row.end_time,
+              location: row.location,
+              notes: row.notes,
+              sequence,
+              rsvps: rsvpsByEmail.get(email) ?? [],
+            },
+          },
         }).catch(console.error);
       }
     } catch (e) {
@@ -6294,6 +6408,74 @@ export class SupabaseDataSource implements DataSource {
           { onConflict: 'season_event_id,roster_id' },
         )
     );
+  }
+
+  /**
+   * Mint (or re-read) the per-player RSVP links for one event.
+   *
+   * Called just before the schedule email goes out, so each recipient's message
+   * can carry Yes/Maybe/No links bound to their own player. Idempotent on the
+   * backend — a re-send reuses the tokens already issued, which keeps links
+   * already sitting in an inbox working.
+   *
+   * Best-effort by design at every call site: a failure here must cost the
+   * recipient their RSVP buttons, not their notification.
+   */
+  async issueEventRsvpTokens(eventId: string): Promise<EventRsvpToken[]> {
+    const { supabase } = await this.ctx();
+    const rows = unwrap(
+      await supabase.rpc('issue_event_rsvp_tokens', { p_event_id: eventId }),
+    ) as Row[] | null;
+    return (rows ?? []).map((r) => ({
+      rosterId: r.roster_id,
+      playerName: r.player_name ?? '',
+      playerEmail: r.player_email ?? undefined,
+      guardianEmail: r.guardian_email ?? undefined,
+      token: r.token,
+    }));
+  }
+
+  /**
+   * Resolve an emailed RSVP link. Uses the plain anon client rather than
+   * `ctx()`: the recipient is usually not signed in — that is the whole point of
+   * the link — and requiring a session here would defeat it.
+   */
+  async getEventRsvpContext(token: string): Promise<EventRsvpContext | null> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc('get_event_rsvp_context', { p_token: token });
+    if (error) throw new Error(error.message);
+    const row = (Array.isArray(data) ? data[0] : data) as Row | undefined;
+    return row ? this.rowToRsvpContext(row) : null;
+  }
+
+  /** Record an answer from an emailed RSVP link. Anon for the same reason. */
+  async submitEventRsvp(token: string, response: 'yes' | 'maybe' | 'no'): Promise<EventRsvpContext> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc('submit_event_rsvp', {
+      p_token: token,
+      p_response: response,
+    });
+    if (error) throw new Error(error.message);
+    const row = (Array.isArray(data) ? data[0] : data) as Row | undefined;
+    if (!row) throw new Error('This RSVP link is no longer valid.');
+    return this.rowToRsvpContext(row);
+  }
+
+  private rowToRsvpContext(row: Row): EventRsvpContext {
+    return {
+      eventId: row.event_id,
+      type: EVENT_KIND_FROM_DB[row.kind] ?? 'Event',
+      title: row.title,
+      date: row.event_date,
+      startTime: row.start_time ?? undefined,
+      endTime: row.end_time ?? undefined,
+      location: row.location ?? undefined,
+      notes: row.notes ?? undefined,
+      seasonName: row.season_name ?? '',
+      teamName: row.team_name ?? '',
+      playerName: row.player_name ?? '',
+      response: row.response ?? 'pending',
+    };
   }
 
   // ─── Phase 4: Enterprise & Admin ─────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Card, EmptyState, ErrorState, LoadingState } from '@/components/ui';
 import { useSeasonQuery } from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
+import { AddToCalendar } from '@/components/AddToCalendar';
 
 export default function SeasonCalendarPage() {
   const id = useSeasonId();
@@ -58,7 +59,10 @@ export default function SeasonCalendarPage() {
                         {ev.startTime ?? '—'} · {ev.location ?? 'TBD'}
                       </span>
                     </span>
-                    <Badge label={ev.type} />
+                    <span className="flex shrink-0 items-center gap-2">
+                      <AddToCalendar event={ev} teamName={season.teamName} size="sm" />
+                      <Badge label={ev.type} />
+                    </span>
                   </Card>
                 ))}
             </div>

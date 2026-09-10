@@ -196,7 +196,7 @@ export default function NewTeamPage() {
         : null,
     ]);
 
-    router.push(`/team/${team.id}`);
+    router.push(`/team/${team.id}?tab=settings`);
   });
 
   const runDummy = async (options: DummyTeamOptions) => {

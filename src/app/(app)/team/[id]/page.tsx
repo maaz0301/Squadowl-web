@@ -53,18 +53,23 @@ import {
   useDeleteSeasonEventMutation,
   useUploadTeamLogoMutation,
   useSetAvailabilityMutation,
+  useGenerateTestDataMutation,
+  useClearTestDataMutation,
+  useCreateTryoutMutation,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
 import { prefetchNewAssessment } from '@/features/prefetch';
 import { useDebouncedValue } from '@/lib/hooks';
 import { useUser, usePermissions } from '@/state/authStore';
 import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
+import { DUMMY_LIMITS, clampOption } from '@/data/testDataGenerator';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { CreateEventFormSchema, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent, type TeamInviteResult } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamManagersCard } from '@/components/TeamManagersCard';
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 import { TeamBanner } from '@/components/TeamBanner';
+import { AddToCalendar } from '@/components/AddToCalendar';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
@@ -145,6 +150,18 @@ export default function TeamDetailPage() {
   const { alert, confirm } = useAlert();
   const teamsQuery = useTeamsQuery();
   const tryoutSummariesQuery = useTryoutSummariesQuery(false);
+  // Dummy data generation writes onto a linked evaluation, so it targets this
+  // team's first one — auto-created on demand below if there isn't one yet.
+  // Computed off the route id (not `team.id`, which isn't resolved yet) so
+  // these mutation hooks can be declared before any early return below.
+  const dummyTryoutId = (tryoutSummariesQuery.data ?? []).find((t) => t.teamId === id)?.id ?? '';
+  const [showTestGen, setShowTestGen] = useState(false);
+  const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
+  const genTest = useGenerateTestDataMutation(dummyTryoutId, (done, total) => setDummyProgress({ done, total }));
+  const clearTest = useClearTestDataMutation(dummyTryoutId);
+  const createDummyTryout = useCreateTryoutMutation();
+  const [preparingDummyTryout, setPreparingDummyTryout] = useState(false);
+  const [dummyPlayerCount, setDummyPlayerCount] = useState('25');
   const updateTeam = useUpdateTeamMutation();
   const deleteTeam = useDeleteTeamMutation();
   const setTryoutTeam = useSetTryoutTeamMutation();
@@ -379,6 +396,31 @@ export default function TeamDetailPage() {
   const linkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => t.teamId === team.id);
   const unlinkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => !t.teamId);
   const canCollectFees = canUseFeature(effectiveTier, 'payments');
+  const isAssociation = canUseFeature(effectiveTier, 'enterprise');
+
+  /**
+   * Dummy roster players write onto a linked evaluation even though this flow
+   * never shows one — most freshly created teams don't have one yet, and
+   * making the coach go create and attach one first just to add a few test
+   * players defeated the point of a one-tap tool. So this stands a bare one
+   * up on the fly the first time it's needed, the same way generateDummyTeams
+   * does for brand-new teams. No rubrics: this flow only ever generates
+   * unscored roster players.
+   */
+  const ensureDummyTryoutId = async (): Promise<string> => {
+    if (dummyTryoutId) return dummyTryoutId;
+    const tryout = await createDummyTryout.mutateAsync({
+      name: `${team.name} Evaluation`,
+      sport: 'Hockey',
+      eventType: 'Tryout',
+      teamId: team.id,
+    });
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) }),
+      qc.invalidateQueries({ queryKey: queryKeys.tryoutSummaries(false) }),
+    ]);
+    return tryout.id;
+  };
 
   const onRoster = new Set(rosterAthleteIdsQuery.data ?? []);
   // The rows on screen, flattened out of however many pages have been pulled
@@ -987,7 +1029,8 @@ export default function TeamDetailPage() {
                       </div>
                     ) : null}
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <AddToCalendar event={ev} teamName={team?.name} size="sm" />
                       <Button label="Edit" variant="secondary" size="sm" onClick={() => openEditEventModal(ev)} />
                       <Button
                         label="Delete"
@@ -1188,6 +1231,49 @@ export default function TeamDetailPage() {
           ) : null}
 
           <TeamManagersCard teamId={team.id} teamName={team.name} />
+
+          {isAssociation ? (
+            <Card className="flex flex-col items-start gap-2">
+              <SectionLabel>Dummy Data</SectionLabel>
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                Add a batch of realistic dummy players straight to this team&apos;s roster.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  label="Add Dummy Players"
+                  size="sm"
+                  loading={preparingDummyTryout}
+                  onClick={async () => {
+                    setPreparingDummyTryout(true);
+                    try {
+                      await ensureDummyTryoutId();
+                      setShowTestGen(true);
+                    } catch (e) {
+                      await alert('Error', e instanceof Error ? e.message : 'Failed to prepare an evaluation.');
+                    } finally {
+                      setPreparingDummyTryout(false);
+                    }
+                  }}
+                />
+                {dummyTryoutId ? (
+                  <Button
+                    label="Clear Dummy Data"
+                    size="sm"
+                    variant="ghost"
+                    loading={clearTest.isPending}
+                    onClick={async () => {
+                      try {
+                        const res = await clearTest.mutateAsync();
+                        await alert('Cleared', `Removed ${res.removed} generated record${res.removed === 1 ? '' : 's'}.`);
+                      } catch (e) {
+                        await alert('Error', e instanceof Error ? e.message : 'Failed to clear dummy data.');
+                      }
+                    }}
+                  />
+                ) : null}
+              </div>
+            </Card>
+          ) : null}
 
           {/* A delegated manager runs the team but doesn't own it — deleting the
               club's team isn't theirs to do, and the teams RLS grants them
@@ -1580,6 +1666,70 @@ export default function TeamDetailPage() {
             loading={addEvent.isPending || updateEvent.isPending}
           />
         </div>
+      </Modal>
+
+      <Modal
+        visible={showTestGen}
+        title="Add Dummy Players"
+        onClose={() => setShowTestGen(false)}
+        footer={
+          <ModalFooter>
+            {genTest.isPending && dummyProgress && dummyProgress.total > 0 ? (
+              <div className="flex w-full flex-col gap-1">
+                <div className="h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: colors.tile }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.min(100, Math.max(4, Math.round((dummyProgress.done / dummyProgress.total) * 100)))}%`,
+                      backgroundColor: colors.primary,
+                    }}
+                  />
+                </div>
+                <p className="text-center text-xs" style={{ color: colors.inkMuted }}>
+                  Adding {dummyProgress.done} of {dummyProgress.total} players...
+                </p>
+              </div>
+            ) : null}
+            <Button
+              label={`Add ${clampOption(dummyPlayerCount, DUMMY_LIMITS.count, 25)} Players`}
+              loading={genTest.isPending || addRosterPlayers.isPending}
+              onClick={async () => {
+                setDummyProgress(null);
+                try {
+                  const tryoutIdForRoster = await ensureDummyTryoutId();
+                  const res = await genTest.mutateAsync({
+                    target: 'roster',
+                    count: clampOption(dummyPlayerCount, DUMMY_LIMITS.count, 25),
+                    withScores: false,
+                    sessionsPerPlayer: 1,
+                  });
+                  // generateTestData only writes onto the evaluation's own roster —
+                  // this screen is the team's, so the same athletes still have to
+                  // land on team_roster before the Players tab will show them.
+                  if (res.athleteIds?.length) {
+                    await addRosterPlayers.mutateAsync(
+                      res.athleteIds.map((athleteId) => ({ athleteId, sourceTryoutId: tryoutIdForRoster })),
+                    );
+                  }
+                  await alert('Dummy players added', `Added ${res.players} players to the roster.`);
+                } catch (e) {
+                  await alert('Error', e instanceof Error ? e.message : 'Failed to add dummy players.');
+                } finally {
+                  setShowTestGen(false);
+                  setDummyProgress(null);
+                }
+              }}
+            />
+          </ModalFooter>
+        }
+      >
+        <Input
+          label={`How many players (${DUMMY_LIMITS.count.min}–${DUMMY_LIMITS.count.max})`}
+          value={dummyPlayerCount}
+          onChange={(e) => setDummyPlayerCount(e.target.value)}
+          inputMode="numeric"
+          placeholder="25"
+        />
       </Modal>
 
       <LimitReachedModal visible={!!limitMsg} onClose={() => setLimitMsg(null)} message={limitMsg ?? ''} />
