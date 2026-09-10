@@ -148,6 +148,31 @@ export default function ScorePage() {
     'Session 1';
   const currentSession = routeSession ?? nextSession;
 
+  // The strip scrolls horizontally, but a plain mouse wheel only reports
+  // vertical delta — a trackpad's horizontal swipe translates on its own, a
+  // wheel doesn't, so without this the strip reads as stuck.
+  const sessionStripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sessionStripRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      el.scrollLeft += e.deltaY;
+      e.preventDefault();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // Keeps whichever session is selected in view — otherwise a session late in
+  // the list is picked (say, restored from the URL) and the strip still shows
+  // wherever it happened to be scrolled, with no hint of which chip is active.
+  const activeSessionChipRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    activeSessionChipRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+  }, [currentSession]);
+
   const categories = useMemo(() => {
     if (!tryoutQuery.data || !player) return [];
     return getPlayerCategories(tryoutQuery.data.sport, player.pos, tryoutQuery.data.settings.customRubrics);
@@ -422,7 +447,7 @@ export default function ScorePage() {
       {/* edge-bleed runs the strip to the screen edge on phones so a
           half-visible last session reads as "scroll me" instead of a hard
           stop — same reasoning as the tab strip in the assessment layout. */}
-      <div className="no-scrollbar edge-bleed mb-5 flex gap-2 overflow-x-auto pb-1">
+      <div ref={sessionStripRef} className="no-scrollbar edge-bleed mb-5 flex gap-2 overflow-x-auto pb-1">
         {SESSIONS.map((s, idx) => {
           const isScored = scoredSessions.has(s);
           // A session the server counts but this viewer can't read is an
@@ -431,11 +456,13 @@ export default function ScorePage() {
           const disabled =
             (isServerScored(s) && !isScored) ||
             (!isScored && firstUnscoredIdx !== -1 && idx > firstUnscoredIdx);
+          const active = currentSession === s;
           return (
             <Chip
               key={s}
+              ref={active ? activeSessionChipRef : undefined}
               label={s}
-              active={currentSession === s}
+              active={active}
               disabled={disabled}
               onClick={() => {
                 if (disabled) return;

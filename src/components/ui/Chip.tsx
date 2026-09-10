@@ -1,5 +1,6 @@
 'use client';
 
+import { forwardRef } from 'react';
 import { cn } from '@/lib/cn';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
@@ -12,7 +13,10 @@ interface ChipProps {
   className?: string;
 }
 
-export function Chip({ label, active, highlight, disabled, onClick, className }: ChipProps) {
+export const Chip = forwardRef<HTMLButtonElement, ChipProps>(function Chip(
+  { label, active, highlight, disabled, onClick, className },
+  ref,
+) {
   const colors = useThemeColors();
 
   let bgColor = colors.tile;
@@ -31,6 +35,7 @@ export function Chip({ label, active, highlight, disabled, onClick, className }:
 
   return (
     <button
+      ref={ref}
       type="button"
       disabled={disabled}
       onClick={onClick}
@@ -47,4 +52,4 @@ export function Chip({ label, active, highlight, disabled, onClick, className }:
       {label}
     </button>
   );
-}
+});
