@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import {
-  Avatar,
   Badge,
   Button,
   Card,
@@ -38,6 +37,7 @@ import {
 import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
 import { prefetchNewAssessment, prefetchTryout } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
+import { GuardianAthleteCard } from '@/components/GuardianAthleteCard';
 
 export default function DashboardPage() {
   const colors = useThemeColors();
@@ -71,6 +71,7 @@ export default function DashboardPage() {
   const assignedQuery = useAssignedTryoutSummariesQuery(!isGuardian);
   // Guardians and coaches share this route but not this data — firing the
   // guardian read for a coach was a round trip whose result is never rendered.
+  // (A coach who is also a guardian gets that view at its own route, /my-athletes.)
   const guardianQuery = useGuardianRostersQuery(isGuardian);
   const acceptAssignment = useAcceptAssignmentMutation();
   const rejectAssignment = useRejectAssignmentMutation();
@@ -147,47 +148,7 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {athletes.map((ath) => (
-              <Link key={ath.id} href={`/guardian/${ath.id}`}>
-                <Card interactive className="h-full">
-                  <div className="flex items-center gap-3">
-                    <Avatar first={ath.firstName} last={ath.lastName} uri={ath.avatarUrl} size={44} />
-                    <span
-                      className="text-base font-bold"
-                      style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-                    >
-                      {ath.firstName} {ath.lastName}
-                    </span>
-                  </div>
-
-                  {ath.tryouts.length === 0 && ath.seasons.length === 0 ? (
-                    <p className="mt-3 text-sm" style={{ color: colors.inkMuted }}>
-                      No active tryouts or seasons assigned yet.
-                    </p>
-                  ) : null}
-
-                  {ath.tryouts.length > 0 ? (
-                    <div className="mt-3">
-                      <SectionLabel className="mb-1">Tryouts</SectionLabel>
-                      {ath.tryouts.map((t) => (
-                        <p key={t.participantId} className="text-sm" style={{ color: colors.primary }}>
-                          • {t.name} ({t.sport})
-                        </p>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {ath.seasons.length > 0 ? (
-                    <div className="mt-3">
-                      <SectionLabel className="mb-1">Seasons</SectionLabel>
-                      {ath.seasons.map((s) => (
-                        <p key={s.id} className="text-sm" style={{ color: colors.primary }}>
-                          • {s.name} — {s.teamName}
-                        </p>
-                      ))}
-                    </div>
-                  ) : null}
-                </Card>
-              </Link>
+              <GuardianAthleteCard key={ath.id} athlete={ath} colors={colors} />
             ))}
           </div>
         )}

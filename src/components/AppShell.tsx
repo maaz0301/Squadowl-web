@@ -10,7 +10,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Button, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
-import { useIsFeedbackReviewerQuery } from '@/features/queries';
+import { useIsFeedbackReviewerQuery, useGuardianRostersQuery } from '@/features/queries';
 import { prefetchRoute } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 import { SubscriptionEndingBanner } from '@/components/SubscriptionEndingBanner';
@@ -76,6 +76,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   // secondary nav at all, so they are not asked.
   const { data: isFeedbackReviewer } = useIsFeedbackReviewerQuery(!isGuardian);
 
+  // Shares its cache with the dashboard's own read (same query key), so this
+  // costs nothing extra — it just lets the sidebar know whether this
+  // coach/assessor account is *also* linked as a guardian on some athlete
+  // (e.g. coaching one team while parenting a player on another), so the
+  // guardian-only "My Athletes" link can be folded into their nav too.
+  const { data: guardianAthletes } = useGuardianRostersQuery(!isGuardian);
+  const hasGuardianAthletes = !isGuardian && (guardianAthletes?.length ?? 0) > 0;
+
   const primary: NavItem[] = isGuardian
     ? [
         { href: '/dashboard', label: 'My Athletes', icon: 'teams' },
@@ -85,6 +93,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: '/dashboard', label: 'Evaluations', icon: 'assessments', match: '/assessment' },
         { href: '/teams', label: 'Teams', icon: 'teams', match: '/team' },
         { href: '/search', label: 'Search', icon: 'search' },
+        ...(hasGuardianAthletes
+          ? ([{ href: '/my-athletes', label: 'My Athletes', icon: 'teams' }] as NavItem[])
+          : []),
       ];
 
   const secondary: NavItem[] = isGuardian
