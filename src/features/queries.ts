@@ -491,8 +491,26 @@ export function useTryoutRealtimeSync(id: string | undefined) {
 export function useCreateTryoutMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (form: CreateAssessmentForm) => withTimeout(getDataSource().createTryout(form), 15000),
-    onSuccess: () => {
+    mutationFn: (form: CreateAssessmentForm) =>
+      // Creating inside a team auto-imports that team's whole roster (see
+      // _createTryout) and then reads the new assessment back, so the request
+      // scales with the team, not with the form: a 1000-player club team spends
+      // well past 15s on the import alone and the coach was told the creation
+      // had timed out while it was still writing — and it landed anyway. Only
+      // the team-linked path gets the longer cap; a plain assessment is still a
+      // single insert and keeps the 15s network-failure cap.
+      withTimeout(
+        getDataSource().createTryout(form),
+        form.teamId ? 180000 : 15000,
+        form.teamId
+          ? 'Still importing the team roster. It may finish on its own — check your evaluations before creating another.'
+          : undefined,
+      ),
+    onSuccess: (tryout) => {
+      // Seed the detail cache with what we just paid to assemble. The settings
+      // screen this redirects to would otherwise re-read the whole roster, and
+      // useUpdateTryoutMutation below sizes its own timeout off this entry.
+      qc.setQueryData(queryKeys.tryout(tryout.id), tryout);
       void qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
       void qc.invalidateQueries({ queryKey: queryKeys.assessmentCount });
       void qc.invalidateQueries({ queryKey: queryKeys.profile });
@@ -503,8 +521,17 @@ export function useCreateTryoutMutation() {
 export function useUpdateTryoutMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, updates }: { id: string; updates: Partial<Tryout> }) =>
-      withTimeout(getDataSource().updateTryout(id, updates), 15000),
+    mutationFn: ({ id, updates }: { id: string; updates: Partial<Tryout> }) => {
+      // updateTryout writes a handful of columns and then returns the fully
+      // assembled Tryout — every roster row joined to its athlete, plus every
+      // evaluation and score. That read is what the timeout has to cover, and
+      // it grows with the roster, so a flat 15s failed the rubric/assessor save
+      // that follows creation on a big team. Same scaling shape as the team
+      // builder below; small assessments are unchanged at 15s.
+      const rosterSize = qc.getQueryData<Tryout>(queryKeys.tryout(id))?.roster.length ?? 0;
+      const timeoutMs = Math.min(180000, Math.max(15000, 15000 + rosterSize * 150));
+      return withTimeout(getDataSource().updateTryout(id, updates), timeoutMs);
+    },
     onSuccess: (tryout) => {
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryout.id) });
       qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
