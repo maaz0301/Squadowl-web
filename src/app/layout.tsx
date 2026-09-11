@@ -20,6 +20,13 @@ export const viewport: Viewport = {
   // pays those insets back with the .pt-safe/.pb-safe utilities. Without it
   // env(safe-area-inset-*) is always 0 on iOS.
   viewportFit: 'cover',
+  // Chrome's default keyboard behavior (resizes-visual) only shrinks the
+  // *visual* viewport, not the layout one — so every `dvh`-sized panel (the
+  // team chat composer included) keeps its pre-keyboard height and the
+  // keyboard simply overlays on top of it, covering the input. This makes
+  // the layout viewport itself shrink when the keyboard opens, so `dvh`
+  // layouts resize out from under it instead of being covered.
+  interactiveWidget: 'resizes-content',
   // No maximumScale/userScalable here on purpose — pinch-zoom stays available.
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#f9fcff' },

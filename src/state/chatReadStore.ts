@@ -22,11 +22,21 @@ export const useChatReadStore = create<ChatReadState>()(
     (set) => ({
       lastReadAt: {},
       markChatRead: (seasonId, at) =>
-        set((s) =>
+        set((s) => {
+          // `at` is a message's createdAt in ms, truncated from Postgres's
+          // sub-millisecond-precision `created_at` by toMs()'s Date.getTime().
+          // countUnreadTeamMessages compares with a strict `created_at > cursor`,
+          // so without this nudge the very message that was just read has a real
+          // timestamp a fraction of a ms above the truncated cursor and gets
+          // counted as unread forever — permanently badging the tab with "1"
+          // even once everything has been seen.
+          const cursor = at + 1;
           // Only ever moves forward: scrolling back through history, or a
           // second tab showing an older load, must not un-read newer messages.
-          (s.lastReadAt[seasonId] ?? 0) >= at ? s : { lastReadAt: { ...s.lastReadAt, [seasonId]: at } },
-        ),
+          return (s.lastReadAt[seasonId] ?? 0) >= cursor
+            ? s
+            : { lastReadAt: { ...s.lastReadAt, [seasonId]: cursor } };
+        }),
     }),
     { name: 'aas-chat-read', storage: zustandStorage },
   ),
