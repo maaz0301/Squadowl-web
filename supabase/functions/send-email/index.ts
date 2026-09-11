@@ -8,6 +8,7 @@ import {
   toBase64,
   type IcsEvent,
 } from '../_shared/ics.ts';
+import { hasMappableLocation, mapUrl } from '../_shared/maps.ts';
 
 const SENDGRID_API_KEY = Deno.env.get('SENDGRID_API_KEY') || '';
 const FROM_EMAIL = Deno.env.get('SENDGRID_FROM_EMAIL') || 'noreply@tryouthq.ca';
@@ -249,12 +250,29 @@ function tplScheduleUpdate(payload: SchedulePayload, recipient: string) {
       ? `<tr><td style="color:#9ca3af;padding:8px 0;font-size:14px;width:100px;">${icon} ${label}</td><td style="color:#fff;font-weight:600;padding:8px 0;font-size:14px;">${escapeHtml(value)}</td></tr>`
       : '';
 
+  // The location doubles as its own map link. A guardian reading this on a
+  // phone the morning of the game wants navigation, not an address to retype —
+  // and unlike the .ics attachment, which only some clients hand to a map app,
+  // this works in every mail reader.
+  const mappable = hasMappableLocation(payload.location);
+  const directionsHref = mappable ? mapUrl(payload.location!) : '';
+  const locationRow = mappable
+    ? `<tr><td style="color:#9ca3af;padding:8px 0;font-size:14px;width:100px;">📍 Location</td><td style="padding:8px 0;font-size:14px;"><a href="${directionsHref}" style="color:#a78bfa;font-weight:600;text-decoration:underline;">${escapeHtml(payload.location!)}</a></td></tr>`
+    : row('📍', 'Location', payload.location);
+
   const rows = [
     row('📅', 'Date', dateLabel),
     row('🕐', 'Time', endLabel ? `${timeLabel} – ${endLabel}` : timeLabel),
-    row('📍', 'Location', payload.location),
+    locationRow,
     row('🏒', 'Team', payload.teamName),
   ].join('');
+
+  // Repeated as a button under the details, because a link inside a table row
+  // is easy to miss and this is the one thing most recipients come back to the
+  // email for.
+  const directionsBlock = mappable
+    ? `<p style="margin:14px 0 0;"><a href="${directionsHref}" style="display:inline-block;padding:11px 22px;background:linear-gradient(135deg,#4338ca,#6366f1);color:#fff;text-decoration:none;border-radius:9px;font-size:15px;font-weight:700;">📍 Get directions</a></p>`
+    : '';
 
   // The coach's own note about the event — kit, arrival time, directions. It
   // reaches the .ics description either way, but a guardian reading the email on
@@ -353,6 +371,7 @@ function tplScheduleUpdate(payload: SchedulePayload, recipient: string) {
       <div style="background:#0f0f13;border-radius:12px;padding:24px;margin:16px 0;border:1px solid #2a2a4a;">
         <p style="color:#a78bfa;font-size:20px;font-weight:700;margin:0 0 16px;">${safeName}</p>
         <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+        ${directionsBlock}
         ${notesBlock}
       </div>
       ${rsvpBlock}

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { MapLink } from '@/components/MapLink';
 import { Badge } from '@/components/ui';
 import { useRegistrationsQuery, useTryoutQuery, useTryoutRealtimeSync } from '@/features/queries';
 import { useIsAssessorOnly } from '@/features/useAssessmentId';
@@ -94,7 +95,17 @@ export default function AssessmentLayout({
               {tryoutQuery.data.startTime
                 ? ` · ${tryoutQuery.data.startTime}${tryoutQuery.data.endTime ? `–${tryoutQuery.data.endTime}` : ''}`
                 : ''}
-              {tryoutQuery.data.rink ? ` · ${tryoutQuery.data.rink}` : ''}
+              {tryoutQuery.data.rink ? (
+                <>
+                  {' · '}
+                  <MapLink
+                    location={tryoutQuery.data.rink}
+                    label={tryoutQuery.data.name}
+                    size="sm"
+                    variant="inline"
+                  />
+                </>
+              ) : null}
               {isAssessorOnly ? ' · Assessor mode' : ''}
             </p>
             {tryoutQuery.data.headCoach || tryoutQuery.data.assessors.length > 0 ? (

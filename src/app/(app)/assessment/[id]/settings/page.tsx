@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { MapLink, MapLocationHint } from '@/components/MapLink';
 import {
   Badge,
   Button,
@@ -322,7 +323,12 @@ export default function SettingsPage() {
           <span style={{ color: colors.inkFaint }}>
             {tryout.tryoutDate}{' '}
             {tryout.startTime ? `· ${tryout.startTime}${tryout.endTime ? `–${tryout.endTime}` : ''}` : ''}{' '}
-            {tryout.rink ? `· ${tryout.rink}` : ''}
+            {tryout.rink ? (
+              <>
+                {'· '}
+                <MapLink location={tryout.rink} label={tryout.name} size="sm" variant="inline" />
+              </>
+            ) : null}
           </span>
         ) : null}
         {tryout.cloud?.id ? <Badge label={`Code: ${tryout.cloud.id}`} variant="brand" /> : null}
@@ -424,7 +430,15 @@ export default function SettingsPage() {
           <DateField label="Date" value={tryoutDate} onChange={setTryoutDate} />
           <TimeField label="Start Time" value={startTime} onChange={setStartTime} />
           <TimeField label="End Time" value={endTime} onChange={setEndTime} />
-          <Input label="Location" value={rink} onChange={(e) => setRink(e.target.value)} placeholder="Rink A" />
+          <div>
+            <Input
+              label="Location"
+              value={rink}
+              onChange={(e) => setRink(e.target.value)}
+              placeholder="Rink A, 55 Bloor St W, Toronto"
+            />
+            <MapLocationHint location={rink} />
+          </div>
           <Button label="Save" onClick={saveEdit} loading={updateTryout.isPending} />
         </div>
       </Modal>

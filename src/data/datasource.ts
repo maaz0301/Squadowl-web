@@ -182,6 +182,28 @@ export interface DataSource {
   updateSeasonEvent(seasonId: string, eventId: string, updates: Partial<SeasonEvent>): Promise<SeasonEvent>;
   deleteSeasonEvent(seasonId: string, eventId: string): Promise<void>;
   sendPortalInvite(seasonId: string, playerId: string, email: string): Promise<void>;
+  /**
+   * Invite season-roster players to the portal on every address each has on
+   * file — the automatic counterpart to sendPortalInvite's one chosen address,
+   * and the season twin of sendTeamRosterInvites.
+   */
+  sendSeasonRosterInvites(
+    seasonId: string,
+    playerIds?: string[],
+    emails?: string[],
+  ): Promise<import('./types').TeamInviteResult>;
+  /**
+   * Invite tryout participants to the portal on every address each has on
+   * file — the assessment-roster twin of sendSeasonRosterInvites /
+   * sendTeamRosterInvites. No RLS or RPC change backs this: `can_access_tryout`
+   * already lets a guardian read a tryout once their athlete is on its roster
+   * and their account is linked; this is what actually gets them that link.
+   */
+  sendTryoutRosterInvites(
+    tryoutId: string,
+    participantIds?: string[],
+    emails?: string[],
+  ): Promise<import('./types').TeamInviteResult>;
   sendTeamAnnouncement(seasonId: string, title: string, message: string): Promise<void>;
   setEventAvailability(seasonId: string, eventId: string, playerId: string, response: 'yes' | 'maybe' | 'no'): Promise<void>;
   /**

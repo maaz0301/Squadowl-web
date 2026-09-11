@@ -30,6 +30,7 @@ import {
 } from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
 import { AddToCalendar } from '@/components/AddToCalendar';
+import { MapLink, MapLocationHint } from '@/components/MapLink';
 import { getDataSource } from '@/data';
 import { CreateEventFormSchema, EVENT_KINDS, type CreateEventForm, type SeasonEvent } from '@/data/types';
 
@@ -242,9 +243,14 @@ export default function SeasonSchedulePage() {
                 <span style={{ color: colors.inkMuted }}>
                   {item.date} · {item.startTime ?? '—'}–{item.endTime ?? '—'}
                 </span>
-                {item.location ? <span style={{ color: colors.inkFaint }}>{item.location}</span> : null}
+                {item.location ? (
+                  <span style={{ color: colors.inkFaint }}>
+                    <MapLink location={item.location} label={item.title} size="sm" variant="inline" />
+                  </span>
+                ) : null}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <AddToCalendar event={item} teamName={season.teamName} size="sm" />
+                  <MapLink location={item.location} label={item.title} size="sm" />
                   <Button
                     label="Send Reminder"
                     variant="secondary"
@@ -303,7 +309,17 @@ export default function SeasonSchedulePage() {
             <Controller
               control={control}
               name="location"
-              render={({ field }) => <Input label="Location" {...field} value={field.value ?? ''} />}
+              render={({ field }) => (
+                <div>
+                  <Input
+                    label="Location"
+                    placeholder="Venue and street address"
+                    {...field}
+                    value={field.value ?? ''}
+                  />
+                  <MapLocationHint location={field.value} />
+                </div>
+              )}
             />
             {editingEventId ? null : (
               <>

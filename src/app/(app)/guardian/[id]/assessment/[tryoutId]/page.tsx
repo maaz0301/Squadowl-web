@@ -3,6 +3,8 @@
 import { useParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { MapLink } from '@/components/MapLink';
+import { hasMappableLocation } from '@/lib/mapLinks';
 import { Card, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { useGuardianRostersQuery } from '@/features/queries';
 import type { ThemeColors } from '@/theme/tokens';
@@ -76,6 +78,18 @@ export default function GuardianAssessmentDetailPage() {
         <DetailRow label="Time" value={formatTimeRange(tryout.startTime, tryout.endTime)} colors={colors} />
         <DetailRow label="Location" value={tryout.location} colors={colors} />
       </Card>
+
+      {/* The one thing a guardian actually does with this screen on the morning
+          of the event, so it gets a row of its own rather than a link buried in
+          the detail table above. */}
+      {hasMappableLocation(tryout.location) ? (
+        <Card className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm" style={{ color: colors.inkMuted }}>
+            Getting there
+          </span>
+          <MapLink location={tryout.location} label={tryout.name} />
+        </Card>
+      ) : null}
 
       <Card>
         <p className="text-sm" style={{ color: colors.inkMuted }}>

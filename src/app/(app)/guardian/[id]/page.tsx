@@ -16,6 +16,7 @@ import {
 import type { GuardianRosterAthlete, SeasonEvent } from '@/data/types';
 import { ChatUnreadBadge } from '@/components/ChatUnreadBadge';
 import { AddToCalendar } from '@/components/AddToCalendar';
+import { MapLink } from '@/components/MapLink';
 
 type FlatEvent = SeasonEvent & { seasonName: string; teamName: string; seasonId: string };
 type GuardianSeason = GuardianRosterAthlete['seasons'][number];
@@ -140,7 +141,7 @@ function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: stri
       </div>
       {item.location ? (
         <p className="mt-1 text-sm font-medium" style={{ color: colors.inkMuted }}>
-          {item.location}
+          <MapLink location={item.location} label={item.title} size="sm" variant="inline" />
         </p>
       ) : null}
 
@@ -149,7 +150,10 @@ function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: stri
           <p className="text-sm font-bold" style={{ color: colors.inkMuted }}>
             RSVP
           </p>
-          <AddToCalendar event={item} teamName={item.teamName} size="sm" />
+          <span className="flex items-center gap-2">
+            <MapLink location={item.location} label={item.title} size="sm" />
+            <AddToCalendar event={item} teamName={item.teamName} size="sm" />
+          </span>
         </div>
         <div className="flex gap-2">
           <button

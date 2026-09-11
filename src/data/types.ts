@@ -421,6 +421,19 @@ export interface TeamInviteResult {
 export interface PlayerImportResult {
   added: number;
   failed: { line: number; name: string; message: string }[];
+  /**
+   * The athletes the import actually landed, when the add path reports them.
+   * Lets the caller follow an import with the same automatic portal invite an
+   * added player gets anywhere else, without re-reading the whole roster to
+   * work out which rows were new.
+   */
+  athleteIds?: string[];
+  /**
+   * The roster rows the import landed, for paths keyed to the row rather than
+   * the athlete — an evaluation invites by `tryout_participants.id`, since the
+   * same athlete can sit in several evaluations at once.
+   */
+  participantIds?: string[];
 }
 
 /** A permanently-saved snapshot of a Team Builder generation, so regenerating doesn't lose it. */

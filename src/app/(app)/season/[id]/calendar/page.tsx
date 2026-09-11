@@ -5,6 +5,7 @@ import { Badge, Card, EmptyState, ErrorState, LoadingState } from '@/components/
 import { useSeasonQuery } from '@/features/queries';
 import { useSeasonId } from '@/features/useSeasonId';
 import { AddToCalendar } from '@/components/AddToCalendar';
+import { MapLink } from '@/components/MapLink';
 
 export default function SeasonCalendarPage() {
   const id = useSeasonId();
@@ -56,10 +57,16 @@ export default function SeasonCalendarPage() {
                         {ev.title}
                       </span>
                       <span className="block text-sm" style={{ color: colors.inkMuted }}>
-                        {ev.startTime ?? '—'} · {ev.location ?? 'TBD'}
+                        {ev.startTime ?? '—'} ·{' '}
+                        {ev.location ? (
+                          <MapLink location={ev.location} label={ev.title} size="sm" variant="inline" />
+                        ) : (
+                          'TBD'
+                        )}
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
+                      <MapLink location={ev.location} label={ev.title} size="sm" />
                       <AddToCalendar event={ev} teamName={season.teamName} size="sm" />
                       <Badge label={ev.type} />
                     </span>

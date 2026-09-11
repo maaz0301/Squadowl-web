@@ -677,6 +677,20 @@ export function useAddPlayerMutation(tryoutId: string) {
   });
 }
 
+/**
+ * Invite tryout participants to the portal on every address each has on file —
+ * the assessment-roster twin of useSeasonRosterInvitesMutation /
+ * useTeamRosterInvitesMutation. `participantIds` narrows to specific roster
+ * rows, `emails` to specific addresses; omit both to invite the whole tryout
+ * roster.
+ */
+export function useTryoutRosterInvitesMutation(tryoutId: string) {
+  return useMutation({
+    mutationFn: ({ participantIds, emails }: { participantIds?: string[]; emails?: string[] } = {}) =>
+      getDataSource().sendTryoutRosterInvites(tryoutId, participantIds, emails),
+  });
+}
+
 /** The assessment-roster counterpart of useImportTeamRosterPlayersMutation. */
 export function useImportTryoutPlayersMutation(tryoutId: string) {
   const qc = useQueryClient();
@@ -1510,6 +1524,26 @@ export function usePortalInviteMutation(seasonId: string) {
     mutationFn: ({ playerId, email }: { playerId: string; email: string }) =>
       getDataSource().sendPortalInvite(seasonId, playerId, email),
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
+    },
+  });
+}
+
+/**
+ * Invite season-roster players to the portal on every address each has on file.
+ * This is the automatic link the roster screens fire the moment players are
+ * added; usePortalInviteMutation is the manual button for one chosen address.
+ *
+ * `playerIds` narrows to specific roster entries, `emails` to specific
+ * addresses; omit both to invite the whole season roster.
+ */
+export function useSeasonRosterInvitesMutation(seasonId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ playerIds, emails }: { playerIds?: string[]; emails?: string[] } = {}) =>
+      getDataSource().sendSeasonRosterInvites(seasonId, playerIds, emails),
+    onSuccess: () => {
+      // The roster's "Portal invited" badge is derived from portal_invites.
       void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
     },
   });

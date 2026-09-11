@@ -42,6 +42,7 @@ import {
 } from '@/features/queries';
 import { useSessionStore } from '@/state/sessionStore';
 import { useUser } from '@/state/authStore';
+import { MapLocationHint } from '@/components/MapLink';
 import { isAtAssessmentLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
@@ -368,7 +369,16 @@ function NewAssessmentForm() {
             <Controller
               control={control}
               name="rink"
-              render={({ field }) => <Input label="Location / Rink" placeholder="Rink A" {...field} />}
+              render={({ field }) => (
+                <div>
+                  <Input
+                    label="Location / Rink"
+                    placeholder="Rink A, 55 Bloor St W, Toronto"
+                    {...field}
+                  />
+                  <MapLocationHint location={field.value} />
+                </div>
+              )}
             />
 
             <div>

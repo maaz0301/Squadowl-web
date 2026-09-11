@@ -70,6 +70,8 @@ import { TeamManagersCard } from '@/components/TeamManagersCard';
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 import { TeamBanner } from '@/components/TeamBanner';
 import { AddToCalendar } from '@/components/AddToCalendar';
+import { MapLink, MapLocationHint } from '@/components/MapLink';
+import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
@@ -576,6 +578,23 @@ export default function TeamDetailPage() {
       setPickedAthletes(new Set());
       setCandidateTryoutFilter(null);
       setShowAddPlayers(false);
+
+      // Same rule as the manual add: landing on the roster is what earns the
+      // portal invite, so it goes out here rather than waiting for someone to
+      // press Send Invites afterwards. Only a bounce or a player with no
+      // address on file is worth a dialog — a confirmation after every add is
+      // noise that trains people to dismiss without reading.
+      try {
+        const result = await sendInvites.mutateAsync({ athleteIds: picked.map((c) => c.athleteId) });
+        if (inviteNeedsAttention(result)) await reportInviteResult(result);
+      } catch (e) {
+        await alert(
+          'Invites Not Sent',
+          `The players were added to the roster, but their portal invites could not be sent: ${
+            e instanceof Error ? e.message : 'Unknown error'
+          }`,
+        );
+      }
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Could not add players to the team.');
     } finally {
@@ -600,18 +619,8 @@ export default function TeamDetailPage() {
    * had no address on file, rather than collapsing to "sent" or "failed".
    */
   const reportInviteResult = async (result: TeamInviteResult) => {
-    const lines: string[] = [];
-    if (result.sent.length > 0) {
-      lines.push(`Invites sent to ${result.sent.length} ${result.sent.length === 1 ? 'address' : 'addresses'}.`);
-    }
-    if (result.skipped.length > 0) {
-      lines.push(`No email on file for: ${result.skipped.join(', ')}.`);
-    }
-    if (result.failed.length > 0) {
-      lines.push(`Could not send to ${result.failed.map((f) => f.email).join(', ')}.`);
-    }
-    if (lines.length === 0) lines.push('There was nobody to invite.');
-    await alert(result.sent.length > 0 ? 'Invites Sent' : 'No Invites Sent', lines.join('\n\n'));
+    const { title, message } = describeInviteResult(result);
+    await alert(title, message);
   };
 
   const sendRosterInvites = async () => {
@@ -930,7 +939,12 @@ export default function TeamDetailPage() {
                         <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
                           {ev.date}
                           {ev.startTime ? ` · ${ev.startTime}` : ''}
-                          {ev.location ? ` · ${ev.location}` : ''}
+                          {ev.location ? (
+                            <>
+                              {' · '}
+                              <MapLink location={ev.location} label={ev.title} size="sm" variant="inline" />
+                            </>
+                          ) : null}
                         </p>
                       </div>
                       <div className="flex shrink-0 gap-1">
@@ -1031,6 +1045,7 @@ export default function TeamDetailPage() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       <AddToCalendar event={ev} teamName={team?.name} size="sm" />
+                      <MapLink location={ev.location} label={ev.title} size="sm" />
                       <Button label="Edit" variant="secondary" size="sm" onClick={() => openEditEventModal(ev)} />
                       <Button
                         label="Delete"
@@ -1543,7 +1558,26 @@ export default function TeamDetailPage() {
         visible={showImportPlayers}
         onClose={() => setShowImportPlayers(false)}
         target={team.name}
-        onImport={(rows, onProgress) => importPlayers.mutateAsync({ rows, onProgress })}
+        onImport={async (rows, onProgress) => {
+          const result = await importPlayers.mutateAsync({ rows, onProgress });
+          // Same rule as every other way onto this roster: the import is what
+          // earns the portal invite. Scoped to the athletes the import actually
+          // landed, so a re-import doesn't re-mail the players already there.
+          //
+          // No dialog on the way out, unlike the other add paths: the modal
+          // shows its own per-row import summary the moment this returns, and a
+          // second dialog in front of it — "no email on file for these four" —
+          // buries the one the coach is waiting for. A player the invite
+          // couldn't reach already reads as "No invite" on the roster.
+          if (result.athleteIds?.length) {
+            try {
+              await sendInvites.mutateAsync({ athleteIds: result.athleteIds });
+            } catch (e) {
+              console.warn('Portal invites failed after a roster import:', e);
+            }
+          }
+          return result;
+        }}
       />
 
       <Modal
@@ -1633,7 +1667,17 @@ export default function TeamDetailPage() {
             <Controller
               control={eventForm.control}
               name="location"
-              render={({ field }) => <Input label="Location" {...field} value={field.value ?? ''} />}
+              render={({ field }) => (
+                <div>
+                  <Input
+                    label="Location"
+                    placeholder="Venue and street address"
+                    {...field}
+                    value={field.value ?? ''}
+                  />
+                  <MapLocationHint location={field.value} />
+                </div>
+              )}
             />
             {editingEventId ? null : (
               <p className="text-xs" style={{ color: colors.inkMuted }}>

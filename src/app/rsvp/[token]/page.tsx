@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 
 import { AddToCalendar } from '@/components/AddToCalendar';
+import { MapLink } from '@/components/MapLink';
 import { Card, LoadingState, ThemeToggle } from '@/components/ui';
 import { SupabaseDataSource } from '@/data/supabase/SupabaseDataSource';
 import type { EventRsvpContext } from '@/data/types';
@@ -215,7 +216,7 @@ export default function RsvpPage() {
         </span>
         {context.location ? (
           <span className="text-[15px]" style={{ color: colors.inkMuted }}>
-            {context.location}
+            <MapLink location={context.location} label={context.title} variant="inline" />
           </span>
         ) : null}
         {context.notes ? (
@@ -257,10 +258,11 @@ export default function RsvpPage() {
         ) : null}
       </Card>
 
-      <Card className="mt-3 flex items-center justify-between gap-3">
+      <Card className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm" style={{ color: colors.inkMuted }}>
           Keep this event handy
         </span>
+        <MapLink location={context.location} label={context.title} />
         <AddToCalendar
           event={{
             id: context.eventId,
