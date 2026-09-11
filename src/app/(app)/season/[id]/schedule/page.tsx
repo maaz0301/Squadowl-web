@@ -19,6 +19,7 @@ import {
   Input,
   LoadingState,
   Modal,
+  Spinner,
   TimeField,
   useAlert,
 } from '@/components/ui';
@@ -258,14 +259,30 @@ export default function SeasonSchedulePage() {
                     onClick={() => sendReminder(item)}
                     loading={reminding === item.id}
                   />
-                  <Button label="Edit" variant="secondary" size="sm" onClick={() => openEdit(item)} />
-                  <Button
-                    label="Delete"
-                    variant="ghost"
-                    size="sm"
-                    loading={deleteEvent.isPending && deleteEvent.variables === item.id}
+                  <button
+                    type="button"
+                    onClick={() => openEdit(item)}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold transition-colors hover:brightness-110"
+                    style={{ backgroundColor: colors.tile, color: colors.ink, border: `1px solid ${colors.border}` }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deleteEvent.isPending && deleteEvent.variables === item.id}
                     onClick={() => confirmDeleteEvent(item.id, item.title)}
-                  />
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold transition-colors hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
+                    style={{
+                      backgroundColor: 'rgba(248,113,113,0.14)',
+                      color: colors.danger,
+                      border: '1px solid rgba(248,113,113,0.35)',
+                    }}
+                  >
+                    {deleteEvent.isPending && deleteEvent.variables === item.id ? (
+                      <Spinner size={12} color={colors.danger} />
+                    ) : null}
+                    Delete
+                  </button>
                 </div>
               </Card>
             ))}

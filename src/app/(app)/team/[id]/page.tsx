@@ -1046,14 +1046,30 @@ export default function TeamDetailPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <AddToCalendar event={ev} teamName={team?.name} size="sm" />
                       <MapLink location={ev.location} label={ev.title} size="sm" />
-                      <Button label="Edit" variant="secondary" size="sm" onClick={() => openEditEventModal(ev)} />
-                      <Button
-                        label="Delete"
-                        variant="ghost"
-                        size="sm"
-                        loading={deleteEvent.isPending && deleteEvent.variables === ev.id}
+                      <button
+                        type="button"
+                        onClick={() => openEditEventModal(ev)}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold transition-colors hover:brightness-110"
+                        style={{ backgroundColor: colors.tile, color: colors.ink, border: `1px solid ${colors.border}` }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deleteEvent.isPending && deleteEvent.variables === ev.id}
                         onClick={() => confirmDeleteEvent(ev.id, ev.title)}
-                      />
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold transition-colors hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
+                        style={{
+                          backgroundColor: 'rgba(248,113,113,0.14)',
+                          color: colors.danger,
+                          border: '1px solid rgba(248,113,113,0.35)',
+                        }}
+                      >
+                        {deleteEvent.isPending && deleteEvent.variables === ev.id ? (
+                          <Spinner size={12} color={colors.danger} />
+                        ) : null}
+                        Delete
+                      </button>
                     </div>
                   </Card>
                 );
