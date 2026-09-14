@@ -9,6 +9,7 @@ import {
   hasMappableLocation,
   looksAddressable,
   parseCoords,
+  wazeUrl,
 } from './mapLinks';
 
 /** The decoded value of one query parameter, so assertions read as text. */
@@ -122,6 +123,21 @@ describe('appleDirectionsUrl', () => {
     const url = appleDirectionsUrl('55 Bloor St W');
     expect(param(url, 'daddr')).toBe('55 Bloor St W');
     expect(param(url, 'dirflg')).toBe('d');
+  });
+});
+
+describe('wazeUrl', () => {
+  it('searches for the location and starts navigation', () => {
+    const url = wazeUrl('55 Bloor St W');
+    expect(url.startsWith('https://waze.com/ul?')).toBe(true);
+    expect(param(url, 'q')).toBe('55 Bloor St W');
+    expect(param(url, 'navigate')).toBe('yes');
+  });
+
+  it('drops a pin at coordinates rather than searching for their text', () => {
+    const url = wazeUrl('43.6532,-79.3832');
+    expect(param(url, 'll')).toBe('43.6532,-79.3832');
+    expect(param(url, 'q')).toBeNull();
   });
 });
 

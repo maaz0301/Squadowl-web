@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, Tabs, useAlert } from '@/components/ui';
+import { Badge, Button, Card, ErrorState, LoadingState, Modal, PageHeader, Spinner, Tabs, useAlert } from '@/components/ui';
+import { Icon } from '@/components/Icons';
 import { PlanGate } from '@/components/PlanGate';
 import {
   useOrgQuery,
@@ -13,6 +14,8 @@ import {
   useTeamsQuery,
   useSeasonsQuery,
   useRemoveMemberMutation,
+  useArchiveTryoutMutation,
+  useDeleteTryoutMutation,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
 import { usePermissions } from '@/state/authStore';
@@ -80,12 +83,20 @@ function ShareBar({ parts }: { parts: { label: string; value: number; color: str
 
 export default function EnterprisePage() {
   const colors = useThemeColors();
-  const { alert, confirm } = useAlert();
+  const { alert, confirm, toast } = useAlert();
   const { canManageOrganization } = usePermissions();
   const [tab, setTab] = useState<EntTab>('overview');
   const orgQuery = useOrgQuery();
   const membersQuery = useOrgMembersQuery();
   const removeMemberMut = useRemoveMemberMutation();
+  const archiveTryout = useArchiveTryoutMutation();
+  const deleteTryout = useDeleteTryoutMutation();
+  // Same action modal as the main dashboard's evaluation cards — Largest
+  // Evaluations is a report, but the rows are the same tryouts, so removing
+  // one here should behave identically rather than inventing a second
+  // "remove an evaluation" flow.
+  const [actionTryout, setActionTryout] = useState<{ id: string; name: string } | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   /** Same removal path as Manage Organization — assessors are tryout_assessors
    * rows (often several per person), coaches are memberships. Confirm first. */
@@ -379,10 +390,16 @@ export default function EnterprisePage() {
                   <Card className="flex flex-col gap-2">
                     <h3 className="font-bold text-base mb-2" style={{ color: colors.ink }}>Largest Evaluations</h3>
                     <div className="divide-y" style={{ borderColor: colors.border }}>
-                      {metrics.largest.map((t) => (
-                        <Link key={t.id} href={`/assessment/${t.id}/roster`} className="block py-3 hover:opacity-80 transition-opacity">
-                          <div className="flex justify-between items-center">
-                            <div>
+                      {metrics.largest.map((t) => {
+                        const isBusy = busyId === t.id;
+                        return (
+                          <Link
+                            key={t.id}
+                            href={`/assessment/${t.id}/roster`}
+                            className="flex items-center justify-between gap-3 py-3 transition-opacity hover:opacity-80"
+                            style={isBusy ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
+                          >
+                            <div className="min-w-0">
                               <span className="font-bold block" style={{ color: colors.ink }}>{t.name}</span>
                               <span className="text-xs block" style={{ color: colors.inkMuted }}>
                                 {t.sport} · {t.evals?.length ?? 0} evaluations
@@ -391,10 +408,28 @@ export default function EnterprisePage() {
                             <div className="flex shrink-0 items-center gap-2">
                               {t.archived ? <Badge label="Archived" /> : null}
                               <Badge label={`${t.roster?.length ?? 0} players`} variant="brand" />
+                              {isBusy ? (
+                                <Spinner size={16} color={colors.danger} />
+                              ) : (
+                                <button
+                                  type="button"
+                                  aria-label="Evaluation actions"
+                                  onClick={(e) => {
+                                    // Inside a Link — stop it navigating when the
+                                    // remove button itself is the target.
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setActionTryout({ id: t.id, name: t.name });
+                                  }}
+                                  className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                                >
+                                  <Icon name="trash" size={16} color={colors.danger} />
+                                </button>
+                              )}
                             </div>
-                          </div>
-                        </Link>
-                      ))}
+                          </Link>
+                        );
+                      })}
                     </div>
                   </Card>
                 ) : null}
@@ -519,6 +554,53 @@ export default function EnterprisePage() {
           </div>
         ) : null}
       </PlanGate>
+
+      <Modal
+        visible={!!actionTryout}
+        title="Evaluation Actions"
+        onClose={() => setActionTryout(null)}
+        hideDefaultFooter
+      >
+        <div className="flex flex-col gap-3">
+          <p className="mb-1 text-sm" style={{ color: colors.inkMuted }}>
+            What would you like to do with &quot;{actionTryout?.name}&quot;?
+          </p>
+          <Button
+            label="Archive Evaluation"
+            variant="secondary"
+            onClick={() => {
+              if (actionTryout) {
+                setBusyId(actionTryout.id);
+                const { id, name } = actionTryout;
+                archiveTryout.mutate(id, {
+                  onSettled: () => setBusyId(null),
+                  onSuccess: () => toast(`"${name}" archived`, 'success'),
+                  onError: (e) =>
+                    alert('Error', e instanceof Error ? e.message : 'Could not archive this evaluation.'),
+                });
+              }
+              setActionTryout(null);
+            }}
+          />
+          <Button
+            label="Delete Permanently"
+            variant="danger"
+            onClick={() => {
+              if (actionTryout) {
+                setBusyId(actionTryout.id);
+                const { id, name } = actionTryout;
+                deleteTryout.mutate(id, {
+                  onSettled: () => setBusyId(null),
+                  onSuccess: () => toast(`"${name}" deleted`, 'success'),
+                  onError: (e) =>
+                    alert('Error', e instanceof Error ? e.message : 'Could not delete this evaluation.'),
+                });
+              }
+              setActionTryout(null);
+            }}
+          />
+        </div>
+      </Modal>
     </>
   );
 }

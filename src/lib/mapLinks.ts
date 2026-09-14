@@ -126,6 +126,21 @@ export function appleDirectionsUrl(location: string): string {
 }
 
 /**
+ * Waze. `waze.com/ul` opens the Waze app when installed and a web preview
+ * otherwise; `navigate=yes` starts turn-by-turn immediately, the same "go"
+ * intent the Apple/Google directions links carry.
+ */
+export function wazeUrl(location: string): string {
+  const coords = parseCoords(location);
+  const params = new URLSearchParams(
+    coords
+      ? { ll: `${coords.lat},${coords.lng}`, navigate: 'yes' }
+      : { q: searchQuery(location), navigate: 'yes' },
+  );
+  return `https://waze.com/ul?${params.toString()}`;
+}
+
+/**
  * The platform-neutral `geo:` URI, which Android hands to whichever map app the
  * viewer has set as default. `0,0?q=` is the documented form for "search for
  * this text" when no coordinates are known.
