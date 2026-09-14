@@ -152,12 +152,6 @@ export default function EnterprisePage() {
   useEffect(() => {
     refresh();
   }, [refresh]);
-  const refreshing =
-    orgQuery.isFetching ||
-    membersQuery.isFetching ||
-    tryoutsQuery.isFetching ||
-    teamsQuery.isFetching ||
-    seasonsQuery.isFetching;
 
   const teams = teamsQuery.data ?? [];
   // Delegated teams count too. A club that hands a team to a coach still owns
@@ -274,15 +268,6 @@ export default function EnterprisePage() {
         subtitle="Association & Org Intelligence"
         showBack
         backHref="/dashboard"
-        right={
-          <Button
-            label={refreshing ? 'Refreshing...' : 'Refresh'}
-            variant="secondary"
-            size="sm"
-            loading={refreshing}
-            onClick={refresh}
-          />
-        }
       />
 
       <PlanGate feature="enterprise" title="Enterprise Dashboard (Association)">
