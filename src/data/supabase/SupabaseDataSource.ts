@@ -1928,7 +1928,7 @@ export class SupabaseDataSource implements DataSource {
    * team even if the assessment they were picked from is archived or deleted.
    */
   async listTeamRoster(teamId: string): Promise<TeamRosterPlayer[]> {
-    const { supabase } = await this.ctx();
+    const { supabase, accountId, userId } = await this.ctx();
     const rows: Row[] = [];
     for (let from = 0; ; from += TEAM_ROSTER_PAGE) {
       const page = unwrap(
@@ -1947,7 +1947,7 @@ export class SupabaseDataSource implements DataSource {
       rows.push(...batch);
       if (batch.length < TEAM_ROSTER_PAGE) break;
     }
-    return rows.map((r) => this.rowToTeamRosterPlayer(r));
+    return rows.map((r) => this.rowToTeamRosterPlayer(r, { accountId, userId }));
   }
 
   /**
@@ -1976,7 +1976,7 @@ export class SupabaseDataSource implements DataSource {
     teamId: string,
     opts?: { after?: TeamRosterCursor; limit?: number; search?: string },
   ): Promise<{ players: TeamRosterPlayer[]; nextCursor?: TeamRosterCursor }> {
-    const { supabase } = await this.ctx();
+    const { supabase, accountId, userId } = await this.ctx();
     const limit = opts?.limit ?? TEAM_ROSTER_SCREEN_PAGE;
     const search = likeTerm(opts?.search ?? '');
 
@@ -2006,7 +2006,7 @@ export class SupabaseDataSource implements DataSource {
 
     const last = rows[rows.length - 1];
     return {
-      players: rows.map((r) => this.rowToTeamRosterPlayer(r)),
+      players: rows.map((r) => this.rowToTeamRosterPlayer(r, { accountId, userId })),
       // A short page means there is nothing after it.
       nextCursor:
         rows.length === limit && last
@@ -2032,11 +2032,16 @@ export class SupabaseDataSource implements DataSource {
     return rows.map((r) => r.athlete_id as string).filter(Boolean);
   }
 
-  private rowToTeamRosterPlayer(r: Row): TeamRosterPlayer {
+  private rowToTeamRosterPlayer(r: Row, viewer: { accountId: string; userId: string }): TeamRosterPlayer {
     const rawAthlete = r.athletes;
     const a = (Array.isArray(rawAthlete) ? rawAthlete[0] : rawAthlete) ?? {};
     const rawSource = r.tryouts;
     const src = (Array.isArray(rawSource) ? rawSource[0] : rawSource) ?? {};
+    // Same rule as getPlayerProfile: medical is visible only to the account
+    // this athlete actually belongs to, or to their own linked guardian — not
+    // to a delegated team manager, who legitimately gets every other field on
+    // this row.
+    const canViewMedical = a.account_id === viewer.accountId || a.guardian_user_id === viewer.userId;
     return {
       id: r.id,
       athleteId: r.athlete_id,
@@ -2050,7 +2055,8 @@ export class SupabaseDataSource implements DataSource {
       guardianName: a.guardian_name ?? undefined,
       guardianPhone: a.guardian_phone ?? undefined,
       linkedGuardianId: a.guardian_user_id ?? undefined,
-      medicalInfo: a.medical_info ?? undefined,
+      medicalInfo: canViewMedical ? (a.medical_info ?? undefined) : undefined,
+      canViewMedical,
       sourceTryoutId: r.source_tryout_id ?? undefined,
       sourceTryoutName: src.name ?? undefined,
     };
@@ -2146,6 +2152,34 @@ export class SupabaseDataSource implements DataSource {
       );
       onProgress?.(Math.min(rows.length, i + CHUNK_SIZE), rows.length);
     }
+
+    // A season's roster is normally seeded from tryout_participants when the
+    // season is *created* (createSeason) — a player added to the team roster
+    // afterwards never gets that backfill. Season membership is what grants a
+    // player's guardian access to the team (can_access_season): the fee status,
+    // the schedule, and the team chat all key off it, so this syncs on every
+    // add rather than only for fee-collecting teams. Teams with no season yet
+    // are left alone; the flows that create one already sync the roster too.
+    const { data: currentSeason } = await supabase
+      .from('seasons')
+      .select('id')
+      .eq('team_id', teamId)
+      .eq('archived', false)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (currentSeason) {
+      const seasonRows = [...byAthlete.values()].map((e) => ({
+        season_id: currentSeason.id,
+        athlete_id: e.athleteId,
+      }));
+      for (let i = 0; i < seasonRows.length; i += CHUNK_SIZE) {
+        await supabase
+          .from('season_roster')
+          .upsert(seasonRows.slice(i, i + CHUNK_SIZE), { onConflict: 'season_id,athlete_id', ignoreDuplicates: true });
+      }
+    }
+
     return this.listTeamRoster(teamId);
   }
 
@@ -6854,16 +6888,24 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async getPlayerProfile(athleteId: string): Promise<PlayerProfile> {
-    const { supabase } = await this.ctx();
+    const { supabase, userId, accountId } = await this.ctx();
 
     const { data: athleteRow } = await supabase
       .from('athletes')
       .select(
-        'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, default_position, year_of_birth, about, medical_info',
+        'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, guardian_user_id, default_position, year_of_birth, about, medical_info, account_id',
       )
       .eq('id', athleteId)
       .maybeSingle();
     if (!athleteRow) throw new Error('Athlete not found');
+
+    // Medical is sensitive: only the account this athlete actually belongs to
+    // (not a delegated team manager or an invited assessor, who can both
+    // legitimately read everything else here) or the athlete's own guardian
+    // gets it. Computed off the row itself rather than cross-referencing a
+    // separate teams query, which can't tell true ownership from delegation
+    // and goes stale/empty independently of this request.
+    const canViewMedical = athleteRow.account_id === accountId || (!!userId && athleteRow.guardian_user_id === userId);
 
     const { participants, tryoutById, teams, assessments } = await this.fetchAthleteAssessmentContext(supabase, athleteId);
 
@@ -6901,7 +6943,7 @@ export class SupabaseDataSource implements DataSource {
       jersey: mostRecent?.jersey ?? undefined,
       yearOfBirth: athleteRow.year_of_birth != null ? String(athleteRow.year_of_birth) : undefined,
       aboutChild: athleteRow.about ?? undefined,
-      medicalInfo: athleteRow.medical_info ?? undefined,
+      medicalInfo: canViewMedical ? (athleteRow.medical_info ?? undefined) : undefined,
       playerEmail: athleteRow.player_email ?? undefined,
       guardianName: athleteRow.guardian_name ?? undefined,
       guardianEmail: athleteRow.guardian_email ?? undefined,
@@ -6909,6 +6951,7 @@ export class SupabaseDataSource implements DataSource {
       pastSeasons,
       teams,
       assessments,
+      canViewMedical,
     };
   }
 
@@ -7486,8 +7529,11 @@ export class SupabaseDataSource implements DataSource {
         .from('memberships')
         .select('id, user_id, role, created_at, profiles(email, display_name)')
         .eq('account_id', accountId),
-      // Fetch tryouts for the account to get assessors
-      supabase.from('tryouts').select('id').eq('account_id', accountId),
+      // Fetch tryouts for the account to get assessors. Deleted ones excluded —
+      // deleteTryout() only sets deleted_at (the row and its assessors stay for
+      // history), so without this an assessor on a deleted evaluation never
+      // left this list no matter how many evaluations under them got deleted.
+      supabase.from('tryouts').select('id').eq('account_id', accountId).is('deleted_at', null),
       // …and the teams, for the managers they've been delegated to. Archived
       // ones included: the delegation survives the archive and comes back with
       // the team, so hiding it here would hide access that still exists.

@@ -87,23 +87,32 @@ export default function EnterprisePage() {
   const membersQuery = useOrgMembersQuery();
   const removeMemberMut = useRemoveMemberMutation();
 
+  /** Same removal path as Manage Organization — assessors are tryout_assessors
+   * rows (often several per person), coaches are memberships. Confirm first. */
   const handleRemoveMember = async (member: OrgMember) => {
     const who = member.name || member.email;
-    const message =
-      member.role === 'guardian'
+    const isAssessor = member.role === 'assessor' || member.source === 'assessor';
+    const isGuardian = member.role === 'guardian';
+    const title = isAssessor ? 'Remove Assessor' : isGuardian ? 'Revoke Access' : 'Remove Member';
+    const message = isAssessor
+      ? `Remove ${who} as an assessor? They will lose access to every evaluation they were invited to score in this organization.`
+      : isGuardian
         ? `Revoke ${who}'s access to this organization? They will no longer see their players here.`
         : `Remove ${who} from this organization? They will lose access to its teams and evaluations.`;
     const ok = await confirm({
-      title: member.role === 'guardian' ? 'Revoke Access' : 'Remove Member',
+      title,
       message,
-      confirmLabel: member.role === 'guardian' ? 'Revoke' : 'Remove',
+      confirmLabel: isAssessor ? 'Remove Assessor' : isGuardian ? 'Revoke' : 'Remove',
       destructive: true,
     });
     if (!ok) return;
     try {
       await removeMemberMut.mutateAsync(member.id);
     } catch (e) {
-      await alert('Remove Failed', e instanceof Error ? e.message : 'Could not remove this member.');
+      await alert(
+        isAssessor ? 'Remove Assessor Failed' : isGuardian ? 'Revoke Failed' : 'Remove Failed',
+        e instanceof Error ? e.message : 'Could not remove this member.',
+      );
     }
   };
   // Archived assessments are still the association's history. Excluding them
@@ -488,7 +497,13 @@ export default function EnterprisePage() {
                         </div>
                         {canManageOrganization && m.role !== 'admin' ? (
                           <Button
-                            label={m.role === 'guardian' ? 'Revoke' : 'Remove'}
+                            label={
+                              m.role === 'assessor' || m.source === 'assessor'
+                                ? 'Remove Assessor'
+                                : m.role === 'guardian'
+                                  ? 'Revoke'
+                                  : 'Remove'
+                            }
                             variant="danger"
                             size="sm"
                             onClick={() => handleRemoveMember(m)}

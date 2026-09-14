@@ -56,6 +56,7 @@ import {
   useGenerateTestDataMutation,
   useClearTestDataMutation,
   useCreateTryoutMutation,
+  useTeamManagersQuery,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
 import { prefetchNewAssessment } from '@/features/prefetch';
@@ -115,28 +116,6 @@ function PlayerDetailRow({ label, value, colors }: { label: string; value?: stri
   );
 }
 
-function StatTile({
-  label,
-  value,
-  colors,
-}: {
-  label: string;
-  /** undefined while the count is still loading — rendered as an em dash. */
-  value: number | undefined;
-  colors: AppTheme['colors'];
-}) {
-  return (
-    <div className="flex-1 rounded-xl p-3" style={{ backgroundColor: colors.tile }}>
-      <p className="text-xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-        {value ?? '—'}
-      </p>
-      <p className="mt-0.5 text-xs" style={{ color: colors.inkMuted }}>
-        {label}
-      </p>
-    </div>
-  );
-}
-
 export default function TeamDetailPage() {
   const routeParams = useParams();
   const id = Array.isArray(routeParams?.id) ? routeParams.id[0] : (routeParams?.id as string);
@@ -171,6 +150,12 @@ export default function TeamDetailPage() {
   const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
   const { canManageTeam, canAssess } = usePermissions();
+  // Only fetch team-manager rows when this team is reached via delegation
+  // (CLUB mode) — needed to tell a 'coach'-labeled delegate from a
+  // 'manager'-labeled one for canViewEvaluations below. Skipped for a team
+  // the account actually owns, where canManageTeam alone decides it.
+  const teamManagedForPerm = teamsQuery.data?.find((t) => t.id === id)?.managed;
+  const { data: teamManagers = [] } = useTeamManagersQuery(teamManagedForPerm ? id : undefined);
   const qc = useQueryClient();
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -393,6 +378,16 @@ export default function TeamDetailPage() {
   // still see the Edit button, fill out the form, and hit Save only to be
   // rejected with a raw "new row violates row-level security policy" error.
   const canEditTeam = !!team.managed || canManageTeam;
+
+  // Evaluations are coach-only. For the account's own team that's
+  // canManageTeam; for a team reached via delegation it's specifically the
+  // 'coach'-labeled delegate — a 'manager'-labeled delegate runs the
+  // roster/schedule/chat but doesn't also get evaluation results, per
+  // TeamManagersCard's own description of what a delegate is handed.
+  const myManagerRole = teamManagers.find(
+    (m) => (user?.id && m.userId === user.id) || (user?.email && m.email.toLowerCase() === user.email.toLowerCase()),
+  )?.role;
+  const canViewEvaluations = team.managed ? myManagerRole === 'coach' : canManageTeam;
 
   const tryoutsLoading = tryoutSummariesQuery.isLoading;
   const linkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => t.teamId === team.id);
@@ -885,17 +880,13 @@ export default function TeamDetailPage() {
         }
       />
 
-      <div className="mb-5 flex gap-2">
-        <StatTile label="Players" value={playerCount} colors={colors} />
-        <StatTile label="Upcoming" value={upcomingEvents.length} colors={colors} />
-        <StatTile label="Evaluations" value={tryoutsLoading ? undefined : linkedTryouts.length} colors={colors} />
-      </div>
-
       <Tabs
         tabs={[
           { key: 'schedule', label: 'Schedule', badge: upcomingEvents.length },
           { key: 'players', label: 'Players', badge: playerCount },
-          { key: 'assessments', label: 'Evaluations', badge: tryoutsLoading ? undefined : linkedTryouts.length },
+          ...(canViewEvaluations
+            ? [{ key: 'assessments', label: 'Evaluations', badge: tryoutsLoading ? undefined : linkedTryouts.length }]
+            : []),
           { key: 'chat', label: 'Chat', badge: chatUnread || undefined },
           { key: 'settings', label: 'Settings' },
         ]}
@@ -934,9 +925,6 @@ export default function TeamDetailPage() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <p className="text-base font-bold" style={{ color: colors.ink }}>
-                          {ev.title}
-                        </p>
-                        <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
                           {ev.date}
                           {ev.startTime ? ` · ${ev.startTime}` : ''}
                           {ev.location ? (
@@ -945,6 +933,9 @@ export default function TeamDetailPage() {
                               <MapLink location={ev.location} label={ev.title} size="sm" variant="inline" />
                             </>
                           ) : null}
+                        </p>
+                        <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
+                          {ev.title}
                         </p>
                       </div>
                       <div className="flex shrink-0 gap-1">
@@ -1044,12 +1035,12 @@ export default function TeamDetailPage() {
                     ) : null}
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <AddToCalendar event={ev} teamName={team?.name} size="sm" />
-                      <MapLink location={ev.location} label={ev.title} size="sm" />
+                      <AddToCalendar event={ev} teamName={team?.name} />
+                      <MapLink location={ev.location} label={ev.title} />
                       <button
                         type="button"
                         onClick={() => openEditEventModal(ev)}
-                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold transition-colors hover:brightness-110"
+                        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors hover:brightness-110"
                         style={{ backgroundColor: colors.tile, color: colors.ink, border: `1px solid ${colors.border}` }}
                       >
                         Edit
@@ -1058,7 +1049,7 @@ export default function TeamDetailPage() {
                         type="button"
                         disabled={deleteEvent.isPending && deleteEvent.variables === ev.id}
                         onClick={() => confirmDeleteEvent(ev.id, ev.title)}
-                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold transition-colors hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
+                        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
                         style={{
                           backgroundColor: 'rgba(248,113,113,0.14)',
                           color: colors.danger,
@@ -1066,7 +1057,7 @@ export default function TeamDetailPage() {
                         }}
                       >
                         {deleteEvent.isPending && deleteEvent.variables === ev.id ? (
-                          <Spinner size={12} color={colors.danger} />
+                          <Spinner size={14} color={colors.danger} />
                         ) : null}
                         Delete
                       </button>
@@ -1193,7 +1184,7 @@ export default function TeamDetailPage() {
             </div>
           ) : null}
         </div>
-      ) : tab === 'assessments' ? (
+      ) : tab === 'assessments' && canViewEvaluations ? (
         <div>
           <div className="mb-4 flex flex-wrap gap-2">
             <Button
@@ -1914,16 +1905,14 @@ export default function TeamDetailPage() {
               />
             </Card>
 
-            <Card className="flex flex-col gap-2">
-              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-                Additional Info
-              </span>
-              <PlayerDetailRow
-                label="Medical"
-                value={viewingRosterEntry.medicalInfo ?? viewingFullPlayer?.medicalInfo}
-                colors={colors}
-              />
-            </Card>
+            {viewingRosterEntry.canViewMedical ? (
+              <Card className="flex flex-col gap-2">
+                <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                  Additional Info
+                </span>
+                <PlayerDetailRow label="Medical" value={viewingRosterEntry.medicalInfo} colors={colors} />
+              </Card>
+            ) : null}
 
             {canManageTeam ? (
               <Button

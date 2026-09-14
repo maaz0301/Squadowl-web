@@ -67,8 +67,13 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* font-family only — not the `font` shorthand. This file isn't inside any
+   Tailwind @layer, so it wins over every layered utility regardless of
+   specificity; the shorthand form was clobbering text-size/line-height/weight
+   utilities (text-xs, font-semibold, ...) on every styled button, silently
+   forcing them back to the browser's default 16px/24px control text. */
 button {
-  font: inherit;
+  font-family: inherit;
   color: inherit;
   cursor: pointer;
 }
@@ -80,7 +85,7 @@ button:disabled {
 input,
 textarea,
 select {
-  font: inherit;
+  font-family: inherit;
 }
 
 /* iOS Safari zooms the whole page when a focused control's text is under 16px,

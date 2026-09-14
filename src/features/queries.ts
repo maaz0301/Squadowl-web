@@ -966,6 +966,7 @@ export function useClearTestDataMutation(tryoutId: string) {
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.registrations(tryoutId) });
+      qc.invalidateQueries({ queryKey: ['tryouts'] });
     },
   });
 }

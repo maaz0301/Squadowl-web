@@ -69,7 +69,7 @@ describe('buildImportRows', () => {
     expect(buildImportRows(sheet(headers, [['Maaz', 'Khan', 'a@b.com', '']], 3), mapping)[0].line).toBe(4);
   });
 
-  it('flags a row with no name and a row with no contact address', () => {
+  it('flags a row with no name, but not a row with no contact address', () => {
     const rows = buildImportRows(
       sheet(headers, [
         ['', '', 'a@b.com', ''],
@@ -78,7 +78,7 @@ describe('buildImportRows', () => {
       mapping,
     );
     expect(rows[0].errors.length).toBeGreaterThan(0);
-    expect(rows[1].errors).toContain('A player or guardian email is required');
+    expect(rows[1].errors).toEqual([]);
   });
 
   it('flags an address the mail server would reject', () => {

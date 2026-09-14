@@ -3,23 +3,29 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-import { Badge, Button, Card, Chip, Input, useAlert } from '@/components/ui';
+import { Badge, Button, Card, Input, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import {
   useInviteTeamManagerMutation,
   useRemoveTeamManagerMutation,
   useTeamManagersQuery,
 } from '@/features/queries';
-import { TEAM_MANAGER_ROLES, type TeamManagerRole } from '@/data/types';
+import type { TeamManagerRole } from '@/data/types';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { useUser } from '@/state/authStore';
 
 /**
- * CLUB mode delegation: hand this one team to another coach or manager by
- * email. They get the team, its roster, schedule, and chat — and nothing else
- * on the club's account. The club's own staff keep full access either way,
- * which is why this list never affects the inviter's own rights.
+ * CLUB mode delegation: hand this one team to another manager by email. They
+ * get the team, its roster, schedule, and chat — but not its evaluations,
+ * and nothing else on the club's account. The club's own staff keep full
+ * access either way, which is why this list never affects the inviter's own
+ * rights.
+ *
+ * Every new grant here is role 'manager' — 'coach' is no longer offered as
+ * an invite option (it doubles as evaluation access, which delegation
+ * doesn't include), but ROLE_LABEL keeps 'coach' mapped so a row granted
+ * before this change still displays correctly.
  *
  * Gated on `teamManagers` (Coach+ and Club) to match where the feature is sold.
  *
@@ -49,13 +55,16 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
   const remove = useRemoveTeamManagerMutation(teamId);
 
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<TeamManagerRole>('manager');
 
   const handleInvite = async () => {
     const trimmed = email.trim();
     if (!trimmed) return;
     try {
-      await invite.mutateAsync({ email: trimmed, role });
+      // 'coach' is no longer offered here — only the account's own staff
+      // get evaluation access to a delegated team, so every new delegate
+      // this card grants is a 'manager'. Existing 'coach'-labeled rows from
+      // before this change still display and work as before.
+      await invite.mutateAsync({ email: trimmed, role: 'manager' });
       setEmail('');
       await alert(
         'Access Granted',
@@ -102,8 +111,9 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
             Team Managers
           </h3>
           <p className="mt-1 text-xs" style={{ color: colors.inkMuted }}>
-            Give another coach or manager access to run {teamName}. They&apos;ll see this team&apos;s roster,
-            schedule, and chat — but nothing else on your account. You keep full access.
+            Give another manager access to run {teamName}. They&apos;ll see this team&apos;s roster,
+            schedule, and chat — but not evaluations, and nothing else on your account. You keep full
+            access.
           </p>
         </div>
 
@@ -145,13 +155,8 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
             onChange={(e) => setEmail(e.target.value)}
             type="email"
             autoCapitalize="none"
-            placeholder="coach@example.com"
+            placeholder="manager@example.com"
           />
-          <div className="flex flex-wrap gap-2">
-            {TEAM_MANAGER_ROLES.map((r) => (
-              <Chip key={r} label={ROLE_LABEL[r]} active={role === r} onClick={() => setRole(r)} />
-            ))}
-          </div>
           <Button
             label="Grant Access"
             size="sm"

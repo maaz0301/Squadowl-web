@@ -16,7 +16,7 @@ import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { getDataSource } from '@/data';
 import { queryKeys } from '@/lib/queryClient';
 import type { DummyTeamOptions } from '@/data/testDataGenerator';
-import { TEAM_MANAGER_ROLES, type Team, type TeamManagerRole } from '@/data/types';
+import type { Team } from '@/data/types';
 import {
   useClearDummyTeamsMutation,
   useCreateSeasonMutation,
@@ -57,7 +57,6 @@ export default function NewTeamPage() {
   const [collectsFees, setCollectsFees] = useState(false);
   const [feeInput, setFeeInput] = useState('');
   const [managerEmail, setManagerEmail] = useState('');
-  const [managerRole, setManagerRole] = useState<TeamManagerRole>('manager');
   const [connecting, setConnecting] = useState(false);
   const [checkingLimit, setCheckingLimit] = useState(false);
   const updateTeam = useUpdateTeamMutation();
@@ -185,11 +184,12 @@ export default function NewTeamPage() {
             )
         : null,
       // Coach+/Club only: let the same "creating a team" flow hand it straight
-      // to another coach instead of making them find the new team afterward
-      // just to invite someone to it.
+      // to another manager instead of making them find the new team
+      // afterward just to invite someone to it. Always 'manager' — see
+      // TeamManagersCard for why 'coach' isn't offered as an invite role.
       canManageTeamCoaches && managerEmail.trim()
         ? getDataSource()
-            .inviteTeamManager(team.id, managerEmail.trim(), managerRole)
+            .inviteTeamManager(team.id, managerEmail.trim(), 'manager')
             .catch((e) =>
               alert('Invite Error', `The team was created, but inviting ${managerEmail.trim()} failed: ${describe(e)}`),
             )
@@ -294,11 +294,11 @@ export default function NewTeamPage() {
 
             {canManageTeamCoaches ? (
               <div className="flex flex-col gap-2">
-                <SectionLabel>Invite a coach or manager (optional)</SectionLabel>
+                <SectionLabel>Invite a manager (optional)</SectionLabel>
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
-                  Give them this team&apos;s roster, schedule, and chat as soon as it&apos;s created — nothing
-                  else on your account. If they don&apos;t have a TryoutHQ account yet, one is created and
-                  their sign-in details are emailed to them.
+                  Give them this team&apos;s roster, schedule, and chat as soon as it&apos;s created — but
+                  not evaluations, and nothing else on your account. If they don&apos;t have a TryoutHQ
+                  account yet, one is created and their sign-in details are emailed to them.
                 </p>
                 <Input
                   label="Email address"
@@ -306,18 +306,8 @@ export default function NewTeamPage() {
                   onChange={(e) => setManagerEmail(e.target.value)}
                   type="email"
                   autoCapitalize="none"
-                  placeholder="coach@example.com"
+                  placeholder="manager@example.com"
                 />
-                <div className="flex flex-wrap gap-2">
-                  {TEAM_MANAGER_ROLES.map((r) => (
-                    <Chip
-                      key={r}
-                      label={r === 'coach' ? 'Coach' : 'Manager'}
-                      active={managerRole === r}
-                      onClick={() => setManagerRole(r)}
-                    />
-                  ))}
-                </div>
               </div>
             ) : null}
 

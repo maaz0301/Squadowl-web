@@ -131,10 +131,12 @@ export default function PlayerProfilePage() {
         <Row label="Guardian Phone" value={profile.guardianPhone} colors={colors} />
       </Card>
 
-      <Card className="mb-4 flex flex-col gap-2">
-        <p className="font-display font-bold" style={{ color: colors.ink }}>Additional Info</p>
-        <Row label="Medical" value={profile.medicalInfo} colors={colors} />
-      </Card>
+      {profile.canViewMedical ? (
+        <Card className="mb-4 flex flex-col gap-2">
+          <p className="font-display font-bold" style={{ color: colors.ink }}>Additional Info</p>
+          <Row label="Medical" value={profile.medicalInfo} colors={colors} />
+        </Card>
+      ) : null}
 
       {/* Open to anyone who can assess, same as the assessment player page. */}
       {canAssess ? (

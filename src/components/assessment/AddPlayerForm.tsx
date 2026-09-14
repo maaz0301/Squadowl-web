@@ -438,7 +438,6 @@ export function AddPlayerForm({
               <Input
                 label="Guardian Email"
                 type="email"
-                hint="A player or guardian email is required."
                 {...field}
                 error={fieldState.error?.message}
                 className={showInvite ? 'pr-[92px]' : undefined}
