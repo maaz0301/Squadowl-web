@@ -291,6 +291,7 @@ export interface DataSource {
   createAndInviteUser(email: string, password: string, name: string, role: OrgRole): Promise<OrgMember>;
   resendGuardianInvite(userId: string, email: string, role?: OrgRole): Promise<void>;
   linkGuardianToAthlete(guardianId: string, tryoutId: string, playerId: string): Promise<Player>;
+  unlinkGuardianFromAthlete(tryoutId: string, playerId: string): Promise<Player>;
 
   // Team managers (CLUB mode): delegate one team to another coach/manager by email.
   listTeamManagers(teamId: string): Promise<import('./types').TeamManager[]>;

@@ -26,6 +26,7 @@ import {
   useDeletePlayerMutation,
   useAiPlayerSummaryMutation,
   useLinkGuardianMutation,
+  useUnlinkGuardianMutation,
   useInviteMemberMutation,
   useResendInviteMutation,
   useCreateAndInviteMemberMutation,
@@ -65,6 +66,7 @@ export default function PlayerHubPage() {
   const aiSummary = useAiPlayerSummaryMutation(id!);
 
   const linkGuardianMut = useLinkGuardianMutation();
+  const unlinkGuardianMut = useUnlinkGuardianMutation();
   const inviteMut = useInviteMemberMutation();
   const resendInviteMut = useResendInviteMutation();
   const createAndInviteMut = useCreateAndInviteMemberMutation();
@@ -256,6 +258,21 @@ export default function PlayerHubPage() {
     }
   };
 
+  const confirmUnlinkGuardian = async () => {
+    const ok = await confirm({
+      title: 'Remove Guardian',
+      message: `Unlink ${player.guardianName || player.guardianEmail || 'this guardian'}'s account from ${playerDisplayName(player)}? They will no longer be able to view this athlete.`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await unlinkGuardianMut.mutateAsync({ tryoutId: id!, playerId: player.athleteId! });
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not remove this guardian.');
+    }
+  };
+
   const linkGuardian = async () => {
     const email = player.guardianEmail!;
     try {
@@ -375,13 +392,22 @@ export default function PlayerHubPage() {
 
             {isCoachHere ? (
               player.linkedGuardianId && player.guardianEmail ? (
-                <Button
-                  label="Resend Invite"
-                  variant="secondary"
-                  size="sm"
-                  onClick={resendInvite}
-                  loading={resendInviteMut.isPending}
-                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    label="Resend Invite"
+                    variant="secondary"
+                    size="sm"
+                    onClick={resendInvite}
+                    loading={resendInviteMut.isPending}
+                  />
+                  <Button
+                    label="Remove"
+                    variant="ghost"
+                    size="sm"
+                    onClick={confirmUnlinkGuardian}
+                    loading={unlinkGuardianMut.isPending}
+                  />
+                </div>
               ) : !player.linkedGuardianId ? (
                 <Button
                   label="Link Account"

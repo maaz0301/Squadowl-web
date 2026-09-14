@@ -8139,6 +8139,71 @@ export class SupabaseDataSource implements DataSource {
     } as import('../types').Player;
   }
 
+  // Detaches the guardian's login from this one athlete only — the
+  // guardian_name/email/phone contact info is left in place so a coach can
+  // re-link (or the guardian can be re-invited) without retyping it. Wider,
+  // account-wide guardian removal goes through removeOrgMember instead.
+  async unlinkGuardianFromAthlete(tryoutId: string, playerId: string): Promise<import('../types').Player> {
+    const { supabase } = await this.ctx();
+
+    let athleteId = playerId;
+    const { data: tpCheck } = await supabase
+      .from('tryout_participants')
+      .select('id, athlete_id')
+      .or(`id.eq.${playerId},athlete_id.eq.${playerId}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (tpCheck?.athlete_id) {
+      athleteId = tpCheck.athlete_id;
+    }
+
+    const { error } = await supabase
+      .from('athletes')
+      .update({ guardian_user_id: null })
+      .eq('id', athleteId);
+
+    if (error) throw error;
+
+    const { data: updatedPlayer, error: fetchError } = await supabase
+      .from('tryout_participants')
+      .select(`
+        id,
+        jersey,
+        position,
+        athletes(
+          id,
+          first_name,
+          last_name,
+          year_of_birth,
+          guardian_name,
+          guardian_email,
+          guardian_user_id
+        )
+      `)
+      .eq('athlete_id', athleteId)
+      .eq('tryout_id', tryoutId)
+      .limit(1)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+
+    const tp = (updatedPlayer || {}) as Row;
+    const ath = Array.isArray(tp.athletes) ? tp.athletes[0] : tp.athletes;
+
+    return {
+      id: ath.id,
+      first: ath.first_name,
+      last: ath.last_name,
+      pos: tp.position,
+      jersey: tp.jersey,
+      guardianName: ath.guardian_name,
+      guardianEmail: ath.guardian_email,
+      linkedGuardianId: ath.guardian_user_id,
+      athleteId: ath.id,
+    } as import('../types').Player;
+  }
+
   private mapGuardianRosterRow(row: Row): import('../types').GuardianRosterAthlete {
     // Only the event's tombstone reaches a guardian: what it is called, the
     // sport, and when and where it is. Scores, session results and the

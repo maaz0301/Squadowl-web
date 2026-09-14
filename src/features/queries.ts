@@ -2000,6 +2000,18 @@ export function useLinkGuardianMutation() {
   });
 }
 
+export function useUnlinkGuardianMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tryoutId, playerId }: { tryoutId: string; playerId: string }) =>
+      getDataSource().unlinkGuardianFromAthlete(tryoutId, playerId),
+    onSuccess: (_, { tryoutId }) => {
+      qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.guardianRosters() });
+    },
+  });
+}
+
 /**
  * `enabled` so the coach-facing dashboard, which shares a component with the
  * guardian portal, doesn't fire a guardian-only read it will never render.
