@@ -23,7 +23,8 @@ import {
   useAlert,
 } from '@/components/ui';
 import { canUseFeature, isAtPlayerLimit } from '@/data/plans';
-import { isGoaliePosition, playerDisplayName } from '@/data/rubrics';
+import { isInPositionGroup, rosterPositionGroups } from '@/data/positions';
+import { playerDisplayName } from '@/data/rubrics';
 import { getDataSource } from '@/data';
 import type { AddPlayerForm as AddPlayerFormValues } from '@/data/types';
 import {
@@ -32,6 +33,7 @@ import {
   useImportTryoutPlayersMutation,
   useClearTestDataMutation,
   useGenerateTestDataMutation,
+  useSessionProgressQuery,
   useTryoutQuery,
   useTryoutRosterInvitesMutation,
   useUploadPlayerPhotoMutation,
@@ -42,7 +44,7 @@ import { tryoutBulkWriteKey } from '@/lib/queryClient';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { useUser, usePermissions } from '@/state/authStore';
-import { useSessionStore } from '@/state/sessionStore';
+import { useSessionStore, type RosterFilter } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
 export default function RosterPage() {
@@ -95,33 +97,59 @@ export default function RosterPage() {
     }
   }, [tryoutQuery.data, user, activeAssessor, setActiveAssessor]);
 
+  // An assessor reads back none of the assessment's evaluations — scoring is
+  // blind, so get_evaluations_for_tryouts() only returns rows to account staff
+  // — and off `evals` alone every player they've just scored still counts as
+  // unscored. For them "scored" comes from the session-progress RPC instead:
+  // which players have a session saved, and nothing about the scores.
+  const sessionProgressQuery = useSessionProgressQuery(id, isAssessorOnly);
+  const scoredIds = useMemo(() => {
+    const ids = new Set((tryoutQuery.data?.evals ?? []).map((e) => e.playerId));
+    if (isAssessorOnly) {
+      for (const [playerId, maxSession] of Object.entries(sessionProgressQuery.data ?? {})) {
+        if (maxSession > 0) ids.add(playerId);
+      }
+    }
+    return ids;
+  }, [tryoutQuery.data?.evals, isAssessorOnly, sessionProgressQuery.data]);
+
+  const positionGroups = useMemo(
+    () => (tryoutQuery.data ? rosterPositionGroups(tryoutQuery.data.sport, tryoutQuery.data.roster) : []),
+    [tryoutQuery.data],
+  );
+  // The filter is remembered across assessments, so a hockey one can leave
+  // "Goalies" selected on a basketball roster that has no such category.
+  const activeGroup = positionGroups.find((g) => `pos:${g.key}` === rosterFilter);
+  const activeFilter: RosterFilter =
+    rosterFilter === 'all' || rosterFilter === 'scored' || rosterFilter === 'unscored' || activeGroup
+      ? rosterFilter
+      : 'all';
+
   const filteredRoster = useMemo(() => {
     if (!tryoutQuery.data) return [];
-    const { roster, evals } = tryoutQuery.data;
-    const scoredIds = new Set(evals.map((e) => e.playerId));
+    const { roster } = tryoutQuery.data;
     let result: typeof roster;
-    switch (rosterFilter) {
+    switch (activeFilter) {
       case 'scored':
         result = roster.filter((p) => scoredIds.has(p.id));
         break;
       case 'unscored':
         result = roster.filter((p) => !scoredIds.has(p.id));
         break;
-      case 'goalies':
-        result = roster.filter((p) => isGoaliePosition(p.pos));
-        break;
-      case 'skaters':
-        result = roster.filter((p) => !isGoaliePosition(p.pos));
-        break;
-      default:
+      case 'all':
         result = roster;
+        break;
+      default: {
+        const group = positionGroups.find((g) => `pos:${g.key}` === activeFilter);
+        result = group ? roster.filter((p) => isInPositionGroup(group, p.pos)) : roster;
+      }
     }
     const search = playerSearch.trim().toLowerCase();
     if (search) {
       result = result.filter((p) => `${p.first} ${p.last}`.toLowerCase().includes(search));
     }
     return result;
-  }, [tryoutQuery.data, rosterFilter, playerSearch]);
+  }, [tryoutQuery.data, activeFilter, playerSearch, scoredIds, positionGroups]);
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading roster..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -229,7 +257,7 @@ export default function RosterPage() {
   };
 
   const hasPlayers = tryout.roster.length > 0;
-  const scoredCount = new Set(tryout.evals.map((e) => e.playerId)).size;
+  const scoredCount = tryout.roster.filter((p) => scoredIds.has(p.id)).length;
   // A background refetch keeps rendering the *previous* cached tryout, which
   // right after a bulk add (dummy data, or registrations placed onto the
   // roster) is still the empty one — `isLoading` is false the whole time
@@ -390,8 +418,16 @@ export default function RosterPage() {
           <div>
             <SectionLabel className="mb-1.5">Show</SectionLabel>
             <div className="flex flex-wrap gap-2">
-              {(['all', 'scored', 'unscored', 'skaters', 'goalies'] as const).map((f) => (
-                <Chip key={f} label={f} active={rosterFilter === f} onClick={() => setRosterFilter(f)} />
+              {(['all', 'scored', 'unscored'] as const).map((f) => (
+                <Chip key={f} label={f} active={activeFilter === f} onClick={() => setRosterFilter(f)} />
+              ))}
+              {positionGroups.map((g) => (
+                <Chip
+                  key={g.key}
+                  label={g.label}
+                  active={activeFilter === `pos:${g.key}`}
+                  onClick={() => setRosterFilter(`pos:${g.key}`)}
+                />
               ))}
             </div>
           </div>
@@ -419,7 +455,9 @@ export default function RosterPage() {
           message={
             playerSearch.trim()
               ? `No players match "${playerSearch.trim()}".`
-              : `No ${rosterFilter} players. Try a different filter.`
+              : activeGroup && activeFilter !== 'all'
+                ? `No players under ${activeGroup.label}. Try a different filter.`
+                : `No ${activeFilter} players. Try a different filter.`
           }
           actionLabel={playerSearch.trim() ? 'Clear search' : 'Show all'}
           onAction={() => {

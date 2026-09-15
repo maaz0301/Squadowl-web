@@ -109,3 +109,90 @@ export const POSITION_OPTIONS_BY_SPORT: Record<Sport, PositionOption[]> = {
   ],
   Other: [],
 };
+
+/** One roster filter chip: a position category of the sport, and the position codes it covers. */
+export interface PositionGroup {
+  key: string;
+  label: string;
+  codes: string[];
+}
+
+/**
+ * The position categories a roster can be filtered by, per sport, built from
+ * the codes in POSITION_OPTIONS_BY_SPORT (plus the legacy FWD/DEF/GTL codes, and
+ * both spellings cricket's middle-order code has had). A role that isn't a
+ * playing position, like Cricket's Captain, belongs to no category.
+ */
+export const POSITION_GROUPS_BY_SPORT: Record<Sport, PositionGroup[]> = {
+  Hockey: [
+    { key: 'forwards', label: 'Forwards', codes: ['LW', 'C', 'RW', 'FWD'] },
+    { key: 'defense', label: 'Defense', codes: ['LD', 'RD', 'DEF'] },
+    { key: 'goalies', label: 'Goalies', codes: ['G', 'GTL'] },
+  ],
+  Ringette: [
+    { key: 'forwards', label: 'Forwards', codes: ['C', 'LF', 'RF', 'FWD'] },
+    { key: 'defense', label: 'Defense', codes: ['LD', 'RD', 'DEF'] },
+    { key: 'goalies', label: 'Goalies', codes: ['G', 'GTL'] },
+  ],
+  Soccer: [
+    { key: 'goalkeepers', label: 'Goalkeepers', codes: ['GK'] },
+    { key: 'defenders', label: 'Defenders', codes: ['CB', 'FB'] },
+    { key: 'midfielders', label: 'Midfielders', codes: ['CDM', 'CM', 'CAM'] },
+    { key: 'forwards', label: 'Forwards', codes: ['W', 'ST'] },
+  ],
+  Football: [
+    { key: 'offense', label: 'Offense', codes: ['QB', 'RB', 'FB', 'WR', 'TE', 'OL'] },
+    { key: 'defense', label: 'Defense', codes: ['DL', 'LB', 'CB', 'S'] },
+    { key: 'special-teams', label: 'Special Teams', codes: ['K', 'P'] },
+  ],
+  Basketball: [
+    { key: 'guards', label: 'Guards', codes: ['PG', 'SG'] },
+    { key: 'forwards', label: 'Forwards', codes: ['SF', 'PF'] },
+    { key: 'centers', label: 'Centers', codes: ['C'] },
+  ],
+  Tennis: [
+    { key: 'singles', label: 'Singles', codes: ['S'] },
+    { key: 'doubles', label: 'Doubles', codes: ['DS', 'DR', 'DN', 'DB'] },
+  ],
+  Volleyball: [
+    { key: 'setters', label: 'Setters', codes: ['S'] },
+    { key: 'hitters', label: 'Hitters', codes: ['OH', 'OPP'] },
+    { key: 'middles', label: 'Middle Blockers', codes: ['MB'] },
+    { key: 'back-row', label: 'Libero / DS', codes: ['L', 'DS'] },
+  ],
+  Lacrosse: [
+    { key: 'attack', label: 'Attack', codes: ['A'] },
+    { key: 'midfield', label: 'Midfield', codes: ['M', 'FOGO'] },
+    { key: 'defense', label: 'Defense', codes: ['D'] },
+    { key: 'goalies', label: 'Goalies', codes: ['G'] },
+  ],
+  Baseball: [
+    { key: 'pitchers', label: 'Pitchers', codes: ['P'] },
+    { key: 'catchers', label: 'Catchers', codes: ['C'] },
+    { key: 'infield', label: 'Infield', codes: ['1B', '2B', '3B', 'SS'] },
+    { key: 'outfield', label: 'Outfield', codes: ['LF', 'CF', 'RF'] },
+    { key: 'dh', label: 'Designated Hitters', codes: ['DH'] },
+  ],
+  Cricket: [
+    { key: 'batters', label: 'Batters', codes: ['OB', 'MB', 'MOB', 'FIN'] },
+    { key: 'bowlers', label: 'Bowlers', codes: ['FB', 'SB'] },
+    { key: 'all-rounders', label: 'All-Rounders', codes: ['AR'] },
+    { key: 'wicket-keepers', label: 'Wicket-Keepers', codes: ['WK'] },
+  ],
+  Other: [],
+};
+
+/**
+ * The position filter chips for a roster. 'Other' has no fixed positions, so it
+ * gets one chip per position actually entered on the roster instead.
+ */
+export function rosterPositionGroups(sport: Sport, roster: { pos?: string | null }[]): PositionGroup[] {
+  const groups = POSITION_GROUPS_BY_SPORT[sport];
+  if (groups?.length) return groups;
+  const codes = [...new Set(roster.map((p) => p.pos?.trim().toUpperCase()).filter((c): c is string => !!c))].sort();
+  return codes.map((code) => ({ key: code.toLowerCase(), label: code, codes: [code] }));
+}
+
+export function isInPositionGroup(group: PositionGroup, pos?: string | null): boolean {
+  return !!pos && group.codes.includes(pos.trim().toUpperCase());
+}

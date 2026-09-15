@@ -128,8 +128,6 @@ export default function TeamsPage() {
         <EmptyState
           title="No teams created"
           message="Create a team to group rosters, schedule practices and games, and manage evaluations."
-          actionLabel="Create Team"
-          onAction={newTeam}
         />
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

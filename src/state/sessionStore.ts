@@ -3,7 +3,8 @@ import { persist } from 'zustand/middleware';
 import { zustandStorage } from '@/lib/storage';
 import { type Assessor } from '@/data/types';
 
-export type RosterFilter = 'all' | 'scored' | 'unscored' | 'goalies' | 'skaters';
+/** A position filter is `pos:` plus a PositionGroup key from data/positions. */
+export type RosterFilter = 'all' | 'scored' | 'unscored' | `pos:${string}`;
 
 interface SessionState {
   currentTryoutId: string | null;

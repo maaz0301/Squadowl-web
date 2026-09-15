@@ -8217,6 +8217,10 @@ export class SupabaseDataSource implements DataSource {
       .map((tp) => {
         if (!tp.tryouts) return null;
         const t = tp.tryouts as Row;
+        // Soft-deleted (tryouts.deleted_at) — only present on the fallback
+        // query's row shape; get_guardian_rosters() already excludes these
+        // server-side, so this is a no-op for that path.
+        if (t.deleted_at) return null;
         return {
           id: t.id,
           name: t.name,
@@ -8233,6 +8237,10 @@ export class SupabaseDataSource implements DataSource {
     const seasonsList = ((row.season_roster ?? []) as Row[])
       .map((sr) => {
         if (!sr.seasons) return null;
+        // Archived (team deleted, or the season itself deleted/archived) — only
+        // present on the fallback query's row shape; get_guardian_rosters()
+        // already excludes these server-side, so this is a no-op for that path.
+        if ((sr.seasons as Row).archived) return null;
 
         const availability = (sr.event_availability ?? []) as Row[];
         const assignedEventIds = new Set<string>(availability.map((ea) => ea.season_event_id));
@@ -8414,7 +8422,7 @@ export class SupabaseDataSource implements DataSource {
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_guardian_rosters');
 
     if (!rpcError) {
-      return ((rpcData as Row[]) ?? []).map((row) => this.mapGuardianRosterRow(row));
+      return this.mergeGuardianRosterRows((rpcData as Row[]) ?? []);
     }
 
     // Environments that haven't run the migration yet fall back to the old embed.
@@ -8442,7 +8450,7 @@ export class SupabaseDataSource implements DataSource {
         tryout_participants(
           id,
           tryout_id,
-          tryouts(id, name, sport, tryout_date, start_time, end_time, location)
+          tryouts(id, name, sport, tryout_date, start_time, end_time, location, deleted_at)
         ),
         season_roster(
           id,
@@ -8455,6 +8463,7 @@ export class SupabaseDataSource implements DataSource {
             team_name,
             sport,
             team_id,
+            archived,
             teams(collects_fees, registration_fee_cents),
             season_events(id, kind, title, event_date, start_time, end_time, location, notes)
           )
@@ -8472,7 +8481,42 @@ export class SupabaseDataSource implements DataSource {
       return [];
     }
 
-    return ((data as Row[]) ?? []).map((row) => this.mapGuardianRosterRow(row));
+    return this.mergeGuardianRosterRows((data as Row[]) ?? []);
+  }
+
+  /**
+   * get_guardian_rosters() joins athletes against tryout_participants and
+   * season_roster without aggregating them back into arrays, so an athlete on
+   * two teams (or a team plus an evaluation) comes back as separate partial
+   * rows — one per team/evaluation, each missing the other's data. Re-merge
+   * those into a single card per athlete here, keyed on athlete id, and drop
+   * anyone left with neither an active team nor an evaluation: the guardian
+   * link outlives the season_roster/tryout_participant row once a coach
+   * deletes the team or tryout, and this list should never resurrect them.
+   */
+  private mergeGuardianRosterRows(rows: Row[]): import('../types').GuardianRosterAthlete[] {
+    const byId = new Map<string, import('../types').GuardianRosterAthlete>();
+
+    for (const row of rows) {
+      const mapped = this.mapGuardianRosterRow(row);
+      const existing = byId.get(mapped.id);
+      if (!existing) {
+        byId.set(mapped.id, mapped);
+        continue;
+      }
+      for (const tryout of mapped.tryouts) {
+        if (!existing.tryouts.some((t) => t.participantId === tryout.participantId)) {
+          existing.tryouts.push(tryout);
+        }
+      }
+      for (const season of mapped.seasons) {
+        if (!existing.seasons.some((s) => s.seasonRosterId === season.seasonRosterId)) {
+          existing.seasons.push(season);
+        }
+      }
+    }
+
+    return Array.from(byId.values()).filter((athlete) => athlete.tryouts.length > 0 || athlete.seasons.length > 0);
   }
 
   // ─── Guardian -> Coach athlete profile sharing ──────────────────────────
