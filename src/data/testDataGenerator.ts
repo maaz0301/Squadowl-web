@@ -33,21 +33,24 @@ const LAST_NAMES = [
 const LEVELS = ['AAA', 'AA', 'A', 'BB', 'House'];
 
 /**
- * Position pools per sport. Goalie-type positions are spelled so
- * `isGoaliePosition` (matches `GTL` or anything containing `GOAL`) recognizes
- * them, ensuring goalie-role rubrics get exercised where the sport has one.
+ * Position pools per sport, using the same codes as `POSITION_OPTIONS_BY_SPORT`
+ * / `POSITION_GROUPS_BY_SPORT` (see data/positions.ts) so a dummy-generated
+ * player's `pos` lands in the same roster filter chip a manually-added player
+ * with that position would. Goalie-type codes ('G'/'GTL'/'GK') are recognized
+ * by `isGoaliePosition`, ensuring goalie-role rubrics get exercised where the
+ * sport has one.
  */
 export const POSITIONS_BY_SPORT: Record<Sport, string[]> = {
-  Hockey: ['FWD', 'FWD', 'FWD', 'DEF', 'DEF', 'GTL'],
-  Ringette: ['FWD', 'FWD', 'DEF', 'DEF', 'DEF', 'GTL'],
-  Soccer: ['Forward', 'Midfield', 'Midfield', 'Defender', 'Defender', 'Goalkeeper'],
-  Football: ['QB', 'RB', 'WR', 'WR', 'OL', 'DL', 'LB', 'DB'],
+  Hockey: ['LW', 'C', 'RW', 'LD', 'RD', 'G'],
+  Ringette: ['LF', 'C', 'RF', 'LD', 'RD', 'G'],
+  Soccer: ['ST', 'CDM', 'CM', 'CB', 'FB', 'GK'],
+  Football: ['QB', 'RB', 'WR', 'WR', 'OL', 'DL', 'LB', 'CB'],
   Basketball: ['PG', 'SG', 'SF', 'PF', 'C'],
-  Tennis: ['Singles', 'Doubles'],
-  Volleyball: ['Setter', 'Outside', 'Middle', 'Opposite', 'Libero'],
-  Lacrosse: ['Attack', 'Midfield', 'Midfield', 'Defense', 'Goalie'],
-  Baseball: ['Pitcher', 'Catcher', 'Infield', 'Infield', 'Outfield', 'Outfield'],
-  Cricket: ['Batsman', 'Batsman', 'Batsman', 'Bowler', 'Bowler', 'All-Rounder', 'Wicket-Keeper'],
+  Tennis: ['S', 'DS'],
+  Volleyball: ['S', 'OH', 'MB', 'OPP', 'L'],
+  Lacrosse: ['A', 'M', 'M', 'D', 'G'],
+  Baseball: ['P', 'C', '2B', 'SS', 'CF', 'RF'],
+  Cricket: ['OB', 'MB', 'FIN', 'FB', 'SB', 'AR', 'WK'],
   Other: ['FWD', 'DEF', 'GTL', 'Other'],
 };
 
