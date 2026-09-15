@@ -1522,6 +1522,27 @@ export function useUpdateSeasonEventMutation(seasonId: string) {
       eventId: string;
       updates: Partial<import('@/data/types').SeasonEvent>;
     }) => getDataSource().updateSeasonEvent(seasonId, eventId, updates),
+    // Patch the cached event immediately so the schedule/calendar cards show
+    // the edit the instant Save is pressed, rather than waiting on a refetch
+    // of the season query — the most expensive read in the app.
+    onMutate: async ({ eventId, updates }) => {
+      await qc.cancelQueries({ queryKey: queryKeys.season(seasonId) });
+      const previousSeason = qc.getQueryData<Season>(queryKeys.season(seasonId));
+      if (previousSeason) {
+        qc.setQueryData(queryKeys.season(seasonId), {
+          ...previousSeason,
+          events: previousSeason.events.map((event) =>
+            event.id === eventId ? { ...event, ...updates } : event,
+          ),
+        });
+      }
+      return { previousSeason };
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousSeason) {
+        qc.setQueryData(queryKeys.season(seasonId), context.previousSeason);
+      }
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
     },
