@@ -64,7 +64,8 @@ export const AssessorSchema = z.object({
   name: z.string(),
   email: z.string().email().optional().or(z.literal('')),
   role: z.enum(['lead', 'assistant', 'assessor']).default('assessor'),
-  status: z.enum(['pending', 'accepted', 'declined']).optional().default('pending'),
+  /** `completed`: the assessor hit Complete Assessing — off their hub, data untouched. */
+  status: z.enum(['pending', 'accepted', 'declined', 'completed']).optional().default('pending'),
   userId: z.string().optional().nullable(),
 });
 

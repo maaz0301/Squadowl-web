@@ -39,6 +39,7 @@ import {
   useUploadPlayerPhotoMutation,
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
+import { useCompleteAssessing } from '@/features/useCompleteAssessing';
 import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { tryoutBulkWriteKey } from '@/lib/queryClient';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -55,6 +56,7 @@ export default function RosterPage() {
   const { alert, confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
+  const { canComplete, completing, complete } = useCompleteAssessing(tryoutQuery.data);
   const addPlayer = useAddPlayerMutation(id!);
   const inviteParticipant = useTryoutRosterInvitesMutation(id!);
   const importPlayers = useImportTryoutPlayersMutation(id!);
@@ -377,6 +379,14 @@ export default function RosterPage() {
               <Button label="Import from File" variant="secondary" onClick={openImport} />
               <Button label="Select" variant="secondary" onClick={() => setSelectMode(true)} />
               <Button label="Tools" variant="ghost" onClick={() => setShowTools(true)} />
+              {canComplete ? (
+                <Button
+                  label="Complete Assessing"
+                  variant="secondary"
+                  onClick={() => complete()}
+                  loading={completing}
+                />
+              ) : null}
             </div>
           )}
 

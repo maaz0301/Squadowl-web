@@ -61,7 +61,7 @@ export default function DashboardPage() {
   // pending state has propagated.
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const { isGuardian } = usePermissions();
+  const { isGuardian, role } = usePermissions();
 
   // Summaries, not full tryouts: these cards show a name, a sport, a date and a
   // headcount, and the full read drags every roster, evaluation, score and
@@ -188,7 +188,19 @@ export default function DashboardPage() {
   }
 
   const loadingTryouts = tryoutsQuery.isLoading;
-  const tryouts = tryoutsQuery.data ?? [];
+  // A staff assessor finds their evaluations here rather than under Assigned to
+  // me; once they Complete Assessing it leaves their list. Coaches and admins
+  // are never filtered — completing is the assessor's own view only.
+  const myEmail = user?.email?.toLowerCase();
+  const tryouts = (tryoutsQuery.data ?? []).filter(
+    (t) =>
+      role !== 'assessor' ||
+      !t.assessors.some(
+        (a) =>
+          a.status === 'completed' &&
+          ((!!user?.id && a.userId === user.id) || (!!myEmail && a.email?.toLowerCase() === myEmail)),
+      ),
+  );
   const teams = teamsQuery.data ?? [];
   const planTier = user?.planTier ?? 'free';
 

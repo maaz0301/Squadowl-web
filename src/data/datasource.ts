@@ -77,6 +77,8 @@ export interface DataSource {
   listAssignedTryoutSummaries(): Promise<TryoutSummary[]>;
   acceptAssignedTryout(tryoutId: string): Promise<void>;
   rejectAssignedTryout(tryoutId: string): Promise<void>;
+  /** An invited assessor ends their session: drops off their hub, the evaluation's data is untouched. */
+  completeAssignedTryout(tryoutId: string): Promise<void>;
   getTryout(id: string): Promise<Tryout | null>;
   createTryout(form: CreateAssessmentForm): Promise<Tryout>;
   updateTryout(id: string, updates: Partial<Tryout>): Promise<Tryout>;

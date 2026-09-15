@@ -28,6 +28,7 @@ import {
 import { RECOMMENDATIONS, ScoreFormSchema, type ScoreForm } from '@/data/types';
 import { useSaveEvaluationMutation, useSessionProgressQuery, useTryoutQuery } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
+import { useCompleteAssessing } from '@/features/useCompleteAssessing';
 import { useSessionStore } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
@@ -47,6 +48,7 @@ export default function ScorePage() {
   const { alert } = useAlert();
   const [saving, setSaving] = useState(false);
   const tryoutQuery = useTryoutQuery(id);
+  const { canComplete, completing, complete } = useCompleteAssessing(tryoutQuery.data);
   // Same resolution as the layout's tab-hiding — see useIsAssessorOnly. Read
   // here rather than beside its first use below so setParams can keep the URL
   // honest too: a viewer this doesn't apply to sheds the parameter on the next
@@ -411,6 +413,32 @@ export default function ScorePage() {
     }
   });
 
+  // Assessors only (see useCompleteAssessing): ends their session and takes the
+  // evaluation off their hub; the owner / coach / team manager keeps every score.
+  const completeAssessing = () =>
+    complete(async () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+        autoSaveTimeoutRef.current = null;
+      }
+      if (activeMutationRef.current) {
+        try {
+          await activeMutationRef.current;
+        } catch (e) {
+          console.warn('Pre-complete auto-save await failed', e);
+        }
+      }
+      // Flush whatever is still on the pad so completing never drops a score.
+      const form = getValues();
+      const formStr = JSON.stringify(form);
+      const hasScores = form.scores && Object.values(form.scores).some((v) => v != null && v > 0);
+      if (previousFormRef.current !== formStr && hasScores) {
+        await saveEval.mutateAsync({ playerId: playerId!, form, evalId: evalId ?? undefined });
+      }
+      previousFormRef.current = formStr;
+      clearWorkingScores();
+    });
+
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
@@ -548,6 +576,15 @@ export default function ScorePage() {
           Overall: {overall > 0 ? overall.toFixed(1) : '—'}
         </p>
         <Button label={isEditing ? 'Save & Continue' : 'Done'} onClick={onSubmit} loading={saving} size="lg" />
+        {canComplete ? (
+          <Button
+            label="Complete Assessing"
+            variant="secondary"
+            onClick={completeAssessing}
+            loading={completing}
+            disabled={saving}
+          />
+        ) : null}
       </div>
     </div>
   );

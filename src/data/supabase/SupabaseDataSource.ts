@@ -2880,7 +2880,7 @@ export class SupabaseDataSource implements DataSource {
   private async fetchAssignedTryoutRows(): Promise<Row[]> {
     const { supabase, userId, accountId } = await this.ctx();
     const links = unwrap(
-      await supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId).neq('status', 'declined'),
+      await supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId).not('status', 'in', '(declined,completed)'),
     ) as Row[];
     const ids = [...new Set(links.map((l) => l.tryout_id))];
     if (!ids.length) return [];
@@ -2927,6 +2927,22 @@ export class SupabaseDataSource implements DataSource {
     const { supabase } = await this.ctx();
     const { error } = await supabase.rpc('set_assessor_status', { p_tryout_id: tryoutId, p_status: 'declined' });
     if (error) throw new Error(error.message);
+  }
+
+  /**
+   * Complete Assessing. Only the caller's own tryout_assessors row changes, so
+   * the owner/coach keeps the evaluation and every score; the assessor's hub
+   * stops listing it (fetchAssignedTryoutRows skips 'completed').
+   */
+  async completeAssignedTryout(tryoutId: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('set_assessor_status', { p_tryout_id: tryoutId, p_status: 'completed' });
+    if (error) {
+      if (/Invalid assessor status/i.test(error.message)) {
+        throw new Error('Completing an evaluation is not available yet. Please try again after the next update.');
+      }
+      throw new Error(error.message);
+    }
   }
 
   async createTryout(form: CreateAssessmentForm): Promise<Tryout> {

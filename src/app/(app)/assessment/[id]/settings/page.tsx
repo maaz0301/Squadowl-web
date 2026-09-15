@@ -45,11 +45,16 @@ import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
  * assessor hadn't answered yet. `title` carries the longer explanation on
  * hover.
  */
-const INVITE_STATUS: Record<'pending' | 'accepted' | 'declined', {
+const INVITE_STATUS: Record<'pending' | 'accepted' | 'declined' | 'completed', {
   label: string;
   variant: 'warning' | 'success' | 'danger';
   title: string;
 }> = {
+  completed: {
+    label: 'Assessing complete',
+    variant: 'success',
+    title: 'They finished scoring and closed this evaluation on their side. All of their scores are kept here.',
+  },
   pending: {
     label: 'Invite pending',
     variant: 'warning',

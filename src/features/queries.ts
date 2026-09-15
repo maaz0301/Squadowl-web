@@ -397,6 +397,23 @@ export function useRejectAssignmentMutation() {
   });
 }
 
+/**
+ * Complete Assessing — see completeAssignedTryout(). Both hub lists: an
+ * invited assessor sees it under Assigned to me (a prefix of the summaries key
+ * too), a staff assessor in the main list.
+ */
+export function useCompleteAssignmentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (tryoutId: string) => getDataSource().completeAssignedTryout(tryoutId),
+    onSuccess: (_data, tryoutId) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.assignedTryouts });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tryoutSummaries(false) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+    },
+  });
+}
+
 // ---- Tryouts ----
 export function useTryoutsQuery(includeArchived = false, enabled = true) {
   return useQuery({
