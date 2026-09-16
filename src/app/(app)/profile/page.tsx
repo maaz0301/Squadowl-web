@@ -14,6 +14,8 @@ import {
   useUpdatePasswordMutation,
   useUploadCoachPhotoMutation,
 } from '@/features/queries';
+import { useIsFounderQuery } from '@/features/founderQueries';
+import { FounderProfileCard } from '@/components/founder/FounderProfileCard';
 import { getDataSource } from '@/data';
 import { PasswordSchema } from '@/data/types';
 
@@ -38,6 +40,11 @@ export default function ProfilePage() {
   const updatePasswordMut = useUpdatePasswordMutation();
   const uploadPhoto = useUploadCoachPhotoMutation();
   const { role, isGuardian } = usePermissions();
+  // The founder account runs the platform; plan limits, billing and the coach
+  // quick links don't apply to it.
+  const { data: founderCheck } = useIsFounderQuery(!isGuardian);
+  // While viewing as an organization, show the profile the way that organization's admin would.
+  const isFounder = founderCheck === true && !user?.impersonating;
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -135,7 +142,9 @@ export default function ProfilePage() {
         {editing ? (
           <div className="mt-2 flex w-full max-w-sm flex-col gap-3">
             <Input label="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-            <Input label="Organization" value={organization} onChange={(e) => setOrganization(e.target.value)} />
+            {!isFounder ? (
+              <Input label="Organization" value={organization} onChange={(e) => setOrganization(e.target.value)} />
+            ) : null}
             <div className="flex gap-2">
               <Button label="Save" onClick={saveProfile} loading={updateProfile.isPending} />
               <Button label="Cancel" variant="ghost" onClick={() => setEditing(false)} />
@@ -147,22 +156,31 @@ export default function ProfilePage() {
               {user?.displayName}
             </p>
             <p style={{ color: colors.inkMuted }}>{user?.email}</p>
-            {user?.organization ? <p style={{ color: colors.inkFaint }}>{user.organization}</p> : null}
+            {user?.organization && !isFounder ? <p style={{ color: colors.inkFaint }}>{user.organization}</p> : null}
 
             <div className="mt-1 flex flex-wrap justify-center gap-2">
-              <Badge
-                label={`Role: ${
-                  isGuardian ? 'Guardian' : role === 'admin' ? 'Coach' : role.charAt(0).toUpperCase() + role.slice(1)
-                }`}
-                variant="info"
-              />
-              {!isGuardian ? <Badge label={`Plan: ${plan.name}`} variant="brand" /> : null}
-              {user?.subscriptionStatus ? (
-                <Badge
-                  label={user.subscriptionStatus}
-                  variant={user.subscriptionStatus === 'active' ? 'success' : 'default'}
-                />
-              ) : null}
+              {isFounder ? (
+                <>
+                  <Badge label="Role: Founder" variant="info" />
+                  <Badge label="Platform admin" variant="brand" />
+                </>
+              ) : (
+                <>
+                  <Badge
+                    label={`Role: ${
+                      isGuardian ? 'Guardian' : role === 'admin' ? 'Coach' : role.charAt(0).toUpperCase() + role.slice(1)
+                    }`}
+                    variant="info"
+                  />
+                  {!isGuardian ? <Badge label={`Plan: ${plan.name}`} variant="brand" /> : null}
+                  {user?.subscriptionStatus ? (
+                    <Badge
+                      label={user.subscriptionStatus}
+                      variant={user.subscriptionStatus === 'active' ? 'success' : 'default'}
+                    />
+                  ) : null}
+                </>
+              )}
             </div>
 
             <div className="mt-2 flex flex-wrap justify-center gap-2">
@@ -197,46 +215,52 @@ export default function ProfilePage() {
 
       {!isGuardian ? (
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Card className="flex flex-col gap-2">
-            <SectionLabel>Plan Limits</SectionLabel>
-            <p style={{ color: colors.inkMuted }}>
-              Evaluations: {formatLimit(plan.limits.assessments)} · Players: {formatLimit(plan.limits.players)} ·
-              Teams: {formatLimit(getTeamAllowance(user?.planTier ?? 'free', user?.extraTeamLicenses ?? 0))}
-            </p>
-            {(user?.extraTeamLicenses ?? 0) > 0 ? (
-              <p className="text-xs" style={{ color: colors.inkMuted }}>
-                Includes {user?.extraTeamLicenses} purchased team license{user?.extraTeamLicenses === 1 ? '' : 's'}.
-              </p>
-            ) : null}
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button label="Upgrade Plan" variant="secondary" onClick={() => router.push('/upgrade')} />
-              {user?.subscriptionStatus === 'active' || user?.subscriptionStatus === 'trialing' ? (
-                <Button
-                  label="Manage Subscription"
-                  variant="secondary"
-                  onClick={openPortal}
-                  loading={loadingPortal}
-                />
-              ) : null}
-            </div>
-            {canUseFeature(user?.planTier ?? 'free', 'payments') ? (
-              <Button label="Payment Dashboard" variant="secondary" onClick={() => router.push('/payments')} />
-            ) : null}
-          </Card>
+          {isFounder ? (
+            <FounderProfileCard />
+          ) : (
+            <>
+              <Card className="flex flex-col gap-2">
+                <SectionLabel>Plan Limits</SectionLabel>
+                <p style={{ color: colors.inkMuted }}>
+                  Evaluations: {formatLimit(plan.limits.assessments)} · Players: {formatLimit(plan.limits.players)} ·
+                  Teams: {formatLimit(getTeamAllowance(user?.planTier ?? 'free', user?.extraTeamLicenses ?? 0))}
+                </p>
+                {(user?.extraTeamLicenses ?? 0) > 0 ? (
+                  <p className="text-xs" style={{ color: colors.inkMuted }}>
+                    Includes {user?.extraTeamLicenses} purchased team license{user?.extraTeamLicenses === 1 ? '' : 's'}.
+                  </p>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button label="Upgrade Plan" variant="secondary" onClick={() => router.push('/upgrade')} />
+                  {user?.subscriptionStatus === 'active' || user?.subscriptionStatus === 'trialing' ? (
+                    <Button
+                      label="Manage Subscription"
+                      variant="secondary"
+                      onClick={openPortal}
+                      loading={loadingPortal}
+                    />
+                  ) : null}
+                </div>
+                {canUseFeature(user?.planTier ?? 'free', 'payments') ? (
+                  <Button label="Payment Dashboard" variant="secondary" onClick={() => router.push('/payments')} />
+                ) : null}
+              </Card>
 
-          <Card className="flex flex-col gap-1">
-            <SectionLabel>Quick Links</SectionLabel>
-            {QUICK_LINKS.map((l) => (
-              <Link
-                key={l.href}
-                href={l.href}
-                className="rounded-lg px-2 py-2 text-[15px] font-semibold transition-colors hover:brightness-125"
-                style={{ color: colors.ink }}
-              >
-                {l.label}
-              </Link>
-            ))}
-          </Card>
+              <Card className="flex flex-col gap-1">
+                <SectionLabel>Quick Links</SectionLabel>
+                {QUICK_LINKS.map((l) => (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    className="rounded-lg px-2 py-2 text-[15px] font-semibold transition-colors hover:brightness-125"
+                    style={{ color: colors.ink }}
+                  >
+                    {l.label}
+                  </Link>
+                ))}
+              </Card>
+            </>
+          )}
 
           <Card className="flex flex-col gap-3">
             <SectionLabel>Appearance</SectionLabel>

@@ -1,5 +1,6 @@
 import { QueryClient, QueryCache, MutationCache } from '@tanstack/react-query';
 import { isAuthExpiredError } from './authErrors';
+import { VIEW_AS_READ_ONLY_MESSAGE, getImpersonationTarget } from '@/state/impersonationStore';
 
 /**
  * A dead session surfaces as a failed read or write like any other error, so
@@ -28,7 +29,16 @@ export const queryClient = new QueryClient({
   // Mutations had no auth handling at all: a session that died between page
   // load and "Save" left the user staring at a failed write with no hint that
   // signing in again was the fix.
-  mutationCache: new MutationCache({ onError: handleAuthError }),
+  mutationCache: new MutationCache({
+    onError: handleAuthError,
+    // The founder's "view as" is read-only. writableAccountId() already refuses
+    // the writes that go through it, but plenty of saves go straight to a table
+    // by id, and RLS lets a platform admin through those — so every app save is
+    // stopped here, before its mutationFn runs.
+    onMutate: () => {
+      if (getImpersonationTarget()) throw new Error(VIEW_AS_READ_ONLY_MESSAGE);
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 30_000,

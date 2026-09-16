@@ -4,6 +4,22 @@ import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
 import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
+import { deriveAccountAccess, isExpiredTrial } from '@/lib/accountAccess';
+import {
+  VIEW_AS_READ_ONLY_MESSAGE,
+  getImpersonationTarget,
+  useImpersonationStore,
+} from '@/state/impersonationStore';
+
+/**
+ * For the writes that don't go through a React Query mutation (so the query
+ * client's view-as guard never sees them) and don't resolve their account via
+ * writableAccountId(): checkout and billing portals, Stripe Connect, outgoing
+ * email, and a few direct inserts. The founder's "view as" is read-only.
+ */
+function assertNotViewingAs(): void {
+  if (getImpersonationTarget()) throw new Error(VIEW_AS_READ_ONLY_MESSAGE);
+}
 import {
   categoryAveragesAcrossEvals,
   generateCloudCode,
@@ -96,7 +112,7 @@ import type {
 // ─── small helpers ──────────────────────────────────────────────────────────
 // The one documented escape hatch for loosely-shaped Supabase row/RPC-response objects.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Row = Record<string, any>;
+export type Row = Record<string, any>;
 
 function unwrap<T>(res: { data: T; error: { message: string; code?: string } | null }): T {
   if (res.error) throw unwrapError(res.error);
@@ -109,7 +125,7 @@ function unwrap<T>(res: { data: T; error: { message: string; code?: string } | n
  * `code` on the thrown Error is what lets callers distinguish a Postgres
  * SQLSTATE (a statement timeout, an RLS rejection) from a generic failure.
  */
-function unwrapError(error: { message: string; code?: string }): Error & { code?: string } {
+export function unwrapError(error: { message: string; code?: string }): Error & { code?: string } {
   const err = new Error(error.message) as Error & { code?: string };
   err.code = error.code;
   return err;
@@ -185,7 +201,7 @@ function isStaleAccountError(e: unknown): boolean {
  * as JSON. Falls back to `error.message` (or `fallback`) if the body isn't
  * JSON or doesn't carry an `error`/`message` field.
  */
-async function extractFunctionErrorMessage(error: unknown, fallback: string): Promise<string> {
+export async function extractFunctionErrorMessage(error: unknown, fallback: string): Promise<string> {
   const err = error as { message?: string; context?: { json?: () => Promise<unknown> } } | null | undefined;
   let message = err?.message || fallback;
   try {
@@ -226,7 +242,7 @@ const FETCH_PAGE_SIZE = 1000;
  * This mirrors the mobile app's fetchAllByIn() — see its "Fix roster read 500s"
  * change, which hit the same wall from the other client.
  */
-async function fetchAllByIn(
+export async function fetchAllByIn(
   supabase: SupabaseClient,
   table: string,
   select: string,
@@ -251,7 +267,7 @@ async function fetchAllByIn(
   }
 }
 
-function toMs(iso: string | null | undefined): number {
+export function toMs(iso: string | null | undefined): number {
   return iso ? new Date(iso).getTime() : 0;
 }
 
@@ -268,7 +284,7 @@ function toMs(iso: string | null | undefined): number {
  * therefore outruns the statement timeout long before it outruns the row cap,
  * so the read is paged to keep each statement's share of that predicate bounded.
  */
-const TEAM_ROSTER_PAGE = 200;
+export const TEAM_ROSTER_PAGE = 200;
 
 /**
  * Rows per page for the Players tab's own read — see listTeamRosterPage. One
@@ -758,7 +774,7 @@ const EVENT_TYPE_TO_DB: Record<EventType, string> = {
   'Sort Out': 'sort_out',
   Combine: 'combine',
 };
-const EVENT_TYPE_FROM_DB: Record<string, EventType> = {
+export const EVENT_TYPE_FROM_DB: Record<string, EventType> = {
   tryout: 'Tryout',
   assessment: 'Assessment',
   sort_out: 'Sort Out',
@@ -892,6 +908,9 @@ export class SupabaseDataSource implements DataSource {
       this.userId = nextUserId;
       this.profileCache = {};
       this.resetAccountCaches();
+      // "View as" belongs to the founder's own session; it must not survive
+      // signing out or someone else signing in on this tab.
+      if (getImpersonationTarget()) useImpersonationStore.getState().setTarget(null);
     });
   }
 
@@ -953,6 +972,17 @@ export class SupabaseDataSource implements DataSource {
    * uses the returned value so an unrelated reset can't race its answer away.
    */
   private async resolveAccount(supabase: SupabaseClient, uId: string): Promise<string> {
+    // The founder viewing the app as an organization. Only swaps which account
+    // is asked for: every read still runs as the founder, and RLS lets a
+    // platform admin read any account. Anyone else setting this just gets
+    // nothing back, and writableAccountId() refuses writes while it is set.
+    const impersonated = getImpersonationTarget();
+    if (impersonated) {
+      this.accountId = impersonated.accountId;
+      this.roleByAccountId = {};
+      return impersonated.accountId;
+    }
+
     // Right after signup the membership row can lag a beat behind the session
     // the client already has — the account/membership insert happens
     // server-side, async from auth.signUp() resolving. A brand-new user's
@@ -988,6 +1018,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   private async writableAccountId(): Promise<string> {
+    if (getImpersonationTarget()) throw new Error(VIEW_AS_READ_ONLY_MESSAGE);
     const { supabase, userId, accountId } = await this.ctx();
     // ctx() already reads `role` alongside `account_id`, so the common path
     // costs nothing. Only re-query when the cache was cleared (or the account
@@ -1016,6 +1047,16 @@ export class SupabaseDataSource implements DataSource {
    * Called whenever the signed-in identity changes or an operation fails in a
    * way that suggests the cached account is wrong.
    */
+  /**
+   * Forget the cached account and profile so the next read resolves them
+   * again — for when the account being acted as changes without the signed-in
+   * user changing (the founder entering or leaving "view as").
+   */
+  resetAccountContext(): void {
+    this.profileCache = {};
+    this.resetAccountCaches();
+  }
+
   private resetAccountCaches(): void {
     this.accountId = null;
     this.accountPromise = null;
@@ -1441,14 +1482,21 @@ export class SupabaseDataSource implements DataSource {
       return this.profileCache[userId];
     }
     const supabase = getSupabase();
-    // Three independent lookups, all keyed on a userId we already hold: the
+    // Viewing as an organization overrides role and account below, so the
+    // founder's own memberships and guardian-link never get read on this
+    // path — no point paying for either query while impersonating.
+    const impersonated = getImpersonationTarget();
+    // Independent lookups, all keyed on a userId we already hold: the
     // profile row, the memberships that carry the account (and therefore the
-    // plan), and the Auth server's view of whether the address is confirmed.
-    // Nothing here feeds anything else here, so awaiting them one after
-    // another just stacked three round trips — measured at 1262ms + 755ms +
-    // 384ms, in front of *every* login and every cold boot, since this sits on
-    // the path from "signed in" to the first screen having a session at all.
-    const [profileRes, membershipsRes, userRes, guardianRes] = await Promise.all([
+    // plan), the Auth server's view of whether the address is confirmed, and
+    // — while impersonating — the target org's own account row. Nothing here
+    // feeds anything else here, so awaiting them one after another just
+    // stacked round trips — measured at 1262ms + 755ms + 384ms, in front of
+    // *every* login and every cold boot, since this sits on the path from
+    // "signed in" to the first screen having a session at all. The account
+    // row used to be fetched in a second await *after* this batch, which
+    // added a full extra round trip to every "view as" switch.
+    const [profileRes, membershipsRes, userRes, guardianRes, impersonatedAccountRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).single(),
       // Every membership, not just the oldest one. A user can hold more than
       // one — a guardian row on a club's account and their own coaching
@@ -1458,12 +1506,19 @@ export class SupabaseDataSource implements DataSource {
       // guardian somewhere therefore signed in on the web as a free-tier
       // guardian, with no Upgrade or Plans & Billing anywhere, while ctx()
       // (which ranks by role) kept writing to their real account.
-      supabase.from('memberships').select('role, accounts(*)').eq('user_id', userId),
+      impersonated
+        ? Promise.resolve({ data: [], error: null })
+        : supabase.from('memberships').select('role, accounts(*)').eq('user_id', userId),
       supabase.auth.getUser(),
       // Guardians never get a membership row (see below), so the only way to
       // tell "a guardian we haven't heard from yet" apart from "genuinely
       // nobody" is to check whether any athlete is actually linked to them.
-      supabase.from('athletes').select('id').eq('guardian_user_id', userId).limit(1).maybeSingle(),
+      impersonated
+        ? Promise.resolve({ data: null, error: null })
+        : supabase.from('athletes').select('id').eq('guardian_user_id', userId).limit(1).maybeSingle(),
+      impersonated
+        ? supabase.from('accounts').select('*').eq('id', impersonated.accountId).single()
+        : Promise.resolve({ data: null, error: null }),
     ]);
 
     // Unwrapped after the wave rather than inside it. A PostgREST call resolves
@@ -1488,11 +1543,15 @@ export class SupabaseDataSource implements DataSource {
       .sort((a, b) => this.getRoleWeight(b.role as string) - this.getRoleWeight(a.role as string))[0] as
       | Row
       | undefined;
-    const account = Array.isArray(membership?.accounts)
-      ? membership.accounts[0]
-      : (membership?.accounts as Row | undefined);
+    // Viewing as an organization: its account stands in for the founder's own,
+    // seen as its admin would see it. Fetched above, alongside everything else.
+    const account = impersonated
+      ? (unwrap(impersonatedAccountRes) as Row)
+      : Array.isArray(membership?.accounts)
+        ? membership.accounts[0]
+        : (membership?.accounts as Row | undefined);
 
-    const rawRole = membership?.role ?? (guardianRes.data ? 'guardian' : undefined);
+    const rawRole = impersonated ? 'admin' : (membership?.role ?? (guardianRes.data ? 'guardian' : undefined));
     const role = rawRole === 'owner' ? 'admin' : rawRole;
 
     const { data: uData } = userRes;
@@ -1516,6 +1575,12 @@ export class SupabaseDataSource implements DataSource {
       extraTeamLicenses: account?.extra_team_licenses ?? 0,
       connectChargesEnabled: !!account?.stripe_connect_charges_enabled,
       connectPayoutsEnabled: !!account?.stripe_connect_payouts_enabled,
+      // Guardians have no account, and nothing to suspend.
+      accessStatus: account ? deriveAccountAccess(account) : undefined,
+      suspendedReason: account?.suspended_reason ?? undefined,
+      trialEndsAt: account?.trial_ends_at ? toMs(account.trial_ends_at as string) : undefined,
+      trialExpired: account && isExpiredTrial(account) ? true : undefined,
+      impersonating: impersonated ? true : undefined,
       createdAt: toMs(profile.created_at),
       onboardingCompleted: profile.onboarding_completed,
       onboardingSteps: profile.onboarding_steps,
@@ -3182,6 +3247,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation' | 'tryout_letter', to: string, payload: Record<string, unknown>): Promise<void> {
+    assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { error } = await supabase.functions.invoke('send-email', {
       body: { type, to, payload },
@@ -3504,6 +3570,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async addPlayer(tryoutId: string, form: AddPlayerForm): Promise<Player> {
+    assertNotViewingAs();
     return this.withFreshAccount((guard) => this._addPlayer(tryoutId, form, guard));
   }
 
@@ -7181,6 +7248,7 @@ export class SupabaseDataSource implements DataSource {
     interval: 'year' | 'month',
     options?: { applyCredits?: boolean; origin?: string },
   ): Promise<{ url: string }> {
+    assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
       body: {
@@ -7203,6 +7271,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async createPortalSession(): Promise<{ url: string }> {
+    assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-portal-session', {
       body: { origin: webOrigin() },
@@ -7223,6 +7292,7 @@ export class SupabaseDataSource implements DataSource {
     quantity: number,
     options?: { applyCredits?: boolean },
   ): Promise<{ url: string }> {
+    assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
       body: {
@@ -7284,6 +7354,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async createConnectAccountLink(): Promise<{ url: string }> {
+    assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-connect-account');
     if (error) {
@@ -7419,6 +7490,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async deleteFeedbackAttachment(path: string): Promise<void> {
+    assertNotViewingAs();
     const { supabase } = await this.feedbackIdentity();
     const { error } = await supabase.storage.from(FEEDBACK_BUCKET).remove([path]);
     if (error) throw new Error(error.message);
@@ -8347,6 +8419,7 @@ export class SupabaseDataSource implements DataSource {
     athleteId: string,
     contact: { name: string; relationship?: string; email?: string; phone?: string },
   ): Promise<FamilyContact> {
+    assertNotViewingAs();
     const { supabase, userId } = await this.ctx();
     const res = await supabase
       .from('athlete_family_contacts')
