@@ -67,10 +67,6 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
   const [tab, setTab] = useState('overview');
   const showArchived = useShowArchived();
   const teams = showArchived ? detail.teams : detail.teams.filter((t) => !t.archived);
-  const assignedEvaluations = showArchived
-    ? detail.assignedEvaluations
-    : detail.assignedEvaluations.filter((a) => !isHiddenByDefault(a));
-  const hiddenAssignedCount = detail.assignedEvaluations.length - assignedEvaluations.length;
 
   const { org } = detail;
   const badge = STATUS_BADGE[org.accessStatus];
@@ -216,37 +212,6 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
                     </p>
                   </div>
                   <Badge label={m.role} />
-                </FounderLinkCard>
-              ))
-            )}
-          </FounderSection>
-
-          <FounderSection
-            title={`Assigned Evaluations (${assignedEvaluations.length})${!showArchived && hiddenAssignedCount ? ` · ${hiddenAssignedCount} hidden` : ''}`}
-          >
-            {assignedEvaluations.length === 0 ? (
-              <p className="text-sm" style={{ color: colors.inkMuted }}>
-                No one is individually assigned to an evaluation as an assessor.
-              </p>
-            ) : (
-              assignedEvaluations.map((a, i) => (
-                <FounderLinkCard
-                  key={`${a.tryoutId}-${a.userId ?? a.email ?? i}`}
-                  // A deleted evaluation can't be opened in full; the coach read behind that page skips it.
-                  href={a.deletedAt ? undefined : `/founder/organizations/${org.id}/evaluations/${a.tryoutId}`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold break-words" style={{ color: colors.ink }}>
-                      {a.name || a.email || 'Unnamed assessor'}
-                    </p>
-                    <p className="text-xs break-words" style={{ color: colors.inkMuted }}>
-                      Assigned to {a.tryoutName}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <ArchiveBadges deletedAt={a.deletedAt} />
-                    {a.status ? <Badge label={a.status} /> : null}
-                  </div>
                 </FounderLinkCard>
               ))
             )}
