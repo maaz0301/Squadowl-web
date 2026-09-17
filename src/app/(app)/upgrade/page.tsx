@@ -13,7 +13,7 @@ import {
   sellsExtraTeams,
   type PlanDefinition,
 } from '@/data/plans';
-import type { PlanTier } from '@/data/types';
+import type { DiscountCodePreview, PlanTier } from '@/data/types';
 import {
   buildDowngradeImpact,
   hasLiveSubscription,
@@ -67,11 +67,51 @@ export default function UpgradePage() {
   const [referralCode, setReferralCode] = useState('');
   const [applyCredits, setApplyCredits] = useState(true);
 
+  // Founder-issued discount code. Previewed here so the coach sees what they
+  // get; create-checkout-session checks it again for the plan they pick.
+  const [discountInput, setDiscountInput] = useState('');
+  const [discount, setDiscount] = useState<Extract<DiscountCodePreview, { valid: true }> | null>(null);
+  const [checkingDiscount, setCheckingDiscount] = useState(false);
+
   const creditCents = referralQuery.data?.balanceCents ?? 0;
   const hasCredit = creditCents > 0;
   // The discount is sized server-side against the real line total; this is
   // only whether to ask for it at all.
-  const useCredits = hasCredit && applyCredits;
+  // Checkout takes one discount, so an applied code holds the credit back.
+  const useCredits = hasCredit && applyCredits && !discount;
+
+  const applyDiscountCode = async () => {
+    const codeValue = discountInput.trim();
+    if (!codeValue) return;
+    try {
+      setCheckingDiscount(true);
+      const result = await getDataSource().previewDiscountCode(codeValue);
+      if (!result.valid) {
+        await alert('Discount Code', result.message);
+        return;
+      }
+      setDiscount(result);
+      setDiscountInput('');
+    } catch (e) {
+      await alert('Discount Code', e instanceof Error ? e.message : 'That code could not be checked.');
+    } finally {
+      setCheckingDiscount(false);
+    }
+  };
+
+  const discountSummary = discount
+    ? `${discount.kind === 'percent' ? `${discount.percentOff}%` : formatCad(discount.amountOffCents ?? 0)} off ${
+        discount.duration === 'forever'
+          ? 'every payment'
+          : discount.duration === 'repeating'
+            ? `for ${discount.durationMonths} months`
+            : 'your first payment'
+      }${
+        discount.planTiers.length
+          ? ` · ${discount.planTiers.map((t) => getPlanDefinition(t as PlanTier).name).join(', ')} only`
+          : ''
+      }`
+    : '';
 
   const submitReferralCode = async () => {
     const codeValue = referralCode.trim();
@@ -109,7 +149,8 @@ export default function UpgradePage() {
       setLoadingTier(tier);
       const res = await getDataSource().createCheckoutSession(tier, billingInterval, {
         applyCredits: useCredits,
-        origin: window.location.origin, 
+        origin: window.location.origin,
+        discountCode: discount?.code,
       });
       if (res?.url) {
         // Full-page navigation to Stripe Checkout, not component state — the
@@ -300,6 +341,41 @@ export default function UpgradePage() {
           </div>
         </Card>
       ) : null}
+
+      <Card className="mb-6 flex flex-col gap-2">
+        <h3 className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+          Have a discount code?
+        </h3>
+        {discount ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              <strong style={{ color: colors.success }}>{discount.code}</strong> — {discountSummary}. Applied when you
+              choose a plan below.
+              {hasCredit ? ' Your loyalty credit is saved for a later payment.' : ''}
+            </p>
+            <Button label="Remove" variant="ghost" onClick={() => setDiscount(null)} />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              placeholder="e.g. SPRING25"
+              value={discountInput}
+              onChange={(e) => setDiscountInput(e.target.value.toUpperCase())}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              maxLength={40}
+              className="flex-1"
+            />
+            <Button
+              label="Apply Code"
+              variant="secondary"
+              onClick={applyDiscountCode}
+              loading={checkingDiscount}
+              disabled={!discountInput.trim()}
+            />
+          </div>
+        )}
+      </Card>
 
       {canBuyTeams ? (
         <Card className="mb-6 flex flex-col gap-2">

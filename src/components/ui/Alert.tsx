@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { VIEW_AS_READ_ONLY_MESSAGE, getImpersonationTarget } from '@/state/impersonationStore';
 import { Button } from './Button';
 import { Modal, ModalFooter } from './Modal';
 
@@ -11,6 +12,13 @@ interface ConfirmOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
+  /**
+   * Every confirm() in the app fronts a write except the founder's own View as
+   * Org / View as User buttons, which switch what's *displayed* — set this on
+   * those so entering one "view as" from inside another isn't mistaken for an
+   * edit and blocked by the read-only guard below.
+   */
+  allowWhileViewingAs?: boolean;
 }
 
 interface AlertApi {
@@ -52,14 +60,45 @@ export function AlertProvider({ children }: { children: ReactNode }) {
 
   const api = useMemo<AlertApi>(
     () => ({
-      alert: (title, message) =>
-        new Promise<void>((resolve) => {
-          setDialog({ mode: 'alert', title, message, resolve: () => resolve() });
-        }),
-      confirm: (options) =>
-        new Promise<boolean>((resolve) => {
+      alert: (title, message) => {
+        // A write with no confirm() step in front of it (a plain Save button,
+        // say) reaches here instead of the confirm() gate above: the caller
+        // wraps the wrong-account error from writableAccountId() / the query
+        // client's onMutate guard in its own "X failed: <message>" wording,
+        // which reads like a bug rather than the read-only restriction it is.
+        // VIEW_AS_READ_ONLY_MESSAGE is a fixed, purpose-built sentence — a
+        // plain substring match is enough to recognize it inside any of those
+        // wrappers and swap in the same clear notice confirm() shows.
+        const readOnly = message?.includes(VIEW_AS_READ_ONLY_MESSAGE);
+        return new Promise<void>((resolve) => {
+          setDialog({
+            mode: 'alert',
+            title: readOnly ? 'Read-Only' : title,
+            message: readOnly ? VIEW_AS_READ_ONLY_MESSAGE : message,
+            resolve: () => resolve(),
+          });
+        });
+      },
+      confirm: (options) => {
+        // Blocked here, before the caller's own confirm dialog ever paints,
+        // rather than after the mutation fails silently underneath it — the
+        // query client's onMutate guard and writableAccountId() both already
+        // refuse the write itself, but neither one is in a position to tell
+        // the founder why nothing happened.
+        if (getImpersonationTarget() && !options.allowWhileViewingAs) {
+          return new Promise<boolean>((resolve) => {
+            setDialog({
+              mode: 'alert',
+              title: `Can't ${options.title}`,
+              message: VIEW_AS_READ_ONLY_MESSAGE,
+              resolve: () => resolve(false),
+            });
+          });
+        }
+        return new Promise<boolean>((resolve) => {
           setDialog({ mode: 'confirm', ...options, resolve });
-        }),
+        });
+      },
       toast: (message, tone = 'default') => {
         const id = Math.random();
         setToasts((t) => [...t, { id, message, tone }]);

@@ -263,8 +263,10 @@ export interface DataSource {
   createCheckoutSession(
     planTier: string,
     interval: 'year' | 'month',
-    options?: { applyCredits?: boolean; origin?: string },
+    options?: { applyCredits?: boolean; origin?: string; discountCode?: string },
   ): Promise<{ url: string }>;
+  /** Whether a founder-issued discount code can be used by this account right now (preview only — checkout re-checks). */
+  previewDiscountCode(code: string, planTier?: string): Promise<import('./types').DiscountCodePreview>;
   /** Checkout for add-on team licenses beyond the plan's included teams (Club: CAD$10/team/year). */
   createTeamLicenseCheckoutSession(
     quantity: number,
@@ -333,6 +335,8 @@ export interface DataSource {
    * RLS restricts the delete to reviewers — see `feedback_submissions_delete_reviewer`.
    */
   deleteFeedbackSubmission(id: string, attachments: import('./extras').FeedbackAttachment[]): Promise<void>;
+  /** Drop the cached account/profile so the next read resolves them again (e.g. entering or leaving "view as"). */
+  resetAccountContext(): void;
   addSeasonPlayer(seasonId: string, player: Omit<import('./types').SeasonPlayer, 'id'>): Promise<import('./types').SeasonPlayer>;
   deleteSeasonPlayer(seasonId: string, playerId: string): Promise<void>;
   importSeasonPlayersFromTeam(seasonId: string): Promise<import('./types').SeasonPlayer[]>;

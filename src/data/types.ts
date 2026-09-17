@@ -478,6 +478,19 @@ export const UserProfileSchema = z.object({
    */
   pendingPlanTier: z.enum(PLAN_TIERS).optional(),
   pendingPlanChangeAt: z.number().optional(),
+  /**
+   * Access state of the working account — see src/lib/accountAccess.ts. A
+   * suspended account's data is already cut off by RLS; this only lets the app
+   * say so instead of failing every read.
+   */
+  accessStatus: z.enum(['active', 'trial', 'suspended']).optional(),
+  suspendedReason: z.string().optional(),
+  /** End of a founder-granted trial, in ms. */
+  trialEndsAt: z.number().optional(),
+  /** Suspended because that trial ran out, not by a founder action. */
+  trialExpired: z.boolean().optional(),
+  /** Set while the founder is viewing the app as this account (read-only). */
+  impersonating: z.boolean().optional(),
   /** Add-on team licenses purchased beyond the plan's included teams (Club: CAD$10/team/year). */
   extraTeamLicenses: z.number().int().min(0).default(0),
   /** Whether the account's Stripe Connect account can accept registration-fee charges/payouts. */
@@ -1013,6 +1026,21 @@ export interface ReferralLedgerEntry {
 }
 
 /** Everything the Loyalty Program screen renders, from get_referral_summary(). */
+/** What the Upgrade page learns about a discount code before checkout (see preview_discount_code). */
+export type DiscountCodePreview =
+  | { valid: false; message: string }
+  | {
+      valid: true;
+      code: string;
+      kind: 'percent' | 'amount';
+      percentOff?: number;
+      amountOffCents?: number;
+      duration: 'once' | 'forever' | 'repeating';
+      durationMonths?: number;
+      /** Empty = every paid plan. */
+      planTiers: string[];
+    };
+
 export interface ReferralSummary {
   /** The account's own 9-character code, minted on first visit to the screen. */
   code: string | null;
