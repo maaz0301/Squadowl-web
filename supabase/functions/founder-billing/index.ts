@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import type { SupabaseClient, User } from 'https://esm.sh/@supabase/supabase-js@2';
+import type Stripe from 'npm:stripe@14.21.0';
 import { corsHeaders } from '../_shared/cors.ts';
 import { json, requireFounder } from '../_shared/founder.ts';
 import { TIER_PRICES_CAD, configuredPriceId, stripe, tierForPrice } from '../_shared/stripe.ts';
@@ -18,8 +19,7 @@ import { TIER_PRICES_CAD, configuredPriceId, stripe, tierForPrice } from '../_sh
  * never writes plan_tier itself, so the two can't disagree.
  */
 
-// deno-lint-ignore no-explicit-any
-type Body = Record<string, any>;
+type Body = Record<string, unknown>;
 type Ctx = { caller: User; admin: SupabaseClient; body: Body };
 
 class HttpError extends Error {
@@ -75,11 +75,14 @@ async function accountsByCustomer(admin: SupabaseClient, customerIds: string[]) 
 const idOf = (ref: unknown): string | null =>
   typeof ref === 'string' ? ref : ((ref as { id?: string } | null)?.id ?? null);
 
-// deno-lint-ignore no-explicit-any
-function chargeRow(c: any, accounts: Map<string, { id: string; name: string }>) {
+/** A request-body field, kept only when the client actually sent a string. */
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+function chargeRow(c: Stripe.Charge, accounts: Map<string, { id: string; name: string }>) {
   const customerId = idOf(c.customer);
   const account = customerId ? accounts.get(customerId) : undefined;
   const card = c.payment_method_details?.card;
+  const customerEmail = c.customer && typeof c.customer === 'object' && 'email' in c.customer ? c.customer.email : null;
   return {
     id: c.id,
     amountCents: c.amount,
@@ -91,7 +94,7 @@ function chargeRow(c: any, accounts: Map<string, { id: string; name: string }>) 
     created: c.created * 1000,
     description: c.description ?? null,
     customerId,
-    email: c.billing_details?.email ?? c.receipt_email ?? (typeof c.customer === 'object' ? c.customer?.email : null) ?? null,
+    email: c.billing_details?.email ?? c.receipt_email ?? customerEmail ?? null,
     accountId: account?.id ?? null,
     accountName: account?.name ?? null,
     invoiceId: idOf(c.invoice),
@@ -124,8 +127,12 @@ async function customersMatching(admin: SupabaseClient, q: string): Promise<stri
       .select('accounts!inner(stripe_customer_id)')
       .in('user_id', userIds)
       .in('role', ['owner', 'admin']);
-    // deno-lint-ignore no-explicit-any
-    for (const m of (owned ?? []) as any[]) {
+    // Supabase's inner-join select can come back as either shape depending on
+    // how it infers the relationship's cardinality; handle both.
+    type MembershipAccountRow = {
+      accounts: { stripe_customer_id: string | null } | { stripe_customer_id: string | null }[] | null;
+    };
+    for (const m of (owned ?? []) as MembershipAccountRow[]) {
       const acc = Array.isArray(m.accounts) ? m.accounts[0] : m.accounts;
       if (acc?.stripe_customer_id) found.add(acc.stripe_customer_id);
     }
@@ -154,11 +161,11 @@ const STATUS_QUERY: Record<string, string> = {
 
 async function listPayments({ admin, body }: Ctx) {
   const search = String(body.search ?? '').trim();
-  const status = STATUS_QUERY[body.status] ? String(body.status) : null;
-  const cursor: string | undefined = body.cursor || undefined;
+  const statusParam = String(body.status ?? '');
+  const status = STATUS_QUERY[statusParam] ? statusParam : null;
+  const cursor = String(body.cursor ?? '') || undefined;
 
-  // deno-lint-ignore no-explicit-any
-  let charges: any[] = [];
+  let charges: Stripe.Charge[] = [];
   let nextCursor: string | null = null;
   // Stripe search can't mix AND with OR, so a status filter on a multi-customer
   // search is applied to the returned page instead.
@@ -170,8 +177,9 @@ async function listPayments({ admin, body }: Ctx) {
     nextCursor = res.has_more ? (res.next_page ?? null) : null;
   };
 
-  if (body.accountId) {
-    const account = await accountById(admin, body.accountId);
+  const accountIdParam = String(body.accountId ?? '');
+  if (accountIdParam) {
+    const account = await accountById(admin, accountIdParam);
     if (!account.stripe_customer_id) return { items: [], nextCursor: null, note: 'This account has never been billed.' };
     const clause = `customer:'${account.stripe_customer_id}'`;
     await runSearch(status ? `${clause} AND ${STATUS_QUERY[status]}` : clause);
@@ -225,12 +233,10 @@ async function getPayment({ admin, body }: Ctx) {
     expand: ['customer', 'refunds', 'invoice'],
   });
   const accounts = await accountsByCustomer(admin, [idOf(charge.customer) ?? '']);
-  // deno-lint-ignore no-explicit-any
-  const invoice = charge.invoice as any;
+  const invoice = typeof charge.invoice === 'object' ? charge.invoice : null;
   return {
     ...chargeRow(charge, accounts),
-    // deno-lint-ignore no-explicit-any
-    refunds: ((charge.refunds as any)?.data ?? []).map((r: any) => ({
+    refunds: (charge.refunds?.data ?? []).map((r) => ({
       id: r.id,
       amountCents: r.amount,
       status: r.status,
@@ -239,38 +245,36 @@ async function getPayment({ admin, body }: Ctx) {
       refundedBy: r.metadata?.refunded_by ?? null,
       created: r.created * 1000,
     })),
-    invoice:
-      invoice && typeof invoice === 'object'
-        ? {
-            id: invoice.id,
-            number: invoice.number ?? null,
-            hostedUrl: invoice.hosted_invoice_url ?? null,
-            pdfUrl: invoice.invoice_pdf ?? null,
-            subtotalCents: invoice.subtotal,
-            discountCents: (invoice.total_discount_amounts ?? []).reduce(
-              (s: number, d: { amount: number }) => s + d.amount,
-              0,
-            ),
-            // deno-lint-ignore no-explicit-any
-            lines: (invoice.lines?.data ?? []).map((l: any) => ({
-              description: l.description ?? null,
-              amountCents: l.amount,
-              periodStart: l.period?.start ? l.period.start * 1000 : null,
-              periodEnd: l.period?.end ? l.period.end * 1000 : null,
-            })),
-          }
-        : null,
+    invoice: invoice
+      ? {
+          id: invoice.id,
+          number: invoice.number ?? null,
+          hostedUrl: invoice.hosted_invoice_url ?? null,
+          pdfUrl: invoice.invoice_pdf ?? null,
+          subtotalCents: invoice.subtotal,
+          discountCents: (invoice.total_discount_amounts ?? []).reduce((s, d) => s + d.amount, 0),
+          lines: (invoice.lines?.data ?? []).map((l) => ({
+            description: l.description ?? null,
+            amountCents: l.amount,
+            periodStart: l.period?.start ? l.period.start * 1000 : null,
+            periodEnd: l.period?.end ? l.period.end * 1000 : null,
+          })),
+        }
+      : null,
   };
 }
 
-const REFUND_REASONS = ['duplicate', 'fraudulent', 'requested_by_customer'];
+const REFUND_REASONS = ['duplicate', 'fraudulent', 'requested_by_customer'] as const;
 
 async function refundPayment(ctx: Ctx) {
   const { admin, body, caller } = ctx;
   const chargeId = String(body.chargeId ?? '');
   if (!chargeId) throw new HttpError('Missing chargeId');
   const note = String(body.note ?? '').trim().slice(0, 450);
-  const reason = REFUND_REASONS.includes(body.reason) ? body.reason : undefined;
+  const reasonParam = String(body.reason ?? '');
+  const reason = (REFUND_REASONS as readonly string[]).includes(reasonParam)
+    ? (reasonParam as (typeof REFUND_REASONS)[number])
+    : undefined;
 
   const charge = await stripe.charges.retrieve(chargeId);
   if (charge.status !== 'succeeded') throw new HttpError('Only a successful payment can be refunded.');
@@ -319,10 +323,8 @@ async function refundPayment(ctx: Ctx) {
 
 // ─── Subscriptions ──────────────────────────────────────────────────────────
 
-// deno-lint-ignore no-explicit-any
-function subscriptionRow(sub: any) {
-  // deno-lint-ignore no-explicit-any
-  const items = (sub.items?.data ?? []).map((item: any) => ({
+function subscriptionRow(sub: Stripe.Subscription) {
+  const items = sub.items.data.map((item) => ({
     id: item.id,
     priceId: item.price?.id ?? null,
     tier: tierForPrice(item.price),
@@ -335,8 +337,8 @@ function subscriptionRow(sub: any) {
   return {
     id: sub.id,
     status: sub.status,
-    tier: items.map((i: { tier: string | null }) => i.tier).find(Boolean) ?? null,
-    kind: items.some((i: { tier: string | null }) => i.tier) ? 'plan' : 'addon',
+    tier: items.map((i) => i.tier).find(Boolean) ?? null,
+    kind: items.some((i) => i.tier) ? 'plan' : 'addon',
     items,
     created: sub.created * 1000,
     currentPeriodEnd: sub.current_period_end ? sub.current_period_end * 1000 : null,
@@ -350,7 +352,7 @@ function subscriptionRow(sub: any) {
           percentOff: coupon.percent_off ?? null,
           amountOffCents: coupon.amount_off ?? null,
           duration: coupon.duration,
-          endsAt: sub.discount.end ? sub.discount.end * 1000 : null,
+          endsAt: sub.discount?.end ? sub.discount.end * 1000 : null,
         }
       : null,
   };
@@ -427,7 +429,7 @@ async function changePlan(ctx: Ctx) {
     metadata: { ...sub.metadata, planTier: tier, changed_by_founder: 'true' },
   });
 
-  await audit(ctx, 'change_subscription', account.id, account.name, body.note ?? null, {
+  await audit(ctx, 'change_subscription', account.id, account.name, strOrNull(body.note), {
     subscription_id: sub.id,
     from: fromTier,
     to: tier,
@@ -446,7 +448,7 @@ async function cancelSubscription(ctx: Ctx) {
     ? await stripe.subscriptions.cancel(sub.id, { prorate: false })
     : await stripe.subscriptions.update(sub.id, { cancel_at_period_end: true });
 
-  await audit(ctx, 'cancel_subscription', account.id, account.name, body.note ?? null, {
+  await audit(ctx, 'cancel_subscription', account.id, account.name, strOrNull(body.note), {
     subscription_id: sub.id,
     tier: sub.items.data.map((i) => tierForPrice(i.price)).find(Boolean) ?? null,
     when: immediately ? 'now' : 'period_end',
@@ -459,7 +461,7 @@ async function resumeSubscription(ctx: Ctx) {
   const { account, sub } = await ownedSubscription(admin, String(body.accountId ?? ''), String(body.subscriptionId ?? ''));
   if (!sub.cancel_at_period_end) throw new HttpError('This subscription is not scheduled to cancel.');
   const updated = await stripe.subscriptions.update(sub.id, { cancel_at_period_end: false });
-  await audit(ctx, 'resume_subscription', account.id, account.name, body.note ?? null, { subscription_id: sub.id });
+  await audit(ctx, 'resume_subscription', account.id, account.name, strOrNull(body.note), { subscription_id: sub.id });
   return subscriptionRow(updated);
 }
 
@@ -577,8 +579,7 @@ serve(async (req) => {
   } catch (e) {
     if (e instanceof HttpError) return json({ error: e.message }, e.status);
     // Stripe errors carry a customer-safe message (e.g. "Charge ch_… has already been refunded").
-    // deno-lint-ignore no-explicit-any
-    const err = e as any;
+    const err = e as Stripe.errors.StripeError;
     if (err?.type?.startsWith?.('Stripe')) {
       console.error('founder-billing: stripe error', err.message);
       return json({ error: err.message }, err.statusCode && err.statusCode < 500 ? 400 : 502);
