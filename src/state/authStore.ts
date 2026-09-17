@@ -215,10 +215,14 @@ export function useIsAuthenticated(): boolean {
 }
 
 import { useOrgMembersQuery, useTeamsQuery } from '@/features/queries';
+import { getImpersonationTarget } from '@/state/impersonationStore';
 
 export function usePermissions() {
   const user = useUser();
   const { data: members = [] } = useOrgMembersQuery();
+  // View as organization only. View as user loads that person's own profile
+  // and account, so the ordinary calculation below gives them their real role.
+  const impersonating = !!getImpersonationTarget() && !getImpersonationTarget()?.user;
 
   // For demo: if they are the primary coach@example.com account, default to admin if not found.
   // In production, everyone must be an org member.
@@ -273,6 +277,27 @@ export function usePermissions() {
       canCreateAssessments: false,
       canAssess: false,
       isGuardian: true,
+    };
+  }
+
+  // View As only ever gets set once founder_log_impersonation() has confirmed
+  // the caller is the founder (see ViewAsButton.tsx / useImpersonation.ts), so
+  // this never fires for a real member of some other account. The founder is
+  // never a member of the org being viewed, so the fallback chain above
+  // landed on the least-privileged 'assessor' and hid everything an admin
+  // would see — team managers, assessor assignment — even though RLS already
+  // lets a platform admin read all of it (has_account_role()'s
+  // is_platform_admin() branch). Writes stay blocked regardless:
+  // writableAccountId() refuses them outright while impersonating, so
+  // granting the view here can't let anything actually change.
+  if (impersonating) {
+    return {
+      role: 'admin',
+      canManageOrganization: true,
+      canManageTeam: true,
+      canCreateAssessments: true,
+      canAssess: true,
+      isGuardian: false,
     };
   }
 

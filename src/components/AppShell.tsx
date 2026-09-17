@@ -7,15 +7,22 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { lockBodyScroll } from '@/lib/scrollLock';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Avatar, Button, ThemeToggle } from '@/components/ui';
+import { Avatar, Button, LoadingState, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
 import { useIsFeedbackReviewerQuery, useGuardianRostersQuery } from '@/features/queries';
+import { useIsFounderQuery } from '@/features/founderQueries';
+import { featureForPath, trackFeatureUse } from '@/lib/analytics';
+import { ImpersonationBanner, SuspendedAccountScreen, TrialEndingNotice } from '@/components/AccountAccessNotices';
 import { prefetchRoute } from '@/features/prefetch';
+import { AnnouncementBanner } from '@/components/AnnouncementBanner';
 import { NavPending } from '@/components/NavPending';
 import { SubscriptionEndingBanner } from '@/components/SubscriptionEndingBanner';
 import { canUseFeature } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
+
+/** Mirrors is_founder() in 20260916120000_founder_org_management.sql. */
+const FOUNDER_EMAIL = 'founder@tryout.ca';
 
 interface NavItem {
   href: string;
@@ -75,6 +82,36 @@ export function AppShell({ children }: { children: ReactNode }) {
   // link is a question only the server can answer. Guardians never see the
   // secondary nav at all, so they are not asked.
   const { data: isFeedbackReviewer } = useIsFeedbackReviewerQuery(!isGuardian);
+  const { data: isFounder, isLoading: founderLoading } = useIsFounderQuery(!isGuardian);
+
+  // The founder account operates the platform; it isn't a coach. It gets only
+  // the console (and its profile, for the password) — no evaluations, teams or
+  // billing of its own personal account. The address check only decides
+  // whether to wait for the answer before painting, so no other user is held
+  // up; is_founder() on the server stays the real gate. While viewing as an
+  // organization the founder gets that organization's normal app instead,
+  // under the read-only banner.
+  const founderMode = isFounder === true && !user?.impersonating;
+  const awaitingFounderCheck =
+    founderLoading && user?.email.toLowerCase() === FOUNDER_EMAIL && !user.impersonating;
+  const founderRouteAllowed = pathname.startsWith('/founder') || pathname.startsWith('/profile');
+
+  useEffect(() => {
+    if (founderMode && !founderRouteAllowed) router.replace('/founder');
+  }, [founderMode, founderRouteAllowed, router]);
+
+  // Feature usage for the founder's Analytics page. Not while viewing as — that
+  // is the founder looking, not the customer using it (the server also skips
+  // platform admins).
+  const trackedFeature = user && !user.impersonating && !isFounder ? featureForPath(pathname) : null;
+  useEffect(() => {
+    if (trackedFeature) trackFeatureUse(trackedFeature);
+  }, [trackedFeature, pathname]);
+
+  // RLS has already cut a suspended account's data off; this just says so
+  // rather than leaving every screen to fail on its own. The founder is never
+  // blocked, and neither is "view as" — looking at a suspended org is the point.
+  const blocked = user?.accessStatus === 'suspended' && !user.impersonating && !isFounder;
 
   // Shares its cache with the dashboard's own read (same query key), so this
   // costs nothing extra — it just lets the sidebar know whether this
@@ -84,7 +121,18 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { data: guardianAthletes } = useGuardianRostersQuery(!isGuardian);
   const hasGuardianAthletes = !isGuardian && (guardianAthletes?.length ?? 0) > 0;
 
-  const primary: NavItem[] = isGuardian
+  const primary: NavItem[] = founderMode
+    ? [
+        { href: '/founder', label: 'Founder Console', icon: 'admin', exact: true },
+        { href: '/founder/analytics', label: 'Analytics', icon: 'chart' },
+        { href: '/founder/billing', label: 'Billing & Revenue', icon: 'payments' },
+        { href: '/founder/users', label: 'Users', icon: 'members' },
+        { href: '/founder/support', label: 'Support Inbox', icon: 'inbox' },
+        { href: '/founder/announcements', label: 'Announcements', icon: 'megaphone' },
+        { href: '/founder/email-log', label: 'Email Log', icon: 'mail' },
+        { href: '/profile', label: 'Profile', icon: 'profile' },
+      ]
+    : isGuardian
     ? [
         { href: '/dashboard', label: 'My Athletes', icon: 'teams' },
         { href: '/profile', label: 'Profile', icon: 'profile' },
@@ -98,7 +146,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           : []),
       ];
 
-  const secondary: NavItem[] = isGuardian
+  const secondary: NavItem[] = isGuardian || founderMode
     ? []
     : [
         { href: '/archived-assessments', label: 'Archived', icon: 'archive' },
@@ -223,14 +271,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="block truncate text-sm font-bold" style={{ color: colors.ink }}>
               {user?.displayName ?? 'Coach'}
             </span>
-            {!isGuardian ? (
+            {!isGuardian && !founderMode ? (
               <span className="block truncate text-xs capitalize" style={{ color: colors.inkMuted }}>
                 {planTier} plan
               </span>
             ) : null}
           </span>
         </Link>
-        {!isGuardian && planTier !== 'club' ? (
+        {!isGuardian && !founderMode && planTier !== 'club' ? (
           <Button
             label="Upgrade"
             size="sm"
@@ -352,8 +400,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={cn('app-main w-full flex-1 px-4 py-6 sm:px-6 lg:px-8')}
           style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
         >
-          <SubscriptionEndingBanner />
-          {children}
+          <ImpersonationBanner />
+          <AnnouncementBanner enabled={!!user} />
+          {awaitingFounderCheck || (founderMode && !founderRouteAllowed) ? (
+            <LoadingState message="Loading..." />
+          ) : blocked ? (
+            <SuspendedAccountScreen />
+          ) : (
+            <>
+              <TrialEndingNotice />
+              <SubscriptionEndingBanner />
+              {children}
+            </>
+          )}
         </main>
       </div>
     </div>
