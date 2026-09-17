@@ -1553,6 +1553,25 @@ export function useDeleteSeasonEventMutation(seasonId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (eventId: string) => getDataSource().deleteSeasonEvent(seasonId, eventId),
+    // Drop the event from the cached season immediately so the card disappears
+    // the instant Delete is confirmed, rather than waiting on a refetch of the
+    // season query — the most expensive read in the app.
+    onMutate: async (eventId) => {
+      await qc.cancelQueries({ queryKey: queryKeys.season(seasonId) });
+      const previousSeason = qc.getQueryData<Season>(queryKeys.season(seasonId));
+      if (previousSeason) {
+        qc.setQueryData(queryKeys.season(seasonId), {
+          ...previousSeason,
+          events: previousSeason.events.filter((event) => event.id !== eventId),
+        });
+      }
+      return { previousSeason };
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousSeason) {
+        qc.setQueryData(queryKeys.season(seasonId), context.previousSeason);
+      }
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
     },
