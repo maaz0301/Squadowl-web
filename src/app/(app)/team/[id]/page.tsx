@@ -68,6 +68,7 @@ import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { CreateEventFormSchema, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent, type TeamInviteResult } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamManagersCard } from '@/components/TeamManagersCard';
+import { ImpersonationTeamPanel } from '@/components/founder/ImpersonationTeamPanel';
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 import { TeamBanner } from '@/components/TeamBanner';
 import { AddToCalendar } from '@/components/AddToCalendar';
@@ -1253,6 +1254,7 @@ export default function TeamDetailPage() {
           ) : null}
 
           <TeamManagersCard teamId={team.id} teamName={team.name} />
+          <ImpersonationTeamPanel teamId={team.id} />
 
           {isAssociation ? (
             <Card className="flex flex-col items-start gap-2">

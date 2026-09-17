@@ -12,6 +12,7 @@ import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
 import { useIsFeedbackReviewerQuery, useGuardianRostersQuery } from '@/features/queries';
 import { useIsFounderQuery } from '@/features/founderQueries';
+import { featureForPath, trackFeatureUse } from '@/lib/analytics';
 import { ImpersonationBanner, SuspendedAccountScreen, TrialEndingNotice } from '@/components/AccountAccessNotices';
 import { prefetchRoute } from '@/features/prefetch';
 import { AnnouncementBanner } from '@/components/AnnouncementBanner';
@@ -99,6 +100,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (founderMode && !founderRouteAllowed) router.replace('/founder');
   }, [founderMode, founderRouteAllowed, router]);
 
+  // Feature usage for the founder's Analytics page. Not while viewing as — that
+  // is the founder looking, not the customer using it (the server also skips
+  // platform admins).
+  const trackedFeature = user && !user.impersonating && !isFounder ? featureForPath(pathname) : null;
+  useEffect(() => {
+    if (trackedFeature) trackFeatureUse(trackedFeature);
+  }, [trackedFeature, pathname]);
+
   // RLS has already cut a suspended account's data off; this just says so
   // rather than leaving every screen to fail on its own. The founder is never
   // blocked, and neither is "view as" — looking at a suspended org is the point.
@@ -114,7 +123,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const primary: NavItem[] = founderMode
     ? [
-        { href: '/founder', label: 'Founder Console', icon: 'admin' },
+        { href: '/founder', label: 'Founder Console', icon: 'admin', exact: true },
+        { href: '/founder/analytics', label: 'Analytics', icon: 'chart' },
+        { href: '/founder/billing', label: 'Billing & Revenue', icon: 'payments' },
         { href: '/founder/users', label: 'Users', icon: 'members' },
         { href: '/founder/support', label: 'Support Inbox', icon: 'inbox' },
         { href: '/founder/announcements', label: 'Announcements', icon: 'megaphone' },

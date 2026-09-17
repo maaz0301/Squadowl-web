@@ -1026,6 +1026,21 @@ export interface ReferralLedgerEntry {
 }
 
 /** Everything the Loyalty Program screen renders, from get_referral_summary(). */
+/** What the Upgrade page learns about a discount code before checkout (see preview_discount_code). */
+export type DiscountCodePreview =
+  | { valid: false; message: string }
+  | {
+      valid: true;
+      code: string;
+      kind: 'percent' | 'amount';
+      percentOff?: number;
+      amountOffCents?: number;
+      duration: 'once' | 'forever' | 'repeating';
+      durationMonths?: number;
+      /** Empty = every paid plan. */
+      planTiers: string[];
+    };
+
 export interface ReferralSummary {
   /** The account's own 9-character code, minted on first visit to the screen. */
   code: string | null;

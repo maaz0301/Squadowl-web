@@ -1,15 +1,18 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import Image from 'next/image';
+import { usePathname } from 'next/navigation';
 import { GuestGate } from '@/components/AuthGate';
 import { ThemeToggle } from '@/components/ui';
 import { useTheme } from '@/theme/ThemeProvider';
+import { trackVisit } from '@/lib/analytics';
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   const { colors, isDark } = useTheme();
   return (
     <GuestGate>
+      <VisitTracker />
       <div
         className="relative flex min-h-dvh items-center justify-center px-4"
         style={{
@@ -74,4 +77,17 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       </div>
     </GuestGate>
   );
+}
+
+/**
+ * Top of the founder's sign-up funnel ("/" redirects here for anyone signed
+ * out). Inside GuestGate, so a signed-in user bounced to the dashboard isn't
+ * counted as a visitor.
+ */
+function VisitTracker() {
+  const pathname = usePathname();
+  useEffect(() => {
+    trackVisit(pathname);
+  }, [pathname]);
+  return null;
 }

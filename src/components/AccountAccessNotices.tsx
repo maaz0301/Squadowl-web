@@ -8,7 +8,7 @@ import { daysUntil } from '@/lib/accountAccess';
 import { useAuthStore, useUser } from '@/state/authStore';
 
 /** Replaces every screen for a member whose organization is suspended. */
-/** Pinned while the founder is viewing the app as an organization. */
+/** Pinned while the founder is viewing the app as an organization or one of its users. */
 export function ImpersonationBanner() {
   const colors = useThemeColors();
   const { alert } = useAlert();
@@ -22,7 +22,17 @@ export function ImpersonationBanner() {
       style={{ backgroundColor: 'rgba(56,189,248,0.14)', borderColor: 'rgba(56,189,248,0.35)' }}
     >
       <p className="min-w-0 text-sm break-words" style={{ color: colors.ink }}>
-        Viewing as <strong>{target.accountName}</strong> · read-only · recorded in the audit log
+        {target.user ? (
+          <>
+            Viewing as <strong>{target.user.name || target.user.email || 'user'}</strong>
+            {target.user.name && target.user.email ? ` (${target.user.email})` : ''} from {target.accountName}
+          </>
+        ) : (
+          <>
+            Viewing as <strong>{target.accountName}</strong>
+          </>
+        )}{' '}
+        · read-only · recorded in the audit log
       </p>
       <Button
         label="Exit View As"

@@ -163,32 +163,86 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
       </div>
 
       {tab === 'overview' ? (
-        <FounderSection title="Members">
-          {detail.members.length === 0 ? (
-            <EmptyState title="No members" message="Nobody belongs to this organization." />
-          ) : (
-            detail.members.map((m) => (
-              <Card key={m.userId} className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="font-semibold break-words" style={{ color: colors.ink }}>
-                    {m.displayName || m.email || 'Unnamed member'}
-                  </p>
-                  {m.email && m.displayName ? (
-                    <p className="text-xs break-all" style={{ color: colors.inkMuted }}>
-                      {m.email}
+        <>
+          <FounderSection title="Members">
+            {detail.members.length === 0 ? (
+              <EmptyState title="No members" message="Nobody belongs to this organization." />
+            ) : (
+              detail.members.map((m) => (
+                <Card key={m.userId} className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold break-words" style={{ color: colors.ink }}>
+                      {m.displayName || m.email || 'Unnamed member'}
                     </p>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-2">
+                    {m.email && m.displayName ? (
+                      <p className="text-xs break-all" style={{ color: colors.inkMuted }}>
+                        {m.email}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge label={m.role} />
+                    <span className="text-xs" style={{ color: colors.inkFaint }}>
+                      Joined {formatDate(m.joinedAt)}
+                    </span>
+                  </div>
+                </Card>
+              ))
+            )}
+          </FounderSection>
+
+          {/* Delegated team managers and invited-only assessors have no
+              memberships row (see FounderOrganizationDetail's comments), so
+              without this they're connected to the organization but never
+              show up anywhere above. */}
+          <FounderSection title={`Managed Teams (${detail.managedTeams.length})`}>
+            {detail.managedTeams.length === 0 ? (
+              <p className="text-sm" style={{ color: colors.inkMuted }}>
+                No team is delegated to a manager outside the organization&apos;s own staff.
+              </p>
+            ) : (
+              detail.managedTeams.map((m, i) => (
+                <FounderLinkCard key={`${m.teamId}-${m.userId ?? i}`} href={`/founder/organizations/${org.id}/teams/${m.teamId}`}>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold break-words" style={{ color: colors.ink }}>
+                      {m.name || m.email || 'Unnamed manager'}
+                    </p>
+                    <p className="text-xs break-words" style={{ color: colors.inkMuted }}>
+                      Manages {m.teamName}
+                    </p>
+                  </div>
                   <Badge label={m.role} />
-                  <span className="text-xs" style={{ color: colors.inkFaint }}>
-                    Joined {formatDate(m.joinedAt)}
-                  </span>
-                </div>
-              </Card>
-            ))
-          )}
-        </FounderSection>
+                </FounderLinkCard>
+              ))
+            )}
+          </FounderSection>
+
+          <FounderSection title={`Assigned Evaluations (${detail.assignedEvaluations.length})`}>
+            {detail.assignedEvaluations.length === 0 ? (
+              <p className="text-sm" style={{ color: colors.inkMuted }}>
+                No one is individually assigned to an evaluation as an assessor.
+              </p>
+            ) : (
+              detail.assignedEvaluations.map((a, i) => (
+                <FounderLinkCard
+                  key={`${a.tryoutId}-${a.userId ?? a.email ?? i}`}
+                  // A deleted evaluation can't be opened in full; the coach read behind that page skips it.
+                  href={a.deletedAt ? undefined : `/founder/organizations/${org.id}/evaluations/${a.tryoutId}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold break-words" style={{ color: colors.ink }}>
+                      {a.name || a.email || 'Unnamed assessor'}
+                    </p>
+                    <p className="text-xs break-words" style={{ color: colors.inkMuted }}>
+                      Assigned to {a.tryoutName}
+                    </p>
+                  </div>
+                  {a.status ? <Badge label={a.status} /> : null}
+                </FounderLinkCard>
+              ))
+            )}
+          </FounderSection>
+        </>
       ) : null}
 
       {tab === 'teams' ? (

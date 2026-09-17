@@ -43,6 +43,11 @@ import type {
   SupportTicket,
   SupportTicketDetail,
   SupportTicketStatus,
+  FeatureAccountUsage,
+  FeatureUsageRow,
+  FounderFunnel,
+  FounderReferral,
+  FounderReferralBalance,
 } from './types';
 import type { PlayerProfile, Tryout } from '@/data/types';
 
@@ -227,7 +232,7 @@ export async function getFounderOrganization(accountId: string): Promise<Founder
     return n ?? 0;
   };
 
-  const [memberRows, teamRows, tryoutCount, seasonCount, auditRows] = await Promise.all([
+  const [memberRows, teamRows, tryoutRows, tryoutCount, seasonCount, auditRows] = await Promise.all([
     supabase
       .from('memberships')
       .select('user_id, role, created_at')
@@ -246,6 +251,16 @@ export async function getFounderOrganization(accountId: string): Promise<Founder
         if (error) throw founderError(error);
         return (data ?? []) as Row[];
       }),
+    // Just id/name — listFounderOrgEvaluations() carries the full picture;
+    // this only needs enough to label managedTeams/assignedEvaluations below.
+    supabase
+      .from('tryouts')
+      .select('id, name, deleted_at')
+      .eq('account_id', accountId)
+      .then(({ data, error }) => {
+        if (error) throw founderError(error);
+        return (data ?? []) as Row[];
+      }),
     count('tryouts', true),
     count('seasons'),
     supabase
@@ -259,6 +274,30 @@ export async function getFounderOrganization(accountId: string): Promise<Founder
         return (data ?? []) as Row[];
       }),
   ]);
+
+  // Delegated team managers and invited-only assessors both skip
+  // `memberships` entirely (see the comments on FounderOrganizationDetail),
+  // so they're read straight off their own tables rather than folded into
+  // memberRows above. fetchAllByIn() throws on error, so a failure here is
+  // caught and leaves that section empty rather than failing the whole page
+  // — same rule the count()s above follow.
+  const teamIds = teamRows.map((t) => t.id);
+  const tryoutIds = tryoutRows.map((t) => t.id);
+  const [managerRows, assessorRows] = await Promise.all([
+    fetchAllByIn(supabase, 'team_managers', 'id, team_id, user_id, role, profiles(email, display_name)', 'team_id', teamIds).catch(
+      (e) => {
+        console.warn('Could not load team managers:', e instanceof Error ? e.message : e);
+        return [] as Row[];
+      },
+    ),
+    fetchAllByIn(supabase, 'tryout_assessors', 'id, tryout_id, user_id, name, email, status', 'tryout_id', tryoutIds).catch((e) => {
+      console.warn('Could not load assessors:', e instanceof Error ? e.message : e);
+      return [] as Row[];
+    }),
+  ]);
+  const teamNameById = new Map(teamRows.map((t) => [t.id, t.name]));
+  const tryoutNameById = new Map(tryoutRows.map((t) => [t.id, t.name]));
+  const tryoutDeletedAtById = new Map(tryoutRows.map((t) => [t.id, t.deleted_at ? toMs(t.deleted_at) : undefined]));
 
   // Names and emails are a nicety: a profile RLS won't return just shows as
   // an unnamed member rather than failing the page.
@@ -301,6 +340,26 @@ export async function getFounderOrganization(accountId: string): Promise<Founder
     tryoutCount,
     seasonCount,
     auditLog: auditRows.map(rowToFounderAuditEntry),
+    managedTeams: managerRows.map((m) => {
+      const p = (Array.isArray(m.profiles) ? m.profiles[0] : m.profiles) as Row | null;
+      return {
+        teamId: m.team_id,
+        teamName: teamNameById.get(m.team_id) ?? 'Untitled team',
+        userId: m.user_id ?? undefined,
+        email: p?.email ?? undefined,
+        name: p?.display_name ?? undefined,
+        role: m.role,
+      };
+    }),
+    assignedEvaluations: assessorRows.map((a) => ({
+      tryoutId: a.tryout_id,
+      tryoutName: tryoutNameById.get(a.tryout_id) ?? 'Untitled evaluation',
+      userId: a.user_id ?? undefined,
+      email: a.email ?? undefined,
+      name: a.name ?? undefined,
+      status: a.status ?? undefined,
+      deletedAt: tryoutDeletedAtById.get(a.tryout_id),
+    })),
   };
 }
 
@@ -606,6 +665,38 @@ async function countParticipants(supabase: SupabaseClient, tryoutIds: string[]):
 }
 
 /**
+ * The organization's owner and every member, for "view as organization": the
+ * teams delegated to any of them and evaluations any of them is assigned to
+ * assess are listed, and the owner's profile and guardian athletes are shown —
+ * see ImpersonationTarget.owner / memberIds.
+ */
+export async function getOrganizationPeople(accountId: string): Promise<{
+  owner?: { id: string; email?: string; name?: string };
+  memberIds: string[];
+}> {
+  const supabase = getSupabase();
+  const { data: rows, error } = await supabase
+    .from('memberships')
+    .select('user_id, role, created_at')
+    .eq('account_id', accountId)
+    .order('created_at', { ascending: true });
+  if (error) throw founderError(error);
+  const memberIds = [...new Set(((rows ?? []) as Row[]).map((r) => r.user_id as string).filter(Boolean))];
+  const data = ((rows ?? []) as Row[]).find((r) => r.role === 'owner');
+  if (!data?.user_id) return { memberIds };
+  // The email matters: guardian athletes are also matched on guardian_email.
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('email, display_name')
+    .eq('id', data.user_id)
+    .maybeSingle();
+  return {
+    owner: { id: data.user_id, email: profile?.email ?? undefined, name: profile?.display_name ?? undefined },
+    memberIds,
+  };
+}
+
+/**
  * Record entering or leaving "view as" for one organization. Entering is logged
  * (and founder-checked by the RPC) before anything switches, so a refused or
  * unlogged view never takes effect.
@@ -794,6 +885,12 @@ export async function setSupportTicketStatus(ticketId: string, status: SupportTi
   if (error) throw founderError(error);
 }
 
+/** Removes a ticket and its whole conversation. Cannot be undone. */
+export async function deleteSupportTicket(ticketId: string): Promise<void> {
+  const { error } = await getSupabase().rpc('founder_delete_support_ticket', { p_ticket_id: ticketId });
+  if (error) throw founderError(error);
+}
+
 /** Emails from support@tryouthq.ca — a reply when ticketId is given, otherwise a new ticket. */
 export async function sendSupportEmail(
   input: { ticketId: string; body: string } | { email: string; subject: string; body: string },
@@ -904,4 +1001,117 @@ export async function getEmailActivityEvents(msgId: string): Promise<EmailActivi
     time: Date.parse(e.processed),
     reason: e.reason || e.bounce_type || undefined,
   }));
+}
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+// See supabase/migrations/20260917120000_founder_analytics.sql.
+
+const num = (v: unknown) => Number(v ?? 0);
+
+export async function getFounderFunnel(days: number): Promise<FounderFunnel> {
+  const { data, error } = await getSupabase().rpc('founder_analytics_funnel', { p_days: days });
+  if (error) throw analyticsError(error);
+  const d = (data ?? {}) as Row;
+  const t = (d.totals ?? {}) as Row;
+  return {
+    days: num(d.days),
+    totals: {
+      visitors: num(t.visitors),
+      signupVisitors: num(t.signupVisitors),
+      signups: num(t.signups),
+      trials: num(t.trials),
+      paid: num(t.paid),
+      trialsStarted: num(t.trialsStarted),
+      paidStarted: num(t.paidStarted),
+      firstVisitDay: t.firstVisitDay ?? undefined,
+    },
+    series: ((d.series ?? []) as Row[]).map((r) => ({
+      day: r.day,
+      visitors: num(r.visitors),
+      signups: num(r.signups),
+      trials: num(r.trials),
+      paid: num(r.paid),
+    })),
+    sources: ((d.sources ?? []) as Row[]).map((r) => ({ source: r.source, visitors: num(r.visitors) })),
+  };
+}
+
+export async function getFeatureUsage(days: number): Promise<FeatureUsageRow[]> {
+  const { data, error } = await getSupabase().rpc('founder_analytics_feature_usage', { p_days: days });
+  if (error) throw analyticsError(error);
+  return ((data ?? []) as Row[]).map((r) => ({
+    feature: r.feature,
+    users: num(r.users),
+    accounts: num(r.accounts),
+    activeDays: num(r.active_days),
+    uses: num(r.uses),
+    lastUsedAt: r.last_used_at ? toMs(r.last_used_at) : undefined,
+  }));
+}
+
+export async function getFeatureAccounts(feature: string, days: number): Promise<FeatureAccountUsage[]> {
+  const { data, error } = await getSupabase().rpc('founder_analytics_feature_accounts', {
+    p_feature: feature,
+    p_days: days,
+  });
+  if (error) throw analyticsError(error);
+  return ((data ?? []) as Row[]).map((r) => ({
+    accountId: r.account_id ?? undefined,
+    accountName: r.account_name ?? undefined,
+    ownerEmail: r.owner_email ?? undefined,
+    users: ((r.users ?? []) as Row[]).map((u) => ({ id: u.id, email: u.email, name: u.name ?? undefined })),
+    activeDays: num(r.active_days),
+    uses: num(r.uses),
+    lastUsedAt: r.last_used_at ? toMs(r.last_used_at) : undefined,
+  }));
+}
+
+export async function listFounderReferrals(): Promise<FounderReferral[]> {
+  const { data, error } = await getSupabase().rpc('founder_list_referrals');
+  if (error) throw analyticsError(error);
+  return ((data ?? []) as Row[]).map((r) => ({
+    referredAccountId: r.referred_account_id,
+    referredName: r.referred_name,
+    referredOwnerEmail: r.referred_owner_email ?? undefined,
+    referredCreatedAt: toMs(r.referred_created_at),
+    attributedAt: r.attributed_at ? toMs(r.attributed_at) : undefined,
+    subscriptionStatus: r.subscription_status ?? undefined,
+    firstPaidAt: r.first_paid_at ? toMs(r.first_paid_at) : undefined,
+    referrerAccountId: r.referrer_account_id,
+    referrerName: r.referrer_name,
+    referrerOwnerEmail: r.referrer_owner_email ?? undefined,
+    referrerCode: r.referrer_code ?? undefined,
+    creditCents: r.credit_cents ?? undefined,
+    creditedAt: r.credited_at ? toMs(r.credited_at) : undefined,
+  }));
+}
+
+export async function listFounderReferralBalances(): Promise<FounderReferralBalance[]> {
+  const { data, error } = await getSupabase().rpc('founder_referral_balances');
+  if (error) throw analyticsError(error);
+  return ((data ?? []) as Row[]).map((r) => ({
+    accountId: r.account_id,
+    accountName: r.account_name,
+    ownerEmail: r.owner_email ?? undefined,
+    referralCode: r.referral_code ?? undefined,
+    referredCount: num(r.referred_count),
+    paidCount: num(r.paid_count),
+    earnedCents: num(r.earned_cents),
+    redeemedCents: num(r.redeemed_cents),
+    adjustedCents: num(r.adjusted_cents),
+    balanceCents: num(r.balance_cents),
+    earnedLastYearCents: num(r.earned_last_year_cents),
+  }));
+}
+
+/** Same as founderError(), naming the analytics migration when it isn't applied. */
+function analyticsError(error: { message: string; code?: string }) {
+  if (error.code === 'PGRST202' || error.code === '42883' || error.code === '42P01') {
+    return founderError({
+      ...error,
+      code: undefined,
+      message: 'Analytics is not deployed yet — apply 20260917120000_founder_analytics.sql.',
+    });
+  }
+  return founderError(error);
 }

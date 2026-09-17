@@ -7,8 +7,12 @@ import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../
 import { deriveAccountAccess, isExpiredTrial } from '@/lib/accountAccess';
 import {
   VIEW_AS_READ_ONLY_MESSAGE,
+  getImpersonatedUser,
   getImpersonationTarget,
+  getViewedPerson,
+  getViewedPersonIds,
   useImpersonationStore,
+  type ImpersonationTarget,
 } from '@/state/impersonationStore';
 
 /**
@@ -20,6 +24,21 @@ import {
 function assertNotViewingAs(): void {
   if (getImpersonationTarget()) throw new Error(VIEW_AS_READ_ONLY_MESSAGE);
 }
+
+/**
+ * The read RPCs that answer "for the caller" off auth.uid() — delegated
+ * (managed) teams and the assessments/seasons on them, and the mirror image for
+ * the teams the caller's own account owns. Under view-as, auth.uid() is still
+ * the founder, so SupabaseDataSource.viewerRpc() answers these for the person
+ * or organization being viewed instead.
+ */
+type ViewerScopedRpc =
+  | 'list_teams_managed_by_me'
+  | 'list_managed_team_owner_tiers'
+  | 'list_tryouts_for_managed_teams'
+  | 'list_tryouts_on_my_owned_teams'
+  | 'list_seasons_for_managed_teams'
+  | 'list_seasons_on_my_owned_teams';
 import {
   categoryAveragesAcrossEvals,
   generateCloudCode,
@@ -57,6 +76,7 @@ import {
   type GeneratedPlayer,
 } from '../testDataGenerator';
 import type {
+  DiscountCodePreview,
   AddPlayerForm,
   AdminStats,
   AdminUserRow,
@@ -882,6 +902,19 @@ export class SupabaseDataSource implements DataSource {
   private async resolveUserId(): Promise<string> {
     const supabase = getSupabase();
     this.ensureAuthListener(supabase);
+    // View as user only: every "whose rows" question is asked about that
+    // person. Never cached into this.userId — that field tracks the real
+    // session. Deliberately getImpersonatedUser(), not getViewedPerson():
+    // this drives the FOUNDER'S OWN identity resolution (ctx()'s uId,
+    // getSession()/loadUserProfile()'s subject) — org view must keep running
+    // as the founder here, or refreshProfile()'s `current.user.id !==
+    // profile.id` check (authStore.ts) sees a mismatch and silently drops
+    // the impersonated profile, bouncing the founder straight back out.
+    // getViewedPerson() (the union with the org's owner) is for the
+    // person-scoped *list* reads only — managed teams, assessor assignments,
+    // guardian rosters — never for whose identity the app runs as.
+    const viewAsUser = getImpersonatedUser();
+    if (viewAsUser) return viewAsUser.id;
     if (this.userId) return this.userId;
     const { data, error } = await supabase.auth.getSession();
     const uId = data.session?.user?.id;
@@ -977,11 +1010,16 @@ export class SupabaseDataSource implements DataSource {
     // platform admin read any account. Anyone else setting this just gets
     // nothing back, and writableAccountId() refuses writes while it is set.
     const impersonated = getImpersonationTarget();
-    if (impersonated) {
+    if (impersonated && !impersonated.user) {
       this.accountId = impersonated.accountId;
       this.roleByAccountId = {};
       return impersonated.accountId;
     }
+    // View as user falls through to the ordinary lookup below with uId already
+    // swapped for that person (resolveUserId()), so they land on exactly the
+    // account they would. Their memberships exist already — no signup lag to
+    // wait out.
+    const retries = impersonated?.user ? 0 : RESOLVE_ACCOUNT_RETRIES;
 
     // Right after signup the membership row can lag a beat behind the session
     // the client already has — the account/membership insert happens
@@ -992,11 +1030,11 @@ export class SupabaseDataSource implements DataSource {
     // — see userCtx()), so retrying empty results briefly costs nothing on
     // the normal path and only adds latency to the rare genuine failure.
     let memberships: Row[] = [];
-    for (let attempt = 0; attempt <= RESOLVE_ACCOUNT_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
       const m = await supabase.from('memberships').select('account_id, role').eq('user_id', uId);
       if (m.error) throw m.error;
       memberships = m.data ?? [];
-      if (memberships.length > 0 || attempt === RESOLVE_ACCOUNT_RETRIES) break;
+      if (memberships.length > 0 || attempt === retries) break;
       await sleep(400 * 2 ** attempt);
     }
 
@@ -1476,8 +1514,118 @@ export class SupabaseDataSource implements DataSource {
     return this.rowToEval(data);
   }
 
+  /**
+   * supabase.rpc() for the auth.uid()-scoped list RPCs, answered for whoever
+   * is being viewed as. The founder is a platform admin, so the tables behind
+   * them are readable directly; these reads just apply the RPCs' own
+   * predicates with the viewed identity in place of auth.uid():
+   *
+   * - view as user: the teams delegated to that person (team_managers), and the
+   *   teams owned by the accounts they are owner/admin/coach on.
+   * - view as organization: no delegations (an admin *of* the org), and the
+   *   org's own teams. Calling the real RPCs here was wrong the other way —
+   *   has_account_role() is true for a platform admin on every account, so
+   *   list_*_on_my_owned_teams returned every cross-account assessment and
+   *   season on the instance.
+   *
+   * Same `{ data, error }` shape as supabase.rpc(), so call sites keep their
+   * degrade-on-error handling.
+   */
+  private async viewerRpc(
+    supabase: SupabaseClient,
+    name: ViewerScopedRpc,
+  ): Promise<{ data: Row[] | null; error: { message: string } | null }> {
+    const target = getImpersonationTarget();
+    if (!target) {
+      const { data, error } = await supabase.rpc(name);
+      return { data: (data as Row[] | null) ?? null, error };
+    }
+    try {
+      return { data: await this.emulateViewerRpc(supabase, name, target), error: null };
+    } catch (e) {
+      return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
+    }
+  }
+
+  /**
+   * An org view entered before the member list was recorded on the target
+   * (sessionStorage outlives a deploy) would otherwise list no member's
+   * managed teams or assessor assignments until the founder re-entered it.
+   */
+  private async ensureViewedMembers(supabase: SupabaseClient): Promise<void> {
+    const target = getImpersonationTarget();
+    if (!target || target.user || target.memberIds) return;
+    const { data, error } = await supabase.from('memberships').select('user_id').eq('account_id', target.accountId);
+    if (error) return;
+    const memberIds = [...new Set(((data ?? []) as Row[]).map((r) => r.user_id as string).filter(Boolean))];
+    // Only if the view hasn't changed while this was in flight.
+    if (getImpersonationTarget() === target) useImpersonationStore.getState().setTarget({ ...target, memberIds });
+  }
+
+  private async emulateViewerRpc(
+    supabase: SupabaseClient,
+    name: ViewerScopedRpc,
+    target: ImpersonationTarget,
+  ): Promise<Row[]> {
+    const newestFirst = (rows: Row[]) =>
+      rows.sort((a, b) => toMs(b.created_at as string) - toMs(a.created_at as string));
+
+    if (name === 'list_tryouts_on_my_owned_teams' || name === 'list_seasons_on_my_owned_teams') {
+      let accountIds = [target.accountId];
+      if (target.user) {
+        const m = unwrap(
+          await supabase
+            .from('memberships')
+            .select('account_id')
+            .eq('user_id', target.user.id)
+            .in('role', ['owner', 'admin', 'coach']),
+        ) as Row[];
+        accountIds = [...new Set(m.map((r) => r.account_id as string))];
+      }
+      const teams = await fetchAllByIn(supabase, 'teams', 'id, account_id', 'account_id', accountIds);
+      const teamAccount = new Map(teams.map((t) => [t.id as string, t.account_id as string]));
+      const table = name === 'list_tryouts_on_my_owned_teams' ? 'tryouts' : 'seasons';
+      const rows = await fetchAllByIn(supabase, table, '*', 'team_id', [...teamAccount.keys()]);
+      return newestFirst(
+        rows.filter(
+          (r) =>
+            r.account_id !== teamAccount.get(r.team_id as string) &&
+            (table === 'tryouts' ? !r.deleted_at : !r.archived),
+        ),
+      );
+    }
+
+    // Delegations belong to a person: the chosen user, or in org view every
+    // member of the organization.
+    await this.ensureViewedMembers(supabase);
+    const personIds = getViewedPersonIds();
+    if (!personIds.length) return [];
+    const links = await fetchAllByIn(supabase, 'team_managers', 'id, team_id', 'user_id', personIds);
+    const teamIds = [...new Set(links.map((l) => l.team_id as string))];
+
+    switch (name) {
+      case 'list_teams_managed_by_me':
+        return newestFirst((await fetchAllByIn(supabase, 'teams', '*', 'id', teamIds)).filter((t) => !t.archived));
+      case 'list_managed_team_owner_tiers':
+        return (await fetchAllByIn(supabase, 'teams', 'id, accounts(plan_tier)', 'id', teamIds)).map((t) => {
+          const account = (Array.isArray(t.accounts) ? t.accounts[0] : t.accounts) as Row | null;
+          return { team_id: t.id, plan_tier: account?.plan_tier ?? null };
+        });
+      case 'list_tryouts_for_managed_teams':
+        return newestFirst((await fetchAllByIn(supabase, 'tryouts', '*', 'team_id', teamIds)).filter((t) => !t.deleted_at));
+      case 'list_seasons_for_managed_teams':
+        return newestFirst((await fetchAllByIn(supabase, 'seasons', '*', 'team_id', teamIds)).filter((t) => !t.archived));
+    }
+    return [];
+  }
+
   // ─── Auth ──────────────────────────────────────────────────────────────────
-  private async loadUserProfile(userId: string): Promise<UserProfile> {
+  private async loadUserProfile(sessionUserId: string): Promise<UserProfile> {
+    // View as user only (not getViewedPerson()/the org's owner) — see
+    // resolveUserId()'s comment. Org view's profile/role/account stay the
+    // founder's own identity with the org's account substituted in below.
+    const viewAsUser = getImpersonatedUser();
+    const userId = viewAsUser?.id ?? sessionUserId;
     if (this.profileCache[userId]) {
       return this.profileCache[userId];
     }
@@ -1485,7 +1633,7 @@ export class SupabaseDataSource implements DataSource {
     // Viewing as an organization overrides role and account below, so the
     // founder's own memberships and guardian-link never get read on this
     // path — no point paying for either query while impersonating.
-    const impersonated = getImpersonationTarget();
+    const impersonated = viewAsUser ? null : getImpersonationTarget();
     // Independent lookups, all keyed on a userId we already hold: the
     // profile row, the memberships that carry the account (and therefore the
     // plan), the Auth server's view of whether the address is confirmed, and
@@ -1525,7 +1673,13 @@ export class SupabaseDataSource implements DataSource {
     // with `{ data, error }` instead of rejecting, so all three still complete
     // and a failing profile read throws from exactly the same place, with the
     // same error, as it did when these ran in series.
-    const profile = unwrap(profileRes) as Row;
+    // A profile read failing here would sign the founder out (getSession()'s
+    // catch), so view as user settles for the name and email it was opened with.
+    const profile = (
+      viewAsUser && !profileRes.data
+        ? { id: viewAsUser.id, email: viewAsUser.email ?? '', display_name: viewAsUser.name, created_at: null, onboarding_completed: true }
+        : unwrap(profileRes)
+    ) as Row;
     // A *failed* membership read must not be read as "this user has no
     // membership". Everything the account carries — plan tier, org name, extra
     // team licenses, Connect flags — is derived from this row, so swallowing
@@ -1580,7 +1734,7 @@ export class SupabaseDataSource implements DataSource {
       suspendedReason: account?.suspended_reason ?? undefined,
       trialEndsAt: account?.trial_ends_at ? toMs(account.trial_ends_at as string) : undefined,
       trialExpired: account && isExpiredTrial(account) ? true : undefined,
-      impersonating: impersonated ? true : undefined,
+      impersonating: impersonated || viewAsUser ? true : undefined,
       createdAt: toMs(profile.created_at),
       onboardingCompleted: profile.onboarding_completed,
       onboardingSteps: profile.onboarding_steps,
@@ -1923,7 +2077,7 @@ export class SupabaseDataSource implements DataSource {
     // RLS: has_account_access() is true for every account when the caller is a
     // platform admin, so an unfiltered select would hand admins every team on
     // the instance instead of their own. Mirrors mobile's listTeams().
-    const { data: managedRows, error: managedErr } = await supabase.rpc('list_teams_managed_by_me');
+    const { data: managedRows, error: managedErr } = await this.viewerRpc(supabase, 'list_teams_managed_by_me');
     if (managedErr) {
       // Pre-migration instances have no such function. Own teams are still
       // correct without it, so degrade rather than failing the whole list.
@@ -1938,7 +2092,7 @@ export class SupabaseDataSource implements DataSource {
     // Best-effort: if this lookup fails (pre-migration instance), managed
     // teams just fall back to the caller's own tier via ownerPlanTier being
     // undefined — same degrade-gracefully approach as managedRows above.
-    const { data: tierRows } = await supabase.rpc('list_managed_team_owner_tiers');
+    const { data: tierRows } = await this.viewerRpc(supabase, 'list_managed_team_owner_tiers');
     const tierByTeamId = new Map(((tierRows ?? []) as Row[]).map((r) => [r.team_id, r.plan_tier as string]));
 
     const managed = ((managedRows ?? []) as Row[])
@@ -2702,8 +2856,8 @@ export class SupabaseDataSource implements DataSource {
     // see listed, only the delegate who happened to create them.
     const [ownRes, managedRes, ownedTeamRes] = await Promise.all([
       q,
-      supabase.rpc('list_tryouts_for_managed_teams'),
-      supabase.rpc('list_tryouts_on_my_owned_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_for_managed_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_on_my_owned_teams'),
     ]);
 
     const rows = unwrap(ownRes) as Row[];
@@ -2850,8 +3004,8 @@ export class SupabaseDataSource implements DataSource {
     const { supabase, accountId } = await this.ctx();
     const [ownRes, managedRes, ownedTeamRes] = await Promise.all([
       supabase.from('tryouts').select('id').eq('account_id', accountId).is('deleted_at', null).eq('archived', false),
-      supabase.rpc('list_tryouts_for_managed_teams'),
-      supabase.rpc('list_tryouts_on_my_owned_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_for_managed_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_on_my_owned_teams'),
     ]);
     const ids = new Set((unwrap(ownRes) as Row[]).map((t) => t.id as string));
     // Pre-migration instances have no such functions; own assessments are
@@ -2894,8 +3048,8 @@ export class SupabaseDataSource implements DataSource {
   private async viewerManagesTryoutTeam(id: string): Promise<boolean> {
     const supabase = getSupabase();
     const [managedRes, ownedTeamRes] = await Promise.all([
-      supabase.rpc('list_tryouts_for_managed_teams'),
-      supabase.rpc('list_tryouts_on_my_owned_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_for_managed_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_on_my_owned_teams'),
     ]);
     return [managedRes.data, ownedTeamRes.data].some((rows) =>
       ((rows ?? []) as Row[]).some((t) => t.id === id),
@@ -2944,8 +3098,15 @@ export class SupabaseDataSource implements DataSource {
 
   private async fetchAssignedTryoutRows(): Promise<Row[]> {
     const { supabase, userId, accountId } = await this.ctx();
+    // Org view: assignments given to any member of the organization, not only
+    // the one id ctx() resolves to.
+    if (getImpersonationTarget()) await this.ensureViewedMembers(supabase);
+    const viewedIds = getImpersonationTarget() ? getViewedPersonIds() : [];
     const links = unwrap(
-      await supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId).not('status', 'in', '(declined,completed)'),
+      await (viewedIds.length > 1
+        ? supabase.from('tryout_assessors').select('tryout_id').in('user_id', viewedIds)
+        : supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId)
+      ).not('status', 'in', '(declined,completed)'),
     ) as Row[];
     const ids = [...new Set(links.map((l) => l.tryout_id))];
     if (!ids.length) return [];
@@ -2962,8 +3123,8 @@ export class SupabaseDataSource implements DataSource {
     // (as an assessor) is also staff on a delegated team's account, or a
     // delegate managing a team, would see the same tryout listed twice.
     const [managedRes, ownedTeamRes] = await Promise.all([
-      supabase.rpc('list_tryouts_for_managed_teams'),
-      supabase.rpc('list_tryouts_on_my_owned_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_for_managed_teams'),
+      this.viewerRpc(supabase, 'list_tryouts_on_my_owned_teams'),
     ]);
     const ownIds = new Set<string>([
       ...rows.filter((t) => t.account_id === accountId).map((t) => t.id as string),
@@ -5645,12 +5806,12 @@ export class SupabaseDataSource implements DataSource {
     // for a delegated team can live under either side's account_id depending
     // on who created it, so the plain account-scoped query above can't see
     // it alone.
-    const { data: managedRows, error: managedErr } = await supabase.rpc('list_seasons_for_managed_teams');
+    const { data: managedRows, error: managedErr } = await this.viewerRpc(supabase, 'list_seasons_for_managed_teams');
     if (managedErr) {
       console.log('list_seasons_for_managed_teams unavailable:', managedErr.message);
       return this.assembleSeasons(rows, false);
     }
-    const { data: ownedTeamRows, error: ownedErr } = await supabase.rpc('list_seasons_on_my_owned_teams');
+    const { data: ownedTeamRows, error: ownedErr } = await this.viewerRpc(supabase, 'list_seasons_on_my_owned_teams');
     if (ownedErr) {
       console.log('list_seasons_on_my_owned_teams unavailable:', ownedErr.message);
     }
@@ -5694,8 +5855,8 @@ export class SupabaseDataSource implements DataSource {
     ) as Row[];
 
     const [managedRes, ownedTeamRes] = await Promise.all([
-      supabase.rpc('list_seasons_for_managed_teams'),
-      supabase.rpc('list_seasons_on_my_owned_teams'),
+      this.viewerRpc(supabase, 'list_seasons_for_managed_teams'),
+      this.viewerRpc(supabase, 'list_seasons_on_my_owned_teams'),
     ]);
     if (managedRes.error) console.log('list_seasons_for_managed_teams unavailable:', managedRes.error.message);
     if (ownedTeamRes.error) console.log('list_seasons_on_my_owned_teams unavailable:', ownedTeamRes.error.message);
@@ -6738,6 +6899,18 @@ export class SupabaseDataSource implements DataSource {
 
   async getSessionProgress(tryoutId: string): Promise<Record<string, number>> {
     const { supabase } = await this.ctx();
+    if (getImpersonationTarget()) {
+      // The RPC authorizes by auth.uid()'s assessor row or membership, which
+      // the founder never has, so it would restart numbering at Session 1.
+      // The founder can read the evaluations themselves; same parse as the RPC.
+      const rows = await fetchAllByIn(supabase, 'evaluations', 'id, participant_id, session', 'tryout_id', [tryoutId]);
+      const progress: Record<string, number> = {};
+      for (const r of rows) {
+        const n = /^Session ([0-9]+)$/.exec((r.session as string | null) ?? '')?.[1];
+        if (n && r.participant_id) progress[r.participant_id] = Math.max(progress[r.participant_id] ?? 0, Number(n));
+      }
+      return progress;
+    }
     const { data, error } = await supabase.rpc('get_session_progress_for_tryout', {
       p_tryout_id: tryoutId,
     });
@@ -7246,7 +7419,7 @@ export class SupabaseDataSource implements DataSource {
   async createCheckoutSession(
     planTier: string,
     interval: 'year' | 'month',
-    options?: { applyCredits?: boolean; origin?: string },
+    options?: { applyCredits?: boolean; origin?: string; discountCode?: string },
   ): Promise<{ url: string }> {
     assertNotViewingAs();
     const { supabase } = await this.ctx();
@@ -7256,6 +7429,7 @@ export class SupabaseDataSource implements DataSource {
         interval,
         origin: options?.origin ?? webOrigin(),
         applyCredits: options?.applyCredits === true,
+        discountCode: options?.discountCode?.trim() || undefined,
       },
     });
     if (error) {
@@ -7268,6 +7442,32 @@ export class SupabaseDataSource implements DataSource {
     }
     if (data?.error) throw new Error(data.error);
     return data;
+  }
+
+  async previewDiscountCode(code: string, planTier?: string): Promise<DiscountCodePreview> {
+    const { data, error } = await getSupabase().rpc('preview_discount_code', {
+      p_code: code.trim(),
+      p_plan_tier: planTier ?? null,
+    });
+    if (error) {
+      // Not deployed yet (20260917130000_founder_billing.sql) reads as an invalid code, not a crash.
+      if (error.code === 'PGRST202' || error.code === '42883') {
+        return { valid: false, message: 'Discount codes are not available yet.' };
+      }
+      throw new Error(error.message);
+    }
+    const r = (data ?? {}) as Row;
+    if (!r.valid) return { valid: false, message: r.message ?? "That discount code isn't valid." };
+    return {
+      valid: true,
+      code: r.code,
+      kind: r.kind,
+      percentOff: r.percentOff != null ? Number(r.percentOff) : undefined,
+      amountOffCents: r.amountOffCents ?? undefined,
+      duration: r.duration,
+      durationMonths: r.durationMonths ?? undefined,
+      planTiers: r.planTiers ?? [],
+    };
   }
 
   async createPortalSession(): Promise<{ url: string }> {
@@ -8309,6 +8509,8 @@ export class SupabaseDataSource implements DataSource {
         // query's row shape; get_guardian_rosters() already excludes these
         // server-side, so this is a no-op for that path.
         if (t.deleted_at) return null;
+        // Taken off just this evaluation (removed_at) — same story, fallback only.
+        if (tp.removed_at) return null;
         return {
           id: t.id,
           name: t.name,
@@ -8508,23 +8710,32 @@ export class SupabaseDataSource implements DataSource {
     const { supabase, userId } = await this.userCtx();
     if (!userId) return [];
 
-    const { data: rpcData, error: rpcError } = await supabase.rpc('get_guardian_rosters');
+    // View as user: the RPC can only answer for auth.uid() (the founder), so
+    // the nested read below is asked about the viewed person instead. The
+    // founder reads it as a platform admin; it is one guardian's athletes.
+    const viewedPerson = getViewedPerson();
+    let userEmail: string | undefined;
+    if (viewedPerson) {
+      userEmail = viewedPerson.email?.toLowerCase();
+    } else {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_guardian_rosters');
 
-    if (!rpcError) {
-      return this.mergeGuardianRosterRows((rpcData as Row[]) ?? []);
+      if (!rpcError) {
+        return this.mergeGuardianRosterRows((rpcData as Row[]) ?? []);
+      }
+
+      // Environments that haven't run the migration yet fall back to the old embed.
+      // Anything other than "function not found" is a real failure worth surfacing.
+      const missingFunction = rpcError.code === 'PGRST202' || rpcError.code === '42883';
+      if (!missingFunction) {
+        console.error('Failed to fetch guardian rosters:', rpcError);
+        return [];
+      }
+      console.warn('get_guardian_rosters() not deployed — falling back to the nested query.');
+
+      const { data: userData } = await supabase.auth.getUser();
+      userEmail = userData?.user?.email?.toLowerCase();
     }
-
-    // Environments that haven't run the migration yet fall back to the old embed.
-    // Anything other than "function not found" is a real failure worth surfacing.
-    const missingFunction = rpcError.code === 'PGRST202' || rpcError.code === '42883';
-    if (!missingFunction) {
-      console.error('Failed to fetch guardian rosters:', rpcError);
-      return [];
-    }
-    console.warn('get_guardian_rosters() not deployed — falling back to the nested query.');
-
-    const { data: userData } = await supabase.auth.getUser();
-    const userEmail = userData?.user?.email?.toLowerCase();
 
     // guardian_email is citext, so eq() is already case-insensitive — using eq
     // (not ilike) lets this hit the plain btree index on guardian_email instead
@@ -8539,6 +8750,7 @@ export class SupabaseDataSource implements DataSource {
         tryout_participants(
           id,
           tryout_id,
+          removed_at,
           tryouts(id, name, sport, tryout_date, start_time, end_time, location, deleted_at)
         ),
         season_roster(

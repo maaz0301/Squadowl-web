@@ -263,8 +263,10 @@ export interface DataSource {
   createCheckoutSession(
     planTier: string,
     interval: 'year' | 'month',
-    options?: { applyCredits?: boolean; origin?: string },
+    options?: { applyCredits?: boolean; origin?: string; discountCode?: string },
   ): Promise<{ url: string }>;
+  /** Whether a founder-issued discount code can be used by this account right now (preview only — checkout re-checks). */
+  previewDiscountCode(code: string, planTier?: string): Promise<import('./types').DiscountCodePreview>;
   /** Checkout for add-on team licenses beyond the plan's included teams (Club: CAD$10/team/year). */
   createTeamLicenseCheckoutSession(
     quantity: number,

@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, Textarea, useAlert } from '@/components/ui';
 import { FounderNotAvailable, FounderSection } from '@/components/founder/FounderUi';
@@ -8,6 +9,7 @@ import { formatDate } from '@/components/founder/labels';
 import type { SupportTicketDetail } from '@/data/founder/types';
 import {
   useAddInboundSupportMessageMutation,
+  useDeleteSupportTicketMutation,
   useIsFounderQuery,
   useSendSupportEmailMutation,
   useSetSupportTicketStatusMutation,
@@ -39,10 +41,12 @@ export default function FounderSupportTicketPage({ params }: { params: Promise<{
 
 function Ticket({ ticket }: { ticket: SupportTicketDetail }) {
   const colors = useThemeColors();
-  const { alert, toast } = useAlert();
+  const router = useRouter();
+  const { alert, confirm, toast } = useAlert();
   const send = useSendSupportEmailMutation();
   const logInbound = useAddInboundSupportMessageMutation();
   const setStatus = useSetSupportTicketStatusMutation();
+  const deleteTicket = useDeleteSupportTicketMutation();
   const [body, setBody] = useState('');
   const open = ticket.status === 'open';
 
@@ -77,6 +81,24 @@ function Ticket({ ticket }: { ticket: SupportTicketDetail }) {
     }
   };
 
+  const handleDelete = async () => {
+    const messageCount = ticket.messages.length;
+    const ok = await confirm({
+      title: 'Delete Ticket',
+      message: `Delete this ticket and its ${messageCount} message${messageCount === 1 ? '' : 's'}? This can't be undone.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteTicket.mutateAsync(ticket.id);
+      toast('Ticket deleted.', 'success');
+      router.push('/founder/support');
+    } catch (e) {
+      await alert('Could Not Delete', e instanceof Error ? e.message : 'Something went wrong.');
+    }
+  };
+
   const busy = send.isPending || logInbound.isPending;
 
   return (
@@ -87,13 +109,22 @@ function Ticket({ ticket }: { ticket: SupportTicketDetail }) {
         showBack
         backHref="/founder/support"
         right={
-          <Button
-            label={open ? 'Mark Resolved' : 'Reopen'}
-            size="sm"
-            variant={open ? 'primary' : 'secondary'}
-            loading={setStatus.isPending}
-            onClick={toggleStatus}
-          />
+          <div className="flex gap-2">
+            <Button
+              label={open ? 'Mark Resolved' : 'Reopen'}
+              size="sm"
+              variant={open ? 'primary' : 'secondary'}
+              loading={setStatus.isPending}
+              onClick={toggleStatus}
+            />
+            <Button
+              label="Delete"
+              size="sm"
+              variant="danger"
+              loading={deleteTicket.isPending}
+              onClick={handleDelete}
+            />
+          </div>
         }
       />
       <div className="mb-4 flex flex-wrap items-center gap-2">

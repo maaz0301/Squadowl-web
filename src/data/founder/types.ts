@@ -68,6 +68,27 @@ export interface FounderOrganizationDetail {
   tryoutCount: number;
   seasonCount: number;
   auditLog: FounderAuditEntry[];
+  /**
+   * Delegated team managers (team_managers table) — CLUB-mode delegates who
+   * run one team without being a member of the organization at all. Invisible
+   * on `members` above, which only ever lists direct `memberships` rows.
+   */
+  managedTeams: { teamId: string; teamName: string; userId?: string; email?: string; name?: string; role: string }[];
+  /**
+   * Assessors assigned to an evaluation (tryout_assessors table) — someone
+   * invited to score one tryout, same gap as managedTeams: no memberships row
+   * either, so they never show up as a "member" of the organization.
+   */
+  assignedEvaluations: {
+    tryoutId: string;
+    tryoutName: string;
+    userId?: string;
+    email?: string;
+    name?: string;
+    status?: string;
+    /** Soft-deleted by the organization — its detail page can't be opened. */
+    deletedAt?: number;
+  }[];
 }
 
 /** One team, as the founder console shows it: everything on it, read-only. */
@@ -191,7 +212,14 @@ export type FounderAuditAction =
   | 'delete_user'
   | 'create_announcement'
   | 'end_announcement'
-  | 'broadcast_email';
+  | 'broadcast_email'
+  | 'create_discount_code'
+  | 'update_discount_code'
+  | 'refund_payment'
+  | 'change_subscription'
+  | 'cancel_subscription'
+  | 'resume_subscription'
+  | 'delete_support_ticket';
 
 // ─── Support & Content ───────────────────────────────────────────────────────
 
@@ -308,4 +336,271 @@ export interface FounderAuditEntry {
   reason?: string;
   details: Record<string, unknown>;
   createdAt: number;
+}
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+
+export interface FunnelTotals {
+  /** Distinct visitors to the sign-in / sign-up screens. */
+  visitors: number;
+  /** Of those, distinct visitors who reached /signup. */
+  signupVisitors: number;
+  /** New accounts created in the period. */
+  signups: number;
+  /** Of those new accounts, how many have started a trial so far. */
+  trials: number;
+  /** Of those new accounts, how many have paid so far. */
+  paid: number;
+  /** Trials started in the period, by accounts of any age. */
+  trialsStarted: number;
+  /** First payments in the period, by accounts of any age. */
+  paidStarted: number;
+  /** First day any visit was recorded — earlier periods have no visit data. */
+  firstVisitDay?: string;
+}
+
+export interface FunnelDay {
+  day: string;
+  visitors: number;
+  signups: number;
+  trials: number;
+  paid: number;
+}
+
+export interface FounderFunnel {
+  days: number;
+  totals: FunnelTotals;
+  series: FunnelDay[];
+  sources: { source: string; visitors: number }[];
+}
+
+export interface FeatureUsageRow {
+  feature: string;
+  users: number;
+  accounts: number;
+  /** Person-days the feature was opened on. */
+  activeDays: number;
+  uses: number;
+  lastUsedAt?: number;
+}
+
+export interface FeatureAccountUsage {
+  accountId?: string;
+  accountName?: string;
+  ownerEmail?: string;
+  users: { id: string; email: string; name?: string }[];
+  activeDays: number;
+  uses: number;
+  lastUsedAt?: number;
+}
+
+export interface FounderReferral {
+  referredAccountId: string;
+  referredName: string;
+  referredOwnerEmail?: string;
+  referredCreatedAt: number;
+  attributedAt?: number;
+  subscriptionStatus?: string;
+  firstPaidAt?: number;
+  referrerAccountId: string;
+  referrerName: string;
+  referrerOwnerEmail?: string;
+  referrerCode?: string;
+  /** Credit this referral earned the referrer; absent if unpaid or over the annual cap. */
+  creditCents?: number;
+  creditedAt?: number;
+}
+
+export interface FounderReferralBalance {
+  accountId: string;
+  accountName: string;
+  ownerEmail?: string;
+  referralCode?: string;
+  referredCount: number;
+  paidCount: number;
+  earnedCents: number;
+  redeemedCents: number;
+  adjustedCents: number;
+  /** Credit still owed to this account. */
+  balanceCents: number;
+  earnedLastYearCents: number;
+}
+
+// ─── Billing & Revenue ───────────────────────────────────────────────────────
+// See supabase/migrations/20260917130000_founder_billing.sql and
+// supabase/functions/founder-billing.
+
+export type DiscountKind = 'percent' | 'amount';
+export type DiscountDuration = 'once' | 'forever' | 'repeating';
+export type PaidPlanTier = 'coach' | 'coach_plus' | 'club';
+
+export interface DiscountCodeInput {
+  code: string;
+  description?: string;
+  kind: DiscountKind;
+  percentOff?: number;
+  amountOffCents?: number;
+  duration: DiscountDuration;
+  durationMonths?: number;
+  maxUses?: number;
+  maxUsesPerAccount?: number;
+  /** Empty = every paid tier. */
+  planTiers: PaidPlanTier[];
+  expiresAt?: number;
+  active: boolean;
+}
+
+export interface DiscountCode extends DiscountCodeInput {
+  id: string;
+  createdAt: number;
+  uses: number;
+  accountsUsed: number;
+  discountTotalCents: number;
+  lastUsedAt?: number;
+}
+
+export interface DiscountRedemption {
+  id: string;
+  accountId?: string;
+  accountName?: string;
+  ownerEmail?: string;
+  checkoutSessionId: string;
+  planTier?: string;
+  discountCents: number;
+  createdAt: number;
+}
+
+export type BillingFilter = 'paying' | 'comp' | 'trial' | 'free' | 'past_due' | 'canceling';
+
+export interface FounderSubscriptionFilter {
+  search?: string;
+  tier?: string;
+  billing?: BillingFilter;
+  limit: number;
+  offset: number;
+}
+
+export interface FounderSubscriptionAccount {
+  id: string;
+  name: string;
+  accountType: string;
+  planTier: string;
+  subscriptionStatus: string;
+  accessStatus: 'active' | 'trial' | 'suspended';
+  isComp: boolean;
+  trialEndsAt?: number;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  subscriptionCancelAt?: number;
+  pendingPlanTier?: string;
+  pendingPlanChangeAt?: number;
+  extraTeamLicenses: number;
+  firstPaidAt?: number;
+  ownerEmail?: string;
+  createdAt: number;
+}
+
+export interface FounderSubscriptionPage {
+  items: FounderSubscriptionAccount[];
+  total: number;
+}
+
+export interface SubscriptionTierCount {
+  planTier: string;
+  accounts: number;
+  paying: number;
+  comp: number;
+  trial: number;
+  pastDue: number;
+  canceling: number;
+}
+
+export interface StripeSubscriptionItem {
+  id: string;
+  priceId: string | null;
+  tier: string | null;
+  amountCents: number;
+  quantity: number;
+  interval: string | null;
+  currency: string | null;
+}
+
+export interface StripeSubscription {
+  id: string;
+  status: string;
+  tier: string | null;
+  kind: 'plan' | 'addon';
+  items: StripeSubscriptionItem[];
+  created: number;
+  currentPeriodEnd: number | null;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: number | null;
+  canceledAt: number | null;
+  endedAt: number | null;
+  discount: {
+    name: string;
+    percentOff: number | null;
+    amountOffCents: number | null;
+    duration: string;
+    endsAt: number | null;
+  } | null;
+}
+
+export type PaymentStatusFilter = 'succeeded' | 'failed' | 'refunded' | 'disputed';
+
+export interface PaymentFilter {
+  search?: string;
+  status?: PaymentStatusFilter;
+  accountId?: string;
+}
+
+export interface BillingPayment {
+  id: string;
+  amountCents: number;
+  amountRefundedCents: number;
+  currency: string;
+  status: string;
+  refunded: boolean;
+  disputed: boolean;
+  created: number;
+  description: string | null;
+  customerId: string | null;
+  email: string | null;
+  accountId: string | null;
+  accountName: string | null;
+  invoiceId: string | null;
+  paymentIntentId: string | null;
+  receiptUrl: string | null;
+  cardBrand: string | null;
+  cardLast4: string | null;
+  failureMessage: string | null;
+}
+
+export interface BillingPaymentPage {
+  items: BillingPayment[];
+  nextCursor: string | null;
+  note?: string;
+}
+
+export type RefundReason = 'requested_by_customer' | 'duplicate' | 'fraudulent';
+
+export interface BillingPaymentDetail extends BillingPayment {
+  refunds: {
+    id: string;
+    amountCents: number;
+    status: string;
+    reason: string | null;
+    note: string | null;
+    refundedBy: string | null;
+    created: number;
+  }[];
+  invoice: {
+    id: string;
+    number: string | null;
+    hostedUrl: string | null;
+    pdfUrl: string | null;
+    subtotalCents: number;
+    discountCents: number;
+    lines: { description: string | null; amountCents: number; periodStart: number | null; periodEnd: number | null }[];
+  } | null;
 }

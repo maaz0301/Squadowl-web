@@ -47,6 +47,13 @@ export const AUDIT_ACTION_LABEL: Record<FounderAuditAction, string> = {
   create_announcement: 'Posted announcement',
   end_announcement: 'Ended announcement',
   broadcast_email: 'Emailed announcement',
+  create_discount_code: 'Created discount code',
+  update_discount_code: 'Edited discount code',
+  refund_payment: 'Refunded payment for',
+  change_subscription: 'Changed Stripe subscription for',
+  cancel_subscription: 'Cancelled Stripe subscription for',
+  resume_subscription: 'Resumed Stripe subscription for',
+  delete_support_ticket: 'Deleted support ticket for',
 };
 
 export const SEVERITY_OPTIONS: { value: AnnouncementSeverity; label: string }[] = [

@@ -220,7 +220,9 @@ import { getImpersonationTarget } from '@/state/impersonationStore';
 export function usePermissions() {
   const user = useUser();
   const { data: members = [] } = useOrgMembersQuery();
-  const impersonating = !!getImpersonationTarget();
+  // View as organization only. View as user loads that person's own profile
+  // and account, so the ordinary calculation below gives them their real role.
+  const impersonating = !!getImpersonationTarget() && !getImpersonationTarget()?.user;
 
   // For demo: if they are the primary coach@example.com account, default to admin if not found.
   // In production, everyone must be an org member.
