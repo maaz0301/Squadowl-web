@@ -115,7 +115,9 @@ function PlayerDetail({ profile, orgId, backHref }: { profile: PlayerProfile; or
                 title: `Edit ${name}`,
                 // Usual position is left out: the profile only knows the latest
                 // evaluation's position, and saving that would overwrite it.
-                fields: ATHLETE_FIELDS.filter((f) => f.key !== 'defaultPosition'),
+                // About is left out too, matching the coach's own Edit Player
+                // screen — it's only ever set once, at registration.
+                fields: ATHLETE_FIELDS.filter((f) => f.key !== 'defaultPosition' && f.key !== 'about'),
                 initial: {
                   firstName: profile.first,
                   lastName: profile.last,
@@ -124,7 +126,6 @@ function PlayerDetail({ profile, orgId, backHref }: { profile: PlayerProfile; or
                   guardianName: profile.guardianName,
                   guardianEmail: profile.guardianEmail,
                   guardianPhone: profile.guardianPhone,
-                  about: profile.aboutChild,
                 },
                 successMessage: 'Player updated.',
                 updatedId: profile.athleteId,

@@ -318,13 +318,11 @@ function PlayersTab({ team, orgId, edit }: { team: FounderTeamDetail; orgId: str
 }
 
 const EVENT_FIELDS: FounderField[] = [
-  { key: 'kind', label: 'Type', type: 'select', options: SEASON_EVENT_KIND_OPTIONS },
+  { key: 'kind', label: 'Type', type: 'choice', options: SEASON_EVENT_KIND_OPTIONS },
   { key: 'title', label: 'Title' },
   { key: 'date', label: 'Date', type: 'date' },
-  { key: 'location', label: 'Location' },
   { key: 'startTime', label: 'Start time', type: 'time' },
-  { key: 'endTime', label: 'End time', type: 'time' },
-  { key: 'notes', label: 'Notes', type: 'textarea' },
+  { key: 'location', label: 'Location' },
 ];
 
 function SeasonsTab({ seasons, edit }: { seasons: FounderTeamDetail['seasons']; edit: Edit }) {
@@ -388,24 +386,6 @@ function SeasonsTab({ seasons, edit }: { seasons: FounderTeamDetail['seasons']; 
                   saveLabel: 'Add Event',
                   successMessage: 'Event added.',
                   onSave: (v) => writes.addSeasonEvent(s.id, v),
-                })
-              }
-            />
-            <Button
-              label={s.archived ? 'Unarchive' : 'Archive'}
-              size="sm"
-              variant="ghost"
-              disabled={action.pending}
-              onClick={() =>
-                action.run({
-                  write: () => writes.setSeasonArchived(s.id, !s.archived),
-                  success: s.archived ? 'Season unarchived.' : 'Season archived.',
-                  updatedId: s.id,
-                  confirmTitle: s.archived ? 'Unarchive Season' : 'Archive Season',
-                  confirmMessage: s.archived
-                    ? `Bring ${s.name} back?`
-                    : `Archive ${s.name}? Its schedule and roster are kept.`,
-                  confirmLabel: s.archived ? 'Unarchive' : 'Archive',
                 })
               }
             />

@@ -67,6 +67,10 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
   const [tab, setTab] = useState('overview');
   const showArchived = useShowArchived();
   const teams = showArchived ? detail.teams : detail.teams.filter((t) => !t.archived);
+  const assignedEvaluations = showArchived
+    ? detail.assignedEvaluations
+    : detail.assignedEvaluations.filter((a) => !isHiddenByDefault(a));
+  const hiddenAssignedCount = detail.assignedEvaluations.length - assignedEvaluations.length;
 
   const { org } = detail;
   const badge = STATUS_BADGE[org.accessStatus];
@@ -217,13 +221,15 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
             )}
           </FounderSection>
 
-          <FounderSection title={`Assigned Evaluations (${detail.assignedEvaluations.length})`}>
-            {detail.assignedEvaluations.length === 0 ? (
+          <FounderSection
+            title={`Assigned Evaluations (${assignedEvaluations.length})${!showArchived && hiddenAssignedCount ? ` · ${hiddenAssignedCount} hidden` : ''}`}
+          >
+            {assignedEvaluations.length === 0 ? (
               <p className="text-sm" style={{ color: colors.inkMuted }}>
                 No one is individually assigned to an evaluation as an assessor.
               </p>
             ) : (
-              detail.assignedEvaluations.map((a, i) => (
+              assignedEvaluations.map((a, i) => (
                 <FounderLinkCard
                   key={`${a.tryoutId}-${a.userId ?? a.email ?? i}`}
                   // A deleted evaluation can't be opened in full; the coach read behind that page skips it.
@@ -237,7 +243,10 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
                       Assigned to {a.tryoutName}
                     </p>
                   </div>
-                  {a.status ? <Badge label={a.status} /> : null}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <ArchiveBadges deletedAt={a.deletedAt} />
+                    {a.status ? <Badge label={a.status} /> : null}
+                  </div>
                 </FounderLinkCard>
               ))
             )}

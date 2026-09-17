@@ -6998,6 +6998,14 @@ export class SupabaseDataSource implements DataSource {
     teams: { teamId: string; teamName: string }[];
     assessments: PlayerProfileAssessment[];
   }> {
+    // Independent of everything else here — run alongside the roster fetch
+    // instead of after it, since neither depends on the other's result.
+    const teamRosterPromise = supabase
+      .from('team_roster')
+      .select('team_id, created_at, teams(name)')
+      .eq('athlete_id', athleteId)
+      .order('created_at', { ascending: false });
+
     const { data: participantRows } = await supabase
       .from('tryout_participants')
       .select('id, tryout_id, jersey, position, current_team, current_level, created_at')
@@ -7006,14 +7014,47 @@ export class SupabaseDataSource implements DataSource {
     const participants = participantRows ?? [];
 
     const tryoutIds = [...new Set(participants.map((p) => p.tryout_id))];
-    const { data: tryoutRows } = tryoutIds.length
-      ? await supabase
-          .from('tryouts')
-          .select('id, name, sport, settings, tryout_date, created_at, event_type, season_id, team_id, teams(name)')
-          .in('id', tryoutIds)
-          .is('deleted_at', null)
-      : { data: [] as Row[] };
+    const participantIds = participants.map((p) => p.id);
+
+    // Both depend only on `participants`, not on each other — fetch together.
+    const [{ data: tryoutRows }, { data: evalRows }, { data: teamRosterRows }] = await Promise.all([
+      tryoutIds.length
+        ? supabase
+            .from('tryouts')
+            .select('id, name, sport, settings, tryout_date, created_at, event_type, season_id, team_id, teams(name)')
+            .in('id', tryoutIds)
+            .is('deleted_at', null)
+        : Promise.resolve({ data: [] as Row[] }),
+      participantIds.length
+        ? supabase
+            .from('evaluations')
+            .select('*, evaluation_scores(rubric_key, value)')
+            .in('participant_id', participantIds)
+        : Promise.resolve({ data: [] as Row[] }),
+      teamRosterPromise,
+    ]);
     const tryoutById = new Map((tryoutRows ?? []).map((t) => [t.id, t]));
+
+    // Actual team membership (Teams feature) — the source of truth for "current
+    // team", since tryout_participants.current_team is a free-text field that's
+    // usually left blank.
+    const teamRoster = teamRosterRows ?? [];
+    const teams = [
+      ...new Map(
+        teamRoster.map((r) => {
+          const t = Array.isArray(r.teams) ? r.teams[0] : r.teams;
+          return [r.team_id, { teamId: r.team_id, teamName: t?.name ?? 'Unknown Team' }];
+        }),
+      ).values(),
+    ];
+
+    const evalsByParticipant = new Map<string, Evaluation[]>();
+    for (const row of evalRows ?? []) {
+      const ev = this.rowToEval(row);
+      const arr = evalsByParticipant.get(ev.playerId) ?? [];
+      arr.push(ev);
+      evalsByParticipant.set(ev.playerId, arr);
+    }
 
     // A tryout's `season_id` column is only ever set when it's created from
     // inside a Season Hub screen. What every team-linked assessment DOES have
@@ -7022,21 +7063,28 @@ export class SupabaseDataSource implements DataSource {
     const tryoutTeamIds = [...new Set((tryoutRows ?? []).map((t) => t.team_id).filter(Boolean))];
     const tryoutSeasonIds = [...new Set((tryoutRows ?? []).map((t) => t.season_id).filter(Boolean))];
 
-    const allSeasons: Row[] = [];
-    if (tryoutTeamIds.length > 0) {
-      const { data } = await supabase
-        .from('seasons')
-        .select('id, name, team_id, created_at')
-        .in('team_id', tryoutTeamIds)
-        .order('created_at', { ascending: false });
-      if (data) allSeasons.push(...data);
-    }
-    if (tryoutSeasonIds.length > 0) {
-      const alreadyFetchedIds = new Set(allSeasons.map((s) => s.id));
-      const remainingSeasonIds = tryoutSeasonIds.filter((id) => !alreadyFetchedIds.has(id));
-      if (remainingSeasonIds.length > 0) {
-        const { data } = await supabase.from('seasons').select('id, name, team_id, created_at').in('id', remainingSeasonIds);
-        if (data) allSeasons.push(...data);
+    // Fetched together and deduped afterward rather than fetching the
+    // season-id batch only for what the team-id batch didn't already cover —
+    // a season can legitimately turn up in both, and the id Map below
+    // collapses any overlap for free.
+    const [teamSeasonsRes, seasonByIdRes] = await Promise.all([
+      tryoutTeamIds.length > 0
+        ? supabase
+            .from('seasons')
+            .select('id, name, team_id, created_at')
+            .in('team_id', tryoutTeamIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [] as Row[] }),
+      tryoutSeasonIds.length > 0
+        ? supabase.from('seasons').select('id, name, team_id, created_at').in('id', tryoutSeasonIds)
+        : Promise.resolve({ data: [] as Row[] }),
+    ]);
+    const allSeasons: Row[] = [...(teamSeasonsRes.data ?? [])];
+    const seenSeasonIds = new Set(allSeasons.map((s) => s.id));
+    for (const s of seasonByIdRes.data ?? []) {
+      if (!seenSeasonIds.has(s.id)) {
+        allSeasons.push(s);
+        seenSeasonIds.add(s.id);
       }
     }
     allSeasons.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -7050,39 +7098,6 @@ export class SupabaseDataSource implements DataSource {
         seasonsByTeamId.set(s.team_id, arr);
       }
       if (!seasonById.has(s.id)) seasonById.set(s.id, { id: s.id, name: s.name });
-    }
-
-    // Actual team membership (Teams feature) — the source of truth for "current
-    // team", since tryout_participants.current_team is a free-text field that's
-    // usually left blank.
-    const { data: teamRosterRows } = await supabase
-      .from('team_roster')
-      .select('team_id, created_at, teams(name)')
-      .eq('athlete_id', athleteId)
-      .order('created_at', { ascending: false });
-    const teamRoster = teamRosterRows ?? [];
-    const teams = [
-      ...new Map(
-        teamRoster.map((r) => {
-          const t = Array.isArray(r.teams) ? r.teams[0] : r.teams;
-          return [r.team_id, { teamId: r.team_id, teamName: t?.name ?? 'Unknown Team' }];
-        }),
-      ).values(),
-    ];
-
-    const participantIds = participants.map((p) => p.id);
-    const { data: evalRows } = participantIds.length
-      ? await supabase
-          .from('evaluations')
-          .select('*, evaluation_scores(rubric_key, value)')
-          .in('participant_id', participantIds)
-      : { data: [] as Row[] };
-    const evalsByParticipant = new Map<string, Evaluation[]>();
-    for (const row of evalRows ?? []) {
-      const ev = this.rowToEval(row);
-      const arr = evalsByParticipant.get(ev.playerId) ?? [];
-      arr.push(ev);
-      evalsByParticipant.set(ev.playerId, arr);
     }
 
     const assessments: PlayerProfileAssessment[] = participants
@@ -7146,13 +7161,19 @@ export class SupabaseDataSource implements DataSource {
   async getPlayerProfile(athleteId: string): Promise<PlayerProfile> {
     const { supabase, userId, accountId } = await this.ctx();
 
-    const { data: athleteRow } = await supabase
-      .from('athletes')
-      .select(
-        'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, guardian_user_id, default_position, year_of_birth, about, medical_info, account_id',
-      )
-      .eq('id', athleteId)
-      .maybeSingle();
+    // None of these three depend on each other's results — run together
+    // instead of as a chain of round trips.
+    const [{ data: athleteRow }, assessmentContext, { data: rosterRows }] = await Promise.all([
+      supabase
+        .from('athletes')
+        .select(
+          'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, guardian_user_id, default_position, year_of_birth, about, medical_info, account_id',
+        )
+        .eq('id', athleteId)
+        .maybeSingle(),
+      this.fetchAthleteAssessmentContext(supabase, athleteId),
+      supabase.from('season_roster').select('season_id, seasons(name, team_name)').eq('athlete_id', athleteId),
+    ]);
     if (!athleteRow) throw new Error('Athlete not found');
 
     // Medical is sensitive: only the account this athlete actually belongs to
@@ -7163,12 +7184,8 @@ export class SupabaseDataSource implements DataSource {
     // and goes stale/empty independently of this request.
     const canViewMedical = athleteRow.account_id === accountId || (!!userId && athleteRow.guardian_user_id === userId);
 
-    const { participants, tryoutById, teams, assessments } = await this.fetchAthleteAssessmentContext(supabase, athleteId);
+    const { participants, tryoutById, teams, assessments } = assessmentContext;
 
-    const { data: rosterRows } = await supabase
-      .from('season_roster')
-      .select('season_id, seasons(name, team_name)')
-      .eq('athlete_id', athleteId);
     const pastSeasons = (rosterRows || []).map((r) => {
       const s = Array.isArray(r.seasons) ? r.seasons[0] : r.seasons;
       return {

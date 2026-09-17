@@ -50,6 +50,15 @@ const int = (v: string | undefined) => {
   return v?.trim() && Number.isFinite(n) ? Math.round(n) : null;
 };
 
+/**
+ * A column whose form field was dropped from a FounderField list (edited
+ * elsewhere, or not editable at all): only touch it when the caller's values
+ * actually carry that key, so a save from the pared-down form doesn't null
+ * out data no longer shown in the UI.
+ */
+const ifPresent = <T extends object>(v: T, key: keyof T & string, column: string = key): Patch =>
+  key in v ? { [column]: text((v as Record<string, unknown>)[key] as string | undefined) } : {};
+
 const EVENT_TYPE_TO_DB: Record<EventType, string> = {
   Tryout: 'tryout',
   Assessment: 'assessment',
@@ -182,8 +191,8 @@ export function updateSeason(seasonId: string, v: { name?: string; year?: string
   return updateById('seasons', seasonId, {
     name: v.name.trim(),
     year: text(v.year),
-    division: text(v.division),
-    coach: text(v.coach),
+    ...ifPresent(v, 'division'),
+    ...ifPresent(v, 'coach'),
   });
 }
 
@@ -209,9 +218,9 @@ function eventPatch(v: FounderEventInput): Patch {
     title: v.title.trim(),
     event_date: v.date,
     start_time: text(v.startTime),
-    end_time: text(v.endTime),
     location: text(v.location),
-    notes: text(v.notes),
+    ...ifPresent(v, 'endTime', 'end_time'),
+    ...ifPresent(v, 'notes'),
   };
 }
 
