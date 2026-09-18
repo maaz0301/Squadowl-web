@@ -24,6 +24,7 @@ import {
   useSetOrganizationSuspendedMutation,
 } from '@/features/founderQueries';
 import { daysUntil } from '@/lib/accountAccess';
+import { INVITE_STATUS, type AssessorInviteStatus } from '@/lib/assessorInvite';
 
 /**
  * One organization, seen from the founder console.
@@ -214,6 +215,42 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
                   <Badge label={m.role} />
                 </FounderLinkCard>
               ))
+            )}
+          </FounderSection>
+
+          {/* The other half of that gap: an assessor invited to score one
+              evaluation. Their invite state is read here rather than only
+              inside the evaluation, so "did they accept?" is answerable from
+              the organization's own page. */}
+          <FounderSection title={`Assigned Evaluations (${detail.assignedEvaluations.length})`}>
+            {detail.assignedEvaluations.length === 0 ? (
+              <p className="text-sm" style={{ color: colors.inkMuted }}>
+                Nobody is invited to assess an evaluation here.
+              </p>
+            ) : (
+              detail.assignedEvaluations.map((a, i) => {
+                const invite = INVITE_STATUS[(a.status as AssessorInviteStatus) ?? 'pending'] ?? INVITE_STATUS.pending;
+                return (
+                  <FounderLinkCard
+                    key={`${a.tryoutId}-${a.userId ?? a.email ?? i}`}
+                    // Same rule as the evaluations tab: a deleted evaluation has no page to open.
+                    href={a.deletedAt ? undefined : `/founder/organizations/${org.id}/evaluations/${a.tryoutId}`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold break-words" style={{ color: colors.ink }}>
+                        {a.name || a.email || 'Unnamed assessor'}
+                      </p>
+                      <p className="text-xs break-words" style={{ color: colors.inkMuted }}>
+                        Assesses {a.tryoutName}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <ArchiveBadges deletedAt={a.deletedAt} />
+                      <Badge label={invite.label} variant={invite.variant} title={invite.title} />
+                    </div>
+                  </FounderLinkCard>
+                );
+              })
             )}
           </FounderSection>
         </>

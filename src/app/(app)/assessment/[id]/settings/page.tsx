@@ -35,42 +35,9 @@ import { useUser } from '@/state/authStore';
 import { isAtAssessmentLimit } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
+import { INVITE_STATUS } from '@/lib/assessorInvite';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
-
-/**
- * How an invitation is reading right now, from the inviting coach's side.
- * Spelled out rather than echoing the raw status word: "pending" on its own
- * left the coach unsure whether it meant the email hadn't gone out or the
- * assessor hadn't answered yet. `title` carries the longer explanation on
- * hover.
- */
-const INVITE_STATUS: Record<'pending' | 'accepted' | 'declined' | 'completed', {
-  label: string;
-  variant: 'warning' | 'success' | 'danger';
-  title: string;
-}> = {
-  completed: {
-    label: 'Assessing complete',
-    variant: 'success',
-    title: 'They finished scoring and closed this evaluation on their side. All of their scores are kept here.',
-  },
-  pending: {
-    label: 'Invite pending',
-    variant: 'warning',
-    title: "Invited — waiting for them to accept. They'll see it after signing in with the address it was sent to.",
-  },
-  accepted: {
-    label: 'Invite accepted',
-    variant: 'success',
-    title: 'They accepted and can score this evaluation.',
-  },
-  declined: {
-    label: 'Invite declined',
-    variant: 'danger',
-    title: 'They declined this invitation.',
-  },
-};
 
 export default function SettingsPage() {
   const id = useAssessmentId();

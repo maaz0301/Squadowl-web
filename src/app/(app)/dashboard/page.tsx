@@ -22,7 +22,9 @@ import { Icon } from '@/components/Icons';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
+import { findViewersAssessorRow } from '@/lib/assessorInvite';
 import { useUser, usePermissions } from '@/state/authStore';
+import { getViewedPersonIds, useImpersonationStore } from '@/state/impersonationStore';
 import { useSessionStore } from '@/state/sessionStore';
 import {
   useTeamsQuery,
@@ -62,6 +64,14 @@ export default function DashboardPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const { isGuardian, role } = usePermissions();
+
+  // The founder's read-only "view as" shows this screen exactly as the person
+  // being viewed sees it — no founder-only markers. Subscribed rather than
+  // read straight off the store so entering or leaving it re-renders, and used
+  // below to read each assignment's invite state off that person rather than
+  // off the founder's own identity.
+  const viewingAs = useImpersonationStore((s) => !!s.target);
+  const viewedIds = viewingAs ? getViewedPersonIds() : [];
 
   // Summaries, not full tryouts: these cards show a name, a sport, a date and a
   // headcount, and the full read drags every roster, evaluation, score and
@@ -319,9 +329,13 @@ export default function DashboardPage() {
           </button>
           {assignedExpanded
             ? assignedQuery.data.map((t) => {
-                const mine = t.assessors.find(
-                  (a) => (user?.id && a.userId === user.id) || a.email?.toLowerCase() === user?.email?.toLowerCase(),
-                );
+                // Whose invite this card is — the person being viewed when
+                // the founder is in "view as", the signed-in user otherwise.
+                // See findViewersAssessorRow(): view as *organization* keeps
+                // running as the founder, so matching the signed-in id here
+                // found nothing and every accepted assignment read back as
+                // still waiting to be accepted.
+                const mine = findViewersAssessorRow(t.assessors, user, viewedIds);
                 const isPending = (mine?.status ?? 'pending') === 'pending';
                 return (
                   <Card key={t.id} className="mb-2 flex flex-col gap-3">
