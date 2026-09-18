@@ -32,9 +32,10 @@ export default function ProfilePage() {
   const colors = useThemeColors();
   const { isDark } = useTheme();
   const router = useRouter();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const user = useUser();
   const logout = useAuthStore((s) => s.logout);
+  const deleteAccount = useAuthStore((s) => s.deleteAccount);
   const toggleTheme = useThemeStore((s) => s.toggle);
   const updateProfile = useUpdateProfileMutation();
   const updatePasswordMut = useUpdatePasswordMutation();
@@ -54,6 +55,7 @@ export default function ProfilePage() {
   const [password, setPassword] = useState('');
   const [loadingPortal, setLoadingPortal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const plan = getPlanDefinition(user?.planTier ?? 'coach');
 
@@ -100,6 +102,25 @@ export default function ProfilePage() {
       await alert('Success', 'Password updated successfully');
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Failed to update password');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    const ok = await confirm({
+      title: 'Delete Account',
+      message: 'Are you sure you want to permanently delete your account? This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    setDeletingAccount(true);
+    try {
+      await deleteAccount();
+      router.push('/login');
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not delete your account.');
+    } finally {
+      setDeletingAccount(false);
     }
   };
 
@@ -272,7 +293,23 @@ export default function ProfilePage() {
         </div>
       ) : null}
 
-      <div className="mt-6">
+      <div className="mt-6 flex flex-col gap-4">
+        {!isFounder ? (
+          <Card className="flex flex-col items-start gap-2">
+            <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
+            <p className="text-xs" style={{ color: colors.inkMuted }}>
+              Deleting your account permanently removes your login and profile. This cannot be undone.
+            </p>
+            <Button
+              label="Delete Account"
+              variant="danger"
+              size="sm"
+              onClick={handleDeleteAccount}
+              loading={deletingAccount}
+            />
+          </Card>
+        ) : null}
+
         <Button
           label="Log Out"
           variant="danger"

@@ -30,6 +30,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   signup: (displayName: string, email: string, password: string, accountType: string) => Promise<void>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   /** Sign out because the session died on its own — see the action's comment. */
   expireSession: () => Promise<void>;
   clearSessionExpired: () => void;
@@ -85,6 +86,28 @@ export const useAuthStore = create<AuthState>()(
           await getDataSource().logout();
         } catch (e) {
           console.error('Error during data source logout:', e);
+        } finally {
+          queryClient.clear();
+          useSessionStore.setState({
+            currentTryoutId: null,
+            currentPlayerId: null,
+            currentEvalId: null,
+            workingScores: {},
+            rosterFilter: 'all',
+            rinksideIndex: 0,
+            activeAssessor: null,
+            combineTryoutIds: [],
+            completedSessions: {},
+          });
+          get().setSession(null);
+          deliberateSignOut = false;
+        }
+      },
+      deleteAccount: async () => {
+        deliberateSignOut = true;
+        set({ sessionExpired: false });
+        try {
+          await getDataSource().deleteAccount();
         } finally {
           queryClient.clear();
           useSessionStore.setState({

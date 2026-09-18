@@ -29,7 +29,8 @@ alter table public.founder_audit_log
     'update_user_role', 'reset_password', 'resend_verification', 'ban_user', 'unban_user', 'delete_user',
     'create_announcement', 'end_announcement', 'broadcast_email',
     'create_discount_code', 'update_discount_code',
-    'refund_payment', 'change_subscription', 'cancel_subscription', 'resume_subscription'
+    'refund_payment', 'change_subscription', 'cancel_subscription', 'resume_subscription',
+    'delete_support_ticket'
   ));
 
 -- ---------------------------------------------------------------------------

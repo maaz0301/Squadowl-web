@@ -867,18 +867,7 @@ export default function TeamDetailPage() {
         team={team}
         linkToHub={false}
         className="mb-5"
-        right={
-          canEditTeam ? (
-            <button
-              type="button"
-              onClick={startEdit}
-              className="rounded-lg px-3 py-1.5 text-sm font-bold transition-colors hover:brightness-110"
-              style={{ color: colors.ink, backgroundColor: colors.tile }}
-            >
-              Edit
-            </button>
-          ) : undefined
-        }
+        right={canEditTeam ? <Button label="Edit" variant="primary" size="sm" onClick={startEdit} /> : undefined}
       />
 
       <Tabs
@@ -1246,13 +1235,6 @@ export default function TeamDetailPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {canEditTeam ? (
-            <Card className="flex flex-col items-start gap-2">
-              <SectionLabel>Team</SectionLabel>
-              <Button label="Edit Team Details" variant="secondary" size="sm" onClick={startEdit} />
-            </Card>
-          ) : null}
-
           <TeamManagersCard teamId={team.id} teamName={team.name} />
           <ImpersonationTeamPanel teamId={team.id} />
 

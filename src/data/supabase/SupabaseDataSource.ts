@@ -1752,7 +1752,17 @@ export class SupabaseDataSource implements DataSource {
   async login(email: string, password: string): Promise<AuthSession> {
     const supabase = getSupabase();
     const { data, error } = await withAuthRetry(() => supabase.auth.signInWithPassword({ email, password }));
-    if (error || !data.session) throw new Error(authErrorMessage(error, 'Login failed. Please try again.'));
+    if (error || !data.session) {
+      // GoTrue returns this same generic message whether the password was
+      // wrong or the account is simply gone — deleteUser() leaves nothing in
+      // auth.users to tell those apart. deleted_accounts is the one record
+      // left, so a failed login is worth the extra round trip to check it.
+      if (error?.message === 'Invalid login credentials') {
+        const { data: wasDeleted } = await supabase.rpc('email_was_deleted', { p_email: email });
+        if (wasDeleted) throw new Error('This account no longer exists.');
+      }
+      throw new Error(authErrorMessage(error, 'Login failed. Please try again.'));
+    }
     this.resetAccountCaches();
     this.userId = data.session.user.id;
     const user = await this.loadUserProfile(data.session.user.id);
@@ -1826,6 +1836,13 @@ export class SupabaseDataSource implements DataSource {
         }
       }
     }
+  }
+
+  async deleteAccount(): Promise<void> {
+    const supabase = getSupabase();
+    const { error } = await supabase.functions.invoke('delete-account', {});
+    if (error) throw new Error(authErrorMessage(error, 'Failed to delete your account. Please try again.'));
+    await this.logout();
   }
 
   async getSession(forceRefresh?: boolean): Promise<AuthSession | null> {

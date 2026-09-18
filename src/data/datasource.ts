@@ -41,6 +41,7 @@ export interface DataSource {
   login(email: string, password: string): Promise<AuthSession>;
   signup(displayName: string, email: string, password: string, accountType: string): Promise<AuthSession>;
   logout(): Promise<void>;
+  deleteAccount(): Promise<void>;
   getSession(forceRefresh?: boolean): Promise<AuthSession | null>;
   getProfile(forceRefresh?: boolean): Promise<UserProfile | null>;
   updateProfile(updates: Partial<UserProfile>): Promise<UserProfile>;
