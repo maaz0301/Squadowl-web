@@ -743,7 +743,19 @@ export function useDeletePlayerMutation(tryoutId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (playerId: string) => getDataSource().deletePlayer(tryoutId, playerId),
-    onSuccess: () => {
+    onSuccess: (_data, playerId) => {
+      // Drop the player from the cached roster right away rather than waiting
+      // on the refetch below, so a delete (or a bulk "Delete Selected") is
+      // reflected on screen the moment it succeeds.
+      qc.setQueryData<Tryout | undefined>(queryKeys.tryout(tryoutId), (old) =>
+        old
+          ? {
+              ...old,
+              roster: old.roster.filter((p) => p.id !== playerId),
+              evals: old.evals.filter((e) => e.playerId !== playerId),
+            }
+          : old,
+      );
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
       qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
