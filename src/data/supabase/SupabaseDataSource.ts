@@ -1920,7 +1920,7 @@ export class SupabaseDataSource implements DataSource {
     }
 
     // Goes through the request-password-reset function rather than
-    // resetPasswordForEmail: that mints the same 6-digit recovery OTP
+    // resetPasswordForEmail: that mints the same 8-digit recovery OTP
     // verifyPasswordResetOtp expects, but via the admin API, so the mail is
     // dispatched by our own SendGrid sender instead of Supabase's auth mailer.
     // Auth's mailer caps sends per hour per project, and a club resetting a few

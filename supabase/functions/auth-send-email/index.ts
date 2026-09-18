@@ -47,19 +47,19 @@ const COPY: Record<EmailActionType, Copy> = {
   recovery: {
     subject: 'Reset your TryoutHQ password',
     heading: 'Reset Your Password 🔐',
-    intro: 'Enter this 6-digit code in the app to choose a new password.',
+    intro: 'Enter this 8-digit code in the app to choose a new password.',
     cta: '',
   },
   reauthentication: {
     subject: "Confirm it's you",
     heading: "Confirm It's You",
-    intro: 'Enter this 6-digit code to confirm this action.',
+    intro: 'Enter this 8-digit code to confirm this action.',
     cta: '',
   },
 };
 
 // The web app verifies password resets with `verifyOtp({ type: 'recovery' })`
-// and prompts for the 6-digit code, so those emails must carry `token` rather
+// and prompts for the 8-digit code, so those emails must carry `token` rather
 // than a confirmation link. Signup/invite/magic-link flows send a link to the
 // web app's own /auth/callback instead, so they keep the link.
 const CODE_BASED: ReadonlySet<EmailActionType> = new Set(['recovery', 'reauthentication']);

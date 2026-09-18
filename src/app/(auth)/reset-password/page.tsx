@@ -12,7 +12,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Input, LoadingState } from '@/components/ui';
 
 const ResetPasswordSchema = z.object({
-  token: z.string().min(6, 'Please enter the 6-digit code'),
+  token: z.string().min(8, 'Please enter the 8-digit code'),
   password: PasswordSchema,
 });
 
@@ -55,7 +55,7 @@ function ResetPasswordForm() {
           Enter Reset Code
         </h1>
         <p className="mt-1 text-sm" style={{ color: colors.inkMuted }}>
-          Enter the 6-digit code sent to {email || 'your email'} and your new password.
+          Enter the 8-digit code sent to {email || 'your email'} and your new password.
         </p>
       </div>
 
