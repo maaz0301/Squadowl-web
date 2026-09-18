@@ -706,7 +706,19 @@ export async function getOrganizationPeople(accountId: string): Promise<{
     .eq('account_id', accountId)
     .order('created_at', { ascending: true });
   if (error) throw founderError(error);
-  const memberIds = [...new Set(((rows ?? []) as Row[]).map((r) => r.user_id as string).filter(Boolean))];
+  // Staff only. A guardian holds a membership row here too, but they belong to
+  // this organization as a parent, not as someone it assigns work to — and
+  // their own assessor rows and delegated teams live on entirely different
+  // accounts (a coach elsewhere, say). Counting them pulled their evaluations
+  // into the org's "Assigned to me" and no one on this org ever saw them.
+  const memberIds = [
+    ...new Set(
+      ((rows ?? []) as Row[])
+        .filter((r) => r.role !== 'guardian')
+        .map((r) => r.user_id as string)
+        .filter(Boolean),
+    ),
+  ];
   const data = ((rows ?? []) as Row[]).find((r) => r.role === 'owner');
   if (!data?.user_id) return { memberIds };
   // The email matters: guardian athletes are also matched on guardian_email.

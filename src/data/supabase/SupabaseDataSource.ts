@@ -1555,9 +1555,21 @@ export class SupabaseDataSource implements DataSource {
   private async ensureViewedMembers(supabase: SupabaseClient): Promise<void> {
     const target = getImpersonationTarget();
     if (!target || target.user || target.memberIds) return;
-    const { data, error } = await supabase.from('memberships').select('user_id').eq('account_id', target.accountId);
+    const { data, error } = await supabase
+      .from('memberships')
+      .select('user_id, role')
+      .eq('account_id', target.accountId);
     if (error) return;
-    const memberIds = [...new Set(((data ?? []) as Row[]).map((r) => r.user_id as string).filter(Boolean))];
+    // Staff only — same rule as getOrganizationPeople(): a guardian's assignments
+    // and delegated teams belong to whatever account they coach on, not this one.
+    const memberIds = [
+      ...new Set(
+        ((data ?? []) as Row[])
+          .filter((r) => r.role !== 'guardian')
+          .map((r) => r.user_id as string)
+          .filter(Boolean),
+      ),
+    ];
     // Only if the view hasn't changed while this was in flight.
     if (getImpersonationTarget() === target) useImpersonationStore.getState().setTarget({ ...target, memberIds });
   }

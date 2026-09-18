@@ -32,10 +32,12 @@ export interface ImpersonationTarget {
    */
   owner?: ImpersonatedPerson;
   /**
-   * View as organization only: everyone with a membership on the account.
-   * Teams delegated to any of them and evaluations any of them is assigned to
-   * assess are listed too, so the org view shows every managed team and
-   * assessed evaluation its users have — not just the owner's.
+   * View as organization only: every staff member of the account (guardians
+   * excluded — they are parents here, and their own assignments and delegated
+   * teams sit on other accounts). Teams delegated to any of them and
+   * evaluations any of them is assigned to assess are listed too, so the org
+   * view shows every managed team and assessed evaluation its users have —
+   * not just the owner's.
    */
   memberIds?: string[];
 }
