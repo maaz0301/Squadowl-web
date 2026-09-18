@@ -23,6 +23,8 @@ import { founderError } from './errors';
 import type {
   FounderAccessKind,
   FounderAuditEntry,
+  FounderAuditFilter,
+  FounderAuditPage,
   FounderCreateOrganizationInput,
   FounderCreateOrganizationResult,
   FounderOrganizationDetail,
@@ -44,6 +46,7 @@ import type {
   SupportTicketDetail,
   SupportTicketStatus,
   FeatureAccountUsage,
+  FeaturePlatform,
   FeatureUsageRow,
   FounderFunnel,
   FounderReferral,
@@ -205,6 +208,28 @@ export async function listFounderAuditLog(limit = 100): Promise<FounderAuditEntr
     .limit(limit);
   if (error) throw founderError(error);
   return ((data ?? []) as Row[]).map(rowToFounderAuditEntry);
+}
+
+/** One page of the full audit trail, newest first, filtered server-side. */
+export async function listFounderAuditPage(filter: FounderAuditFilter = {}): Promise<FounderAuditPage> {
+  const limit = filter.limit ?? 50;
+  const offset = filter.offset ?? 0;
+  let query = getSupabase()
+    .from('founder_audit_log')
+    .select(FOUNDER_AUDIT_COLUMNS, { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (filter.actions?.length) query = query.in('action', filter.actions);
+  if (filter.days) query = query.gte('created_at', new Date(Date.now() - filter.days * 86_400_000).toISOString());
+  // Characters that are syntax in a PostgREST or() filter (or LIKE wildcards) are dropped, not escaped.
+  const term = filter.search?.replace(/[,()%*_\\]/g, ' ').trim();
+  if (term) {
+    query = query.or(`actor_email.ilike.%${term}%,account_name.ilike.%${term}%,reason.ilike.%${term}%`);
+  }
+  const { data, count, error } = await query;
+  if (error) throw founderError(error);
+  return { entries: ((data ?? []) as Row[]).map(rowToFounderAuditEntry), total: count ?? 0 };
 }
 
 /**
@@ -1036,8 +1061,11 @@ export async function getFounderFunnel(days: number): Promise<FounderFunnel> {
   };
 }
 
-export async function getFeatureUsage(days: number): Promise<FeatureUsageRow[]> {
-  const { data, error } = await getSupabase().rpc('founder_analytics_feature_usage', { p_days: days });
+export async function getFeatureUsage(days: number, platform: FeaturePlatform = 'all'): Promise<FeatureUsageRow[]> {
+  const { data, error } = await getSupabase().rpc('founder_analytics_feature_usage', {
+    p_days: days,
+    p_platform: platform === 'all' ? null : platform,
+  });
   if (error) throw analyticsError(error);
   return ((data ?? []) as Row[]).map((r) => ({
     feature: r.feature,
@@ -1045,14 +1073,21 @@ export async function getFeatureUsage(days: number): Promise<FeatureUsageRow[]> 
     accounts: num(r.accounts),
     activeDays: num(r.active_days),
     uses: num(r.uses),
+    webUses: num(r.web_uses),
+    mobileUses: num(r.mobile_uses),
     lastUsedAt: r.last_used_at ? toMs(r.last_used_at) : undefined,
   }));
 }
 
-export async function getFeatureAccounts(feature: string, days: number): Promise<FeatureAccountUsage[]> {
+export async function getFeatureAccounts(
+  feature: string,
+  days: number,
+  platform: FeaturePlatform = 'all',
+): Promise<FeatureAccountUsage[]> {
   const { data, error } = await getSupabase().rpc('founder_analytics_feature_accounts', {
     p_feature: feature,
     p_days: days,
+    p_platform: platform === 'all' ? null : platform,
   });
   if (error) throw analyticsError(error);
   return ((data ?? []) as Row[]).map((r) => ({

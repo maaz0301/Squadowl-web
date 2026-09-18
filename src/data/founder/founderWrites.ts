@@ -16,14 +16,38 @@
  * An UPDATE or DELETE that RLS refuses isn't an error in Postgres — it just
  * matches no rows — so every write reads its rows back and fails loudly when
  * nothing changed.
+ *
+ * Every write also logs to founder_audit_log via logWrite() below, once the
+ * table write itself has succeeded — see 20260918130000_founder_console_write_audit.sql.
  */
 import { getSupabase } from '@/lib/supabase';
 import type { EventType, Recommendation } from '@/data/types';
+import type { FounderAuditAction } from './types';
 import { founderError } from './errors';
 
 type Patch = Record<string, unknown>;
 
 const NOT_SAVED = 'Nothing was saved — the row no longer exists or the database refused the change.';
+
+/**
+ * Every write below lands straight in a table, under RLS — not through an
+ * RPC — so unlike the rest of the founder console (which logs through
+ * founder_write_audit() from inside a SECURITY DEFINER function) these had no
+ * audit trail at all. founder_log_console_write() is the whitelisted,
+ * is_founder()-gated wrapper that lets the client log one after the fact.
+ *
+ * Fire-and-forget, same as logFounderUserAction() below: a failed log entry
+ * shouldn't turn a successful save into a reported failure, so this only
+ * warns.
+ */
+async function logWrite(action: FounderAuditAction, accountId: string, details: Patch = {}): Promise<void> {
+  const { error } = await getSupabase().rpc('founder_log_console_write', {
+    p_action: action,
+    p_account_id: accountId,
+    p_details: details,
+  });
+  if (error) console.warn('Could not record audit entry:', error.message);
+}
 
 async function updateById(table: string, id: string, patch: Patch): Promise<void> {
   const { data, error } = await getSupabase().from(table).update(patch).eq('id', id).select('id');
@@ -79,7 +103,7 @@ export interface FounderTeamInput {
   fee?: string;
 }
 
-export async function updateTeam(teamId: string, v: FounderTeamInput) {
+export async function updateTeam(accountId: string, teamId: string, v: FounderTeamInput) {
   if (!v.name?.trim()) throw new Error('A team needs a name.');
   const color = v.brandColor?.trim() || null;
   if (color && !/^#[0-9A-Fa-f]{6}$/.test(color)) throw new Error('Team colour must look like #1e3a8a.');
@@ -102,7 +126,7 @@ export async function updateTeam(teamId: string, v: FounderTeamInput) {
   const logoUrl = String((current as { season_label?: string | null }).season_label ?? '').split('|LOGO|')[1];
   const season = v.seasonLabel?.trim() ?? '';
 
-  return updateById('teams', teamId, {
+  await updateById('teams', teamId, {
     name: v.name.trim(),
     season_label: logoUrl ? `${season}|LOGO|${logoUrl}` : season || null,
     brand_color: color,
@@ -110,10 +134,12 @@ export async function updateTeam(teamId: string, v: FounderTeamInput) {
     // Same as the coach app: no fee is stored as NULL, not 0.
     registration_fee_cents: collectsFees ? feeCents : null,
   });
+  await logWrite('update_team', accountId, { entity_name: v.name.trim() });
 }
 
-export function setTeamArchived(teamId: string, archived: boolean) {
-  return updateById('teams', teamId, { archived });
+export async function setTeamArchived(accountId: string, teamId: string, archived: boolean, teamName?: string) {
+  await updateById('teams', teamId, { archived });
+  await logWrite(archived ? 'archive_team' : 'unarchive_team', accountId, { entity_name: teamName });
 }
 
 // ─── Players ─────────────────────────────────────────────────────────────────
@@ -152,8 +178,13 @@ function athletePatch(v: FounderAthleteInput): Patch {
   return patch;
 }
 
-export function updateAthlete(athleteId: string, v: FounderAthleteInput) {
-  return updateById('athletes', athleteId, athletePatch(v));
+function playerName(v: FounderAthleteInput): string {
+  return `${v.firstName ?? ''} ${v.lastName ?? ''}`.trim() || 'Unnamed player';
+}
+
+export async function updateAthlete(accountId: string, athleteId: string, v: FounderAthleteInput) {
+  await updateById('athletes', athleteId, athletePatch(v));
+  await logWrite('update_player', accountId, { entity_name: playerName(v) });
 }
 
 /** A new athlete filed under the organization — never under the founder's own account. */
@@ -161,13 +192,20 @@ function createAthlete(accountId: string, v: FounderAthleteInput) {
   return insertRow('athletes', { account_id: accountId, ...athletePatch(v) });
 }
 
-export function updateTeamRosterEntry(rosterId: string, v: { jersey?: string; position?: string }) {
-  return updateById('team_roster', rosterId, { jersey: text(v.jersey), position: text(v.position) });
+export async function updateTeamRosterEntry(
+  accountId: string,
+  rosterId: string,
+  v: { jersey?: string; position?: string },
+  playerLabel?: string,
+) {
+  await updateById('team_roster', rosterId, { jersey: text(v.jersey), position: text(v.position) });
+  await logWrite('update_team_roster', accountId, { entity_name: playerLabel });
 }
 
 /** Takes the player off this team only; the athlete and their history stay. */
-export function removeTeamRosterEntry(rosterId: string) {
-  return deleteById('team_roster', rosterId);
+export async function removeTeamRosterEntry(accountId: string, rosterId: string, playerLabel?: string) {
+  await deleteById('team_roster', rosterId);
+  await logWrite('remove_player_from_team', accountId, { entity_name: playerLabel });
 }
 
 export async function addPlayerToTeam(
@@ -176,28 +214,36 @@ export async function addPlayerToTeam(
   v: FounderAthleteInput & { jersey?: string; position?: string },
 ) {
   const athleteId = await createAthlete(accountId, v);
-  return insertRow('team_roster', {
+  const rosterId = await insertRow('team_roster', {
     team_id: teamId,
     athlete_id: athleteId,
     jersey: text(v.jersey),
     position: text(v.position),
   });
+  await logWrite('add_player_to_team', accountId, { entity_name: playerName(v) });
+  return rosterId;
 }
 
 // ─── Seasons ─────────────────────────────────────────────────────────────────
 
-export function updateSeason(seasonId: string, v: { name?: string; year?: string; division?: string; coach?: string }) {
+export async function updateSeason(
+  accountId: string,
+  seasonId: string,
+  v: { name?: string; year?: string; division?: string; coach?: string },
+) {
   if (!v.name?.trim()) throw new Error('A season needs a name.');
-  return updateById('seasons', seasonId, {
+  await updateById('seasons', seasonId, {
     name: v.name.trim(),
     year: text(v.year),
     ...ifPresent(v, 'division'),
     ...ifPresent(v, 'coach'),
   });
+  await logWrite('update_season', accountId, { entity_name: v.name.trim() });
 }
 
-export function setSeasonArchived(seasonId: string, archived: boolean) {
-  return updateById('seasons', seasonId, { archived });
+export async function setSeasonArchived(accountId: string, seasonId: string, archived: boolean, seasonName?: string) {
+  await updateById('seasons', seasonId, { archived });
+  await logWrite(archived ? 'archive_season' : 'unarchive_season', accountId, { entity_name: seasonName });
 }
 
 export interface FounderEventInput {
@@ -224,16 +270,20 @@ function eventPatch(v: FounderEventInput): Patch {
   };
 }
 
-export function addSeasonEvent(seasonId: string, v: FounderEventInput) {
-  return insertRow('season_events', { season_id: seasonId, ...eventPatch(v) });
+export async function addSeasonEvent(accountId: string, seasonId: string, v: FounderEventInput) {
+  const id = await insertRow('season_events', { season_id: seasonId, ...eventPatch(v) });
+  await logWrite('add_season_event', accountId, { entity_name: v.title?.trim() });
+  return id;
 }
 
-export function updateSeasonEvent(eventId: string, v: FounderEventInput) {
-  return updateById('season_events', eventId, eventPatch(v));
+export async function updateSeasonEvent(accountId: string, eventId: string, v: FounderEventInput) {
+  await updateById('season_events', eventId, eventPatch(v));
+  await logWrite('update_season_event', accountId, { entity_name: v.title?.trim() });
 }
 
-export function deleteSeasonEvent(eventId: string) {
-  return deleteById('season_events', eventId);
+export async function deleteSeasonEvent(accountId: string, eventId: string, eventLabel?: string) {
+  await deleteById('season_events', eventId);
+  await logWrite('delete_season_event', accountId, { entity_name: eventLabel });
 }
 
 // ─── Evaluations ─────────────────────────────────────────────────────────────
@@ -249,9 +299,9 @@ export interface FounderTryoutInput {
   headAssessor?: string;
 }
 
-export function updateTryout(tryoutId: string, v: FounderTryoutInput) {
+export async function updateTryout(accountId: string, tryoutId: string, v: FounderTryoutInput) {
   if (!v.name?.trim()) throw new Error('An evaluation needs a name.');
-  return updateById('tryouts', tryoutId, {
+  await updateById('tryouts', tryoutId, {
     name: v.name.trim(),
     event_type: EVENT_TYPE_TO_DB[v.eventType as EventType] ?? 'tryout',
     tryout_date: text(v.date),
@@ -261,15 +311,18 @@ export function updateTryout(tryoutId: string, v: FounderTryoutInput) {
     head_coach: text(v.headCoach),
     head_assessor: text(v.headAssessor),
   });
+  await logWrite('update_tryout', accountId, { entity_name: v.name.trim() });
 }
 
-export function setTryoutArchived(tryoutId: string, archived: boolean) {
-  return updateById('tryouts', tryoutId, { archived });
+export async function setTryoutArchived(accountId: string, tryoutId: string, archived: boolean, tryoutName?: string) {
+  await updateById('tryouts', tryoutId, { archived });
+  await logWrite(archived ? 'archive_tryout' : 'unarchive_tryout', accountId, { entity_name: tryoutName });
 }
 
 /** Soft delete, the same as the coach app's delete — restorable. */
-export function setTryoutDeleted(tryoutId: string, deleted: boolean) {
-  return updateById('tryouts', tryoutId, { deleted_at: deleted ? new Date().toISOString() : null });
+export async function setTryoutDeleted(accountId: string, tryoutId: string, deleted: boolean, tryoutName?: string) {
+  await updateById('tryouts', tryoutId, { deleted_at: deleted ? new Date().toISOString() : null });
+  await logWrite(deleted ? 'delete_tryout' : 'restore_tryout', accountId, { entity_name: tryoutName });
 }
 
 export interface FounderParticipantInput {
@@ -279,20 +332,32 @@ export interface FounderParticipantInput {
   currentLevel?: string;
 }
 
-export function updateParticipant(participantId: string, v: FounderParticipantInput) {
-  return updateById('tryout_participants', participantId, {
+export async function updateParticipant(
+  accountId: string,
+  participantId: string,
+  v: FounderParticipantInput,
+  playerLabel?: string,
+) {
+  await updateById('tryout_participants', participantId, {
     jersey: text(v.jersey),
     position: text(v.position),
     current_team: text(v.currentTeam),
     current_level: text(v.currentLevel),
   });
+  await logWrite('update_participant', accountId, { entity_name: playerLabel });
 }
 
 /** Soft removal, the same as the coach app's — the player's evaluations are kept and it can be undone. */
-export function setParticipantRemoved(participantId: string, removed: boolean) {
-  return updateById('tryout_participants', participantId, {
+export async function setParticipantRemoved(
+  accountId: string,
+  participantId: string,
+  removed: boolean,
+  playerLabel?: string,
+) {
+  await updateById('tryout_participants', participantId, {
     removed_at: removed ? new Date().toISOString() : null,
   });
+  await logWrite(removed ? 'remove_participant' : 'restore_participant', accountId, { entity_name: playerLabel });
 }
 
 export async function addPlayerToTryout(
@@ -301,7 +366,7 @@ export async function addPlayerToTryout(
   v: FounderAthleteInput & FounderParticipantInput,
 ) {
   const athleteId = await createAthlete(accountId, v);
-  return insertRow('tryout_participants', {
+  const id = await insertRow('tryout_participants', {
     tryout_id: tryoutId,
     athlete_id: athleteId,
     jersey: text(v.jersey),
@@ -309,6 +374,8 @@ export async function addPlayerToTryout(
     current_team: text(v.currentTeam),
     current_level: text(v.currentLevel),
   });
+  await logWrite('add_player_to_tryout', accountId, { entity_name: playerName(v) });
+  return id;
 }
 
 /**
@@ -319,6 +386,7 @@ export async function addPlayerToTryout(
 type AssessorKey = { email?: string; name?: string };
 
 export async function updateAssessor(
+  accountId: string,
   tryoutId: string,
   who: AssessorKey,
   v: { name?: string; role?: string; status?: string },
@@ -333,15 +401,17 @@ export async function updateAssessor(
   );
   if (error) throw founderError(error);
   if (!data?.length) throw new Error(NOT_SAVED);
+  await logWrite('update_assessor', accountId, { entity_name: v.name.trim() });
 }
 
-export async function removeAssessor(tryoutId: string, who: AssessorKey) {
+export async function removeAssessor(accountId: string, tryoutId: string, who: AssessorKey) {
   const base = getSupabase().from('tryout_assessors').delete().eq('tryout_id', tryoutId);
   const { data, error } = await (who.email ? base.eq('email', who.email) : base.eq('name', who.name ?? '')).select(
     'id',
   );
   if (error) throw founderError(error);
   if (!data?.length) throw new Error(NOT_SAVED);
+  await logWrite('remove_assessor', accountId, { entity_name: who.name || who.email });
 }
 
 export interface FounderEvaluationInput {
@@ -353,7 +423,12 @@ export interface FounderEvaluationInput {
   scores: Record<string, string>;
 }
 
-export async function updateEvaluation(evaluationId: string, v: FounderEvaluationInput) {
+export async function updateEvaluation(
+  accountId: string,
+  evaluationId: string,
+  v: FounderEvaluationInput,
+  entityLabel?: string,
+) {
   await updateById('evaluations', evaluationId, {
     session: v.session?.trim() || 'Session 1',
     recommendation: v.recommendation ? String(v.recommendation).toLowerCase() : null,
@@ -387,9 +462,11 @@ export async function updateEvaluation(evaluationId: string, v: FounderEvaluatio
       .in('rubric_key', cleared);
     if (error) throw founderError(error);
   }
+  await logWrite('update_evaluation', accountId, { entity_name: entityLabel });
 }
 
 /** Permanent, as it is in the coach app: the evaluation and its scores are removed. */
-export function deleteEvaluation(evaluationId: string) {
-  return deleteById('evaluations', evaluationId);
+export async function deleteEvaluation(accountId: string, evaluationId: string, entityLabel?: string) {
+  await deleteById('evaluations', evaluationId);
+  await logWrite('delete_evaluation', accountId, { entity_name: entityLabel });
 }

@@ -14,6 +14,8 @@ import type {
   FounderUserFilter,
   AnnouncementSeverity,
   EmailActivityFilter,
+  FeaturePlatform,
+  FounderAuditFilter,
   SupportTicketStatus,
   DiscountCodeInput,
   FounderSubscriptionFilter,
@@ -35,6 +37,7 @@ export const founderKeys = {
   removedParticipants: (tryoutId: string) => ['founder', 'evaluation', tryoutId, 'removed'] as const,
   hiddenPlayerEvaluations: (athleteId: string) => ['founder', 'player', athleteId, 'hidden'] as const,
   auditLog: ['founder', 'auditLog'] as const,
+  auditPage: (filter: FounderAuditFilter) => ['founder', 'auditLog', 'page', filter] as const,
   users: (filter?: FounderUserFilter) => (filter ? (['founder', 'users', filter] as const) : (['founder', 'users'] as const)),
   supportTickets: ['founder', 'support'] as const,
   supportTicketList: (filter: { status?: SupportTicketStatus; search?: string }) =>
@@ -44,8 +47,9 @@ export const founderKeys = {
   emailActivity: (filter: EmailActivityFilter) => ['founder', 'emailActivity', filter] as const,
   emailActivityEvents: (msgId: string) => ['founder', 'emailActivity', 'events', msgId] as const,
   funnel: (days: number) => ['founder', 'analytics', 'funnel', days] as const,
-  featureUsage: (days: number) => ['founder', 'analytics', 'features', days] as const,
-  featureAccounts: (feature: string, days: number) => ['founder', 'analytics', 'features', days, feature] as const,
+  featureUsage: (days: number, platform: FeaturePlatform) => ['founder', 'analytics', 'features', days, platform] as const,
+  featureAccounts: (feature: string, days: number, platform: FeaturePlatform) =>
+    ['founder', 'analytics', 'features', days, platform, feature] as const,
   referrals: ['founder', 'analytics', 'referrals'] as const,
   referralBalances: ['founder', 'analytics', 'referralBalances'] as const,
   billing: ['founder', 'billing'] as const,
@@ -108,6 +112,15 @@ export function useFounderAuditLogQuery(enabled = true) {
     queryKey: founderKeys.auditLog,
     queryFn: () => founderApi.listFounderAuditLog(),
     enabled,
+  });
+}
+
+export function useFounderAuditPageQuery(filter: FounderAuditFilter, enabled = true) {
+  return useQuery({
+    queryKey: founderKeys.auditPage(filter),
+    queryFn: () => founderApi.listFounderAuditPage(filter),
+    enabled,
+    placeholderData: (previous) => previous,
   });
 }
 
@@ -392,19 +405,19 @@ export function useFounderFunnelQuery(days: number) {
   });
 }
 
-export function useFeatureUsageQuery(days: number) {
+export function useFeatureUsageQuery(days: number, platform: FeaturePlatform) {
   return useQuery({
-    queryKey: founderKeys.featureUsage(days),
-    queryFn: () => founderApi.getFeatureUsage(days),
+    queryKey: founderKeys.featureUsage(days, platform),
+    queryFn: () => founderApi.getFeatureUsage(days, platform),
     placeholderData: (previous) => previous,
     staleTime: 60_000,
   });
 }
 
-export function useFeatureAccountsQuery(feature: string | null, days: number) {
+export function useFeatureAccountsQuery(feature: string | null, days: number, platform: FeaturePlatform) {
   return useQuery({
-    queryKey: founderKeys.featureAccounts(feature ?? '', days),
-    queryFn: () => founderApi.getFeatureAccounts(feature!, days),
+    queryKey: founderKeys.featureAccounts(feature ?? '', days, platform),
+    queryFn: () => founderApi.getFeatureAccounts(feature!, days, platform),
     enabled: !!feature,
     staleTime: 60_000,
   });

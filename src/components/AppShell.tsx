@@ -130,6 +130,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: '/founder/support', label: 'Support Inbox', icon: 'inbox' },
         { href: '/founder/announcements', label: 'Announcements', icon: 'megaphone' },
         { href: '/founder/email-log', label: 'Email Log', icon: 'mail' },
+        { href: '/founder/audit-log', label: 'Audit Log', icon: 'history' },
         { href: '/profile', label: 'Profile', icon: 'profile' },
       ]
     : isGuardian

@@ -21,10 +21,9 @@ import {
   EditAccessModal,
   SuspendOrganizationModal,
 } from '@/components/founder/OrganizationModals';
-import { AUDIT_ACTION_LABEL, STATUS_BADGE, formatDate, planLabel } from '@/components/founder/labels';
-import type { FounderAuditEntry, FounderOrganization } from '@/data/founder/types';
+import { STATUS_BADGE, formatDate, planLabel } from '@/components/founder/labels';
+import type { FounderOrganization } from '@/data/founder/types';
 import {
-  useFounderAuditLogQuery,
   useFounderOrganizationsQuery,
   useIsFounderQuery,
   useSetOrganizationSuspendedMutation,
@@ -34,11 +33,6 @@ import { useDebouncedValue } from '@/lib/hooks';
 import { ViewAsButton } from '@/components/founder/ViewAsButton';
 
 const PAGE_SIZE = 25;
-
-const VIEW_TABS = [
-  { key: 'organizations', label: 'Organizations' },
-  { key: 'audit', label: 'Audit Log' },
-];
 
 const STATUS_TABS = [
   { key: 'all', label: 'All' },
@@ -56,7 +50,6 @@ const STATUS_TABS = [
  */
 export default function FounderPage() {
   const founderQuery = useIsFounderQuery();
-  const [view, setView] = useState('organizations');
   const [creating, setCreating] = useState(false);
 
   if (founderQuery.isLoading) return <LoadingState message="Loading..." />;
@@ -77,14 +70,11 @@ export default function FounderPage() {
         subtitle="Organizations, access and pilot onboarding"
         right={<Button label="+ New Organization" size="sm" onClick={() => setCreating(true)} />}
       />
-      <Tabs tabs={VIEW_TABS} activeKey={view} onChange={setView} className="mb-5" />
-      {view === 'organizations' ? <OrganizationsView /> : <AuditLogView />}
+      <OrganizationsView />
       <CreateOrganizationModal visible={creating} onClose={() => setCreating(false)} />
     </>
   );
 }
-
-// ─── Organizations ──────────────────────────────────────────────────────────
 
 function OrganizationsView() {
   const colors = useThemeColors();
@@ -290,85 +280,4 @@ function OrganizationRow({
       </div>
     </Card>
   );
-}
-
-// ─── Audit log ──────────────────────────────────────────────────────────────
-
-function AuditLogView() {
-  const colors = useThemeColors();
-  const query = useFounderAuditLogQuery();
-
-  if (query.isLoading) return <LoadingState message="Loading audit log..." />;
-  if (query.isError) {
-    return (
-      <ErrorState
-        message={query.error instanceof Error ? query.error.message : 'Could not load the audit log.'}
-        onRetry={() => query.refetch()}
-      />
-    );
-  }
-  const entries = query.data ?? [];
-  if (entries.length === 0) {
-    return (
-      <EmptyState
-        title="Nothing logged yet"
-        message="Suspensions, plan changes, new organizations and view-as sessions appear here."
-      />
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs" style={{ color: colors.inkMuted }}>
-        Latest {entries.length} entries. Written by the database with each action; they cannot be edited.
-      </p>
-      {entries.map((entry) => (
-        <Card key={entry.id} className="flex flex-col gap-1">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="font-semibold break-words" style={{ color: colors.ink }}>
-              {AUDIT_ACTION_LABEL[entry.action] ?? entry.action}{' '}
-              <span style={{ color: colors.primary }}>{entry.accountName ?? 'deleted account'}</span>
-            </p>
-            <span className="text-xs" style={{ color: colors.inkFaint }}>
-              {formatDate(entry.createdAt, true)}
-            </span>
-          </div>
-          <p className="text-xs break-all" style={{ color: colors.inkMuted }}>
-            by {entry.actorEmail ?? 'unknown'}
-            {auditDetail(entry)}
-          </p>
-          {entry.reason ? (
-            <p className="text-sm break-words" style={{ color: colors.inkMuted }}>
-              Reason: {entry.reason}
-            </p>
-          ) : null}
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function auditDetail(entry: FounderAuditEntry): string {
-  const d = entry.details as Record<string, unknown>;
-  switch (entry.action) {
-    case 'create_org':
-      return ` · owner ${d.owner_email} · ${planLabel(d.plan_tier as string)} · ${d.access}${
-        d.trial_days ? ` (${d.trial_days} days)` : ''
-      }`;
-    case 'update_access': {
-      const after = (d.after ?? {}) as Record<string, unknown>;
-      return ` · now ${planLabel(after.plan_tier as string)}${after.is_comp ? ' · comp' : ''}${
-        after.trial_ends_at ? ` · trial to ${formatDate(Date.parse(after.trial_ends_at as string))}` : ''
-      }`;
-    }
-    case 'suspend':
-    case 'reactivate':
-      return d.from ? ` · ${d.from} → ${d.to}` : '';
-    case 'update_user_role':
-      return ` · ${d.user_email} · ${d.from} → ${d.to}`;
-    case 'broadcast_email':
-      return ` · ${d.recipient_count} recipients`;
-    default:
-      return '';
-  }
 }

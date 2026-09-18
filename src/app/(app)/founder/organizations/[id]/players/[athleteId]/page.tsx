@@ -129,7 +129,7 @@ function PlayerDetail({ profile, orgId, backHref }: { profile: PlayerProfile; or
                 },
                 successMessage: 'Player updated.',
                 updatedId: profile.athleteId,
-                onSave: (v) => writes.updateAthlete(profile.athleteId, v),
+                onSave: (v) => writes.updateAthlete(orgId, profile.athleteId, v),
               })
             }
           />
@@ -220,7 +220,7 @@ function PlayerDetail({ profile, orgId, backHref }: { profile: PlayerProfile; or
                       disabled={action.pending}
                       onClick={() =>
                         action.run({
-                          write: () => writes.setParticipantRemoved(h.participantId, false),
+                          write: () => writes.setParticipantRemoved(orgId, h.participantId, false, `${name} on ${h.tryoutName}`),
                           success: 'Player restored to the evaluation.',
                           updatedId: h.participantId,
                         })
@@ -228,7 +228,10 @@ function PlayerDetail({ profile, orgId, backHref }: { profile: PlayerProfile; or
                     />
                   ) : null}
                   {h.deletedAt ? (
-                    <TryoutStateButtons tryout={{ id: h.tryoutId, name: h.tryoutName, deletedAt: h.deletedAt }} />
+                    <TryoutStateButtons
+                      accountId={orgId}
+                      tryout={{ id: h.tryoutId, name: h.tryoutName, deletedAt: h.deletedAt }}
+                    />
                   ) : (
                     // Removed from the roster only: the evaluation itself still opens.
                     <Button
@@ -329,7 +332,7 @@ function AssessmentCard({
                     label="Edit Scores"
                     size="sm"
                     variant="secondary"
-                    onClick={() => edit(evaluationEditConfig(e, skillLabel, playerName))}
+                    onClick={() => edit(evaluationEditConfig(e, skillLabel, playerName, orgId))}
                   />
                   <Button
                     label="Delete"
@@ -338,7 +341,8 @@ function AssessmentCard({
                     disabled={action.pending}
                     onClick={() =>
                       action.run({
-                        write: () => writes.deleteEvaluation(e.id),
+                        write: () =>
+                          writes.deleteEvaluation(orgId, e.id, `${e.evaluator || 'assessor'}'s evaluation of ${playerName}`),
                         success: 'Evaluation deleted.',
                         confirmTitle: 'Delete Evaluation',
                         confirmMessage: `Permanently delete ${e.evaluator || 'this'}'s evaluation of ${playerName} and its scores? This can't be undone.`,

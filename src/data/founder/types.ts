@@ -219,7 +219,33 @@ export type FounderAuditAction =
   | 'change_subscription'
   | 'cancel_subscription'
   | 'resume_subscription'
-  | 'delete_support_ticket';
+  | 'delete_support_ticket'
+  | 'update_team'
+  | 'archive_team'
+  | 'unarchive_team'
+  | 'update_player'
+  | 'add_player_to_team'
+  | 'update_team_roster'
+  | 'remove_player_from_team'
+  | 'update_season'
+  | 'archive_season'
+  | 'unarchive_season'
+  | 'add_season_event'
+  | 'update_season_event'
+  | 'delete_season_event'
+  | 'update_tryout'
+  | 'archive_tryout'
+  | 'unarchive_tryout'
+  | 'delete_tryout'
+  | 'restore_tryout'
+  | 'add_player_to_tryout'
+  | 'update_participant'
+  | 'remove_participant'
+  | 'restore_participant'
+  | 'update_assessor'
+  | 'remove_assessor'
+  | 'update_evaluation'
+  | 'delete_evaluation';
 
 // ─── Support & Content ───────────────────────────────────────────────────────
 
@@ -327,6 +353,22 @@ export interface FounderUserFilter {
   offset?: number;
 }
 
+export interface FounderAuditFilter {
+  /** Matches the organization/target, the admin's email, or the reason. */
+  search?: string;
+  /** Restrict to these actions (one category of the Audit Log page). */
+  actions?: FounderAuditAction[];
+  /** Only entries from the last N days. */
+  days?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface FounderAuditPage {
+  entries: FounderAuditEntry[];
+  total: number;
+}
+
 export interface FounderAuditEntry {
   id: number;
   actorEmail?: string;
@@ -374,6 +416,9 @@ export interface FounderFunnel {
   sources: { source: string; visitors: number }[];
 }
 
+/** Which app a feature use came from; 'all' = both. */
+export type FeaturePlatform = 'all' | 'web' | 'mobile';
+
 export interface FeatureUsageRow {
   feature: string;
   users: number;
@@ -381,6 +426,8 @@ export interface FeatureUsageRow {
   /** Person-days the feature was opened on. */
   activeDays: number;
   uses: number;
+  webUses: number;
+  mobileUses: number;
   lastUsedAt?: number;
 }
 

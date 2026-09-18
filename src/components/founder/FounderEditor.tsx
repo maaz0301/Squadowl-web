@@ -252,9 +252,11 @@ export function FounderActionRow({ children }: { children: ReactNode }) {
 
 /** Archive / unarchive and delete / restore for one evaluation, wherever it is listed. */
 export function TryoutStateButtons({
+  accountId,
   tryout,
   onDeleted,
 }: {
+  accountId: string;
   tryout: { id: string; name: string; archived?: boolean; deletedAt?: number };
   /** Called after a delete succeeds, e.g. to leave a page that can no longer load. */
   onDeleted?: () => void;
@@ -269,7 +271,7 @@ export function TryoutStateButtons({
         disabled={action.pending}
         onClick={() =>
           action.run({
-            write: () => writes.setTryoutDeleted(tryout.id, false),
+            write: () => writes.setTryoutDeleted(accountId, tryout.id, false, name),
             success: 'Evaluation restored.',
             updatedId: tryout.id,
             confirmTitle: 'Restore Evaluation',
@@ -289,7 +291,7 @@ export function TryoutStateButtons({
         disabled={action.pending}
         onClick={() =>
           action.run({
-            write: () => writes.setTryoutArchived(tryout.id, !tryout.archived),
+            write: () => writes.setTryoutArchived(accountId, tryout.id, !tryout.archived, name),
             success: tryout.archived ? 'Evaluation unarchived.' : 'Evaluation archived.',
             updatedId: tryout.id,
           })
@@ -302,7 +304,7 @@ export function TryoutStateButtons({
         disabled={action.pending}
         onClick={async () => {
           const done = await action.run({
-            write: () => writes.setTryoutDeleted(tryout.id, true),
+            write: () => writes.setTryoutDeleted(accountId, tryout.id, true, name),
             success: 'Evaluation deleted. Turn on "Show archived & deleted" to restore it.',
             confirmTitle: 'Delete Evaluation',
             confirmMessage: `Delete ${name}? It disappears for the organization, but you can restore it from the founder console.`,
@@ -325,6 +327,7 @@ export function evaluationEditConfig(
   e: Evaluation,
   skillLabel: Map<string, string>,
   playerName: string,
+  accountId: string,
 ): FounderEditConfig {
   const keys = [...new Set([...skillLabel.keys(), ...Object.keys(e.scores)])];
   const scoreField = (key: string) => `score:${key}`;
@@ -352,12 +355,17 @@ export function evaluationEditConfig(
     successMessage: 'Evaluation updated.',
     updatedId: e.id,
     onSave: (v) =>
-      writes.updateEvaluation(e.id, {
-        session: v.session,
-        recommendation: v.recommendation,
-        strengths: v.strengths,
-        improve: v.improve,
-        scores: Object.fromEntries(keys.map((key) => [key, v[scoreField(key)] ?? ''])),
-      }),
+      writes.updateEvaluation(
+        accountId,
+        e.id,
+        {
+          session: v.session,
+          recommendation: v.recommendation,
+          strengths: v.strengths,
+          improve: v.improve,
+          scores: Object.fromEntries(keys.map((key) => [key, v[scoreField(key)] ?? ''])),
+        },
+        `${e.evaluator || 'assessor'}'s evaluation of ${playerName}`,
+      ),
   };
 }

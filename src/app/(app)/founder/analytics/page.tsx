@@ -6,7 +6,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Select, Spinner, Tabs } from '@/components/ui';
 import { FounderNotAvailable, FounderSection } from '@/components/founder/FounderUi';
 import { formatDate } from '@/components/founder/labels';
-import type { FounderFunnel, FounderReferral } from '@/data/founder/types';
+import type { FeaturePlatform, FounderFunnel, FounderReferral } from '@/data/founder/types';
 import {
   useFeatureAccountsQuery,
   useFeatureUsageQuery,
@@ -34,12 +34,19 @@ const FOUNDER_ROUTES = [
   { href: '/founder/support', label: 'Support Inbox' },
   { href: '/founder/announcements', label: 'Announcements' },
   { href: '/founder/email-log', label: 'Email Log' },
+  { href: '/founder/audit-log', label: 'Audit Log' },
 ];
 
 const VIEW_TABS = [
   { key: 'funnel', label: 'Sign-up Funnel' },
   { key: 'features', label: 'Feature Usage' },
   { key: 'referrals', label: 'Referrals' },
+];
+
+const PLATFORM_TABS = [
+  { key: 'all', label: 'All' },
+  { key: 'web', label: 'Web' },
+  { key: 'mobile', label: 'Mobile app' },
 ];
 
 const PERIOD_OPTIONS = [
@@ -238,7 +245,8 @@ function DailyChart({ funnel }: { funnel: FounderFunnel }) {
 
 function FeaturesView({ days }: { days: number }) {
   const colors = useThemeColors();
-  const query = useFeatureUsageQuery(days);
+  const [platform, setPlatform] = useState<FeaturePlatform>('all');
+  const query = useFeatureUsageQuery(days, platform);
   const [open, setOpen] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
 
@@ -261,11 +269,23 @@ function FeaturesView({ days }: { days: number }) {
       <FeaturesInfoModal visible={showInfo} onClose={() => setShowInfo(false)} />
     </div>
   );
+  const platformTabs = (
+    <Tabs
+      tabs={PLATFORM_TABS}
+      activeKey={platform}
+      onChange={(k) => {
+        setOpen(null);
+        setPlatform(k as FeaturePlatform);
+      }}
+      className="mb-3"
+    />
+  );
 
   if (query.isLoading) {
     return (
       <>
         {header}
+        {platformTabs}
         <LoadingState message="Loading feature usage..." />
       </>
     );
@@ -274,6 +294,7 @@ function FeaturesView({ days }: { days: number }) {
     return (
       <>
         {header}
+        {platformTabs}
         <ErrorState
           message={errorMessage(query.error, 'Could not load feature usage.')}
           onRetry={() => query.refetch()}
@@ -286,9 +307,14 @@ function FeaturesView({ days }: { days: number }) {
     return (
       <>
         {header}
+        {platformTabs}
         <EmptyState
           title="No feature usage yet"
-          message="Usage is recorded when a customer opens a feature's screen, from this version on."
+          message={
+            platform === 'mobile'
+              ? 'Mobile usage is recorded once customers are on a mobile app version that includes tracking.'
+              : "Usage is recorded when a customer opens a feature's screen, from this version on."
+          }
         />
       </>
     );
@@ -298,6 +324,7 @@ function FeaturesView({ days }: { days: number }) {
   return (
     <>
       {header}
+      {platformTabs}
       <div className="flex flex-col gap-2">
         {rows.map((r) => (
           <Card key={r.feature} className="flex flex-col gap-2">
@@ -323,6 +350,11 @@ function FeaturesView({ days }: { days: number }) {
                 />
               </div>
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                {platform === 'all' ? (
+                  <span style={{ color: colors.inkFaint }}>
+                    Web {r.webUses} · Mobile {r.mobileUses} ·
+                  </span>
+                ) : null}
                 {r.lastUsedAt ? (
                   <span style={{ color: colors.inkFaint }}>Last used {formatDate(r.lastUsedAt, true)} ·</span>
                 ) : null}
@@ -345,7 +377,7 @@ function FeaturesView({ days }: { days: number }) {
                 </span>
               </div>
             </button>
-            {open === r.feature ? <FeatureAccounts feature={r.feature} days={days} /> : null}
+            {open === r.feature ? <FeatureAccounts feature={r.feature} days={days} platform={platform} /> : null}
           </Card>
         ))}
       </div>
@@ -353,9 +385,9 @@ function FeaturesView({ days }: { days: number }) {
   );
 }
 
-function FeatureAccounts({ feature, days }: { feature: string; days: number }) {
+function FeatureAccounts({ feature, days, platform }: { feature: string; days: number; platform: FeaturePlatform }) {
   const colors = useThemeColors();
-  const query = useFeatureAccountsQuery(feature, days);
+  const query = useFeatureAccountsQuery(feature, days, platform);
 
   if (query.isLoading) return <Spinner />;
   if (query.isError) {
@@ -413,8 +445,9 @@ function FeaturesInfoModal({ visible, onClose }: { visible: boolean; onClose: ()
   return (
     <Modal visible={visible} title="What's tracked?" onClose={onClose} size="lg">
       <p className="mb-4 text-sm" style={{ color: colors.inkMuted }}>
-        A visit counts the moment a signed-in customer opens one of these screens on the{' '}
-        <strong style={{ color: colors.ink }}>web app</strong>. Hub pages — Dashboard, a team&apos;s own page,
+        A visit counts the moment a signed-in customer opens one of these screens, on the{' '}
+        <strong style={{ color: colors.ink }}>web app</strong> or the{' '}
+        <strong style={{ color: colors.ink }}>mobile app</strong>. Hub pages — Dashboard, a team&apos;s own page,
         an assessment&apos;s Roster tab — aren&apos;t tracked; only the tools reached from them are.
       </p>
 
@@ -427,7 +460,10 @@ function FeaturesInfoModal({ visible, onClose }: { visible: boolean; onClose: ()
             {FEATURES.filter((f) => f.area === area).map((f) => (
               <li key={f.key} className="flex items-center justify-between gap-2 text-sm">
                 <span style={{ color: colors.ink }}>{f.label}</span>
-                <Badge label="Web" variant="info" size="sm" />
+                <span className="flex gap-1">
+                  <Badge label="Web" variant="info" size="sm" />
+                  <Badge label="Mobile" variant="info" size="sm" />
+                </span>
               </li>
             ))}
           </ul>
@@ -457,8 +493,8 @@ function FeaturesInfoModal({ visible, onClose }: { visible: boolean; onClose: ()
           Mobile app
         </h3>
         <p className="text-xs" style={{ color: colors.inkFaint }}>
-          Not wired up yet — the mobile app has no equivalent of this tracking, so every feature above shows
-          web usage only.
+          The mobile app reports the same features by screen, from the app version that added tracking onward.
+          Older installs report nothing, so mobile numbers start low and grow as people update.
         </p>
       </div>
     </Modal>

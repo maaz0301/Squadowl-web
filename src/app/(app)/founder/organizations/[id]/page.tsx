@@ -353,7 +353,7 @@ function OrgEvaluationsTab({ orgId }: { orgId: string }) {
             </div>
             {ev.deletedAt ? (
               <FounderActionRow>
-                <TryoutStateButtons tryout={ev} />
+                <TryoutStateButtons accountId={orgId} tryout={ev} />
               </FounderActionRow>
             ) : null}
           </FounderLinkCard>

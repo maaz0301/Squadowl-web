@@ -149,11 +149,11 @@ function EvaluationDetail({ tryout, orgId, backHref }: { tryout: Tryout; orgId: 
                 initial: { ...tryout, date: tryout.tryoutDate, location: tryout.rink },
                 successMessage: 'Evaluation updated.',
                 updatedId: tryout.id,
-                onSave: (v) => writes.updateTryout(tryout.id, v),
+                onSave: (v) => writes.updateTryout(orgId, tryout.id, v),
               })
             }
           />
-          <TryoutStateButtons tryout={tryout} onDeleted={() => router.push(backHref)} />
+          <TryoutStateButtons accountId={orgId} tryout={tryout} onDeleted={() => router.push(backHref)} />
         </FounderActionRow>
       </Card>
 
@@ -201,7 +201,7 @@ function EvaluationDetail({ tryout, orgId, backHref }: { tryout: Tryout; orgId: 
                         initial: a,
                         successMessage: 'Assessor updated.',
                         updatedId: `assessor:${tryout.id}:${a.email || a.name}`,
-                        onSave: (v) => writes.updateAssessor(tryout.id, a, v),
+                        onSave: (v) => writes.updateAssessor(orgId, tryout.id, a, v),
                       })
                     }
                   />
@@ -212,7 +212,7 @@ function EvaluationDetail({ tryout, orgId, backHref }: { tryout: Tryout; orgId: 
                     disabled={action.pending}
                     onClick={() =>
                       action.run({
-                        write: () => writes.removeAssessor(tryout.id, a),
+                        write: () => writes.removeAssessor(orgId, tryout.id, a),
                         success: 'Assessor removed.',
                         confirmTitle: 'Remove Assessor',
                         confirmMessage: `Remove ${a.name || a.email} from this evaluation? The scores they already entered are kept.`,
@@ -263,6 +263,7 @@ function EvaluationDetail({ tryout, orgId, backHref }: { tryout: Tryout; orgId: 
                 result={result}
                 tryout={tryout}
                 edit={edit}
+                orgId={orgId}
                 playerHref={
                   result.player.athleteId
                     ? `/founder/organizations/${orgId}/players/${result.player.athleteId}`
@@ -304,7 +305,13 @@ function EvaluationDetail({ tryout, orgId, backHref }: { tryout: Tryout; orgId: 
                     disabled={action.pending}
                     onClick={() =>
                       action.run({
-                        write: () => writes.setParticipantRemoved(p.participantId, false),
+                        write: () =>
+                          writes.setParticipantRemoved(
+                            orgId,
+                            p.participantId,
+                            false,
+                            `${p.firstName} ${p.lastName}`.trim() || 'Unnamed player',
+                          ),
                         success: 'Player restored to the roster.',
                         updatedId: p.participantId,
                       })
@@ -342,12 +349,14 @@ function PlayerResultCard({
   result,
   tryout,
   edit,
+  orgId,
   playerHref,
 }: {
   rank?: number;
   result: PlayerResult;
   tryout: Tryout;
   edit: (config: FounderEditConfig) => void;
+  orgId: string;
   playerHref?: string;
 }) {
   const colors = useThemeColors();
@@ -441,8 +450,8 @@ function PlayerResultCard({
               successMessage: 'Player updated.',
               updatedId: player.id,
               onSave: async (v) => {
-                if (player.athleteId) await writes.updateAthlete(player.athleteId, v);
-                await writes.updateParticipant(player.id, v);
+                if (player.athleteId) await writes.updateAthlete(orgId, player.athleteId, v);
+                await writes.updateParticipant(orgId, player.id, v, name);
               },
             })
           }
@@ -454,7 +463,7 @@ function PlayerResultCard({
           disabled={action.pending}
           onClick={() =>
             action.run({
-              write: () => writes.setParticipantRemoved(player.id, true),
+              write: () => writes.setParticipantRemoved(orgId, player.id, true, name),
               success: `${name} removed. Turn on "Show archived & deleted" to restore.`,
               confirmTitle: 'Remove Player',
               confirmMessage: `Take ${name} off this evaluation's roster? Their evaluations are kept and you can restore them.`,
@@ -479,7 +488,7 @@ function PlayerResultCard({
                     label="Edit Scores"
                     size="sm"
                     variant="secondary"
-                    onClick={() => edit(evaluationEditConfig(e, skillLabel, name))}
+                    onClick={() => edit(evaluationEditConfig(e, skillLabel, name, orgId))}
                   />
                   <Button
                     label="Delete"
@@ -488,7 +497,8 @@ function PlayerResultCard({
                     disabled={action.pending}
                     onClick={() =>
                       action.run({
-                        write: () => writes.deleteEvaluation(e.id),
+                        write: () =>
+                          writes.deleteEvaluation(orgId, e.id, `${e.evaluator || 'assessor'}'s evaluation of ${name}`),
                         success: 'Evaluation deleted.',
                         confirmTitle: 'Delete Evaluation',
                         confirmMessage: `Permanently delete ${e.evaluator || 'this'}'s evaluation of ${name} and its scores? This can't be undone.`,

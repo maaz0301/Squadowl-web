@@ -153,7 +153,7 @@ function TeamDetail({ team, orgId, backHref }: { team: FounderTeamDetail; orgId:
                 },
                 successMessage: 'Team updated.',
                 updatedId: team.id,
-                onSave: (v) => writes.updateTeam(team.id, v),
+                onSave: (v) => writes.updateTeam(orgId, team.id, v),
               })
             }
           />
@@ -164,7 +164,7 @@ function TeamDetail({ team, orgId, backHref }: { team: FounderTeamDetail; orgId:
             disabled={action.pending}
             onClick={() =>
               action.run({
-                write: () => writes.setTeamArchived(team.id, !team.archived),
+                write: () => writes.setTeamArchived(orgId, team.id, !team.archived, team.name),
                 success: team.archived ? 'Team unarchived.' : 'Team archived.',
                 updatedId: team.id,
                 confirmTitle: team.archived ? 'Unarchive Team' : 'Archive Team',
@@ -184,7 +184,7 @@ function TeamDetail({ team, orgId, backHref }: { team: FounderTeamDetail; orgId:
       </div>
 
       {tab === 'players' ? <PlayersTab team={team} orgId={orgId} edit={edit} /> : null}
-      {tab === 'seasons' ? <SeasonsTab seasons={seasons} edit={edit} /> : null}
+      {tab === 'seasons' ? <SeasonsTab seasons={seasons} edit={edit} orgId={orgId} /> : null}
       {tab === 'evaluations' ? <EvaluationsTab evaluations={evaluations} orgId={orgId} /> : null}
       {tab === 'staff' ? <StaffTab team={team} /> : null}
 
@@ -232,7 +232,7 @@ function PlayersTab({ team, orgId, edit }: { team: FounderTeamDetail; orgId: str
               initial: {},
               saveLabel: 'Add Player',
               successMessage: 'Player added.',
-              onSave: (v) => writes.addPlayerToTeam(team.accountId, team.id, v),
+              onSave: (v) => writes.addPlayerToTeam(orgId, team.id, v),
             })
           }
         />
@@ -287,8 +287,8 @@ function PlayersTab({ team, orgId, edit }: { team: FounderTeamDetail; orgId: str
                     successMessage: 'Player updated.',
                     updatedId: p.id,
                     onSave: async (v) => {
-                      if (p.athleteId) await writes.updateAthlete(p.athleteId, v);
-                      await writes.updateTeamRosterEntry(p.id, v);
+                      if (p.athleteId) await writes.updateAthlete(orgId, p.athleteId, v);
+                      await writes.updateTeamRosterEntry(orgId, p.id, v, name);
                     },
                   })
                 }
@@ -300,7 +300,7 @@ function PlayersTab({ team, orgId, edit }: { team: FounderTeamDetail; orgId: str
                 disabled={action.pending}
                 onClick={() =>
                   action.run({
-                    write: () => writes.removeTeamRosterEntry(p.id),
+                    write: () => writes.removeTeamRosterEntry(orgId, p.id, name),
                     success: `${name} removed from the team.`,
                     confirmTitle: 'Remove from Team',
                     confirmMessage: `Take ${name} off ${team.name}? The player and their evaluation history are kept.`,
@@ -325,7 +325,7 @@ const EVENT_FIELDS: FounderField[] = [
   { key: 'location', label: 'Location' },
 ];
 
-function SeasonsTab({ seasons, edit }: { seasons: FounderTeamDetail['seasons']; edit: Edit }) {
+function SeasonsTab({ seasons, edit, orgId }: { seasons: FounderTeamDetail['seasons']; edit: Edit; orgId: string }) {
   const colors = useThemeColors();
   const action = useFounderAction();
   if (seasons.length === 0) {
@@ -370,7 +370,7 @@ function SeasonsTab({ seasons, edit }: { seasons: FounderTeamDetail['seasons']; 
                   initial: s,
                   successMessage: 'Season updated.',
                   updatedId: s.id,
-                  onSave: (v) => writes.updateSeason(s.id, v),
+                  onSave: (v) => writes.updateSeason(orgId, s.id, v),
                 })
               }
             />
@@ -385,7 +385,7 @@ function SeasonsTab({ seasons, edit }: { seasons: FounderTeamDetail['seasons']; 
                   initial: { kind: 'game' },
                   saveLabel: 'Add Event',
                   successMessage: 'Event added.',
-                  onSave: (v) => writes.addSeasonEvent(s.id, v),
+                  onSave: (v) => writes.addSeasonEvent(orgId, s.id, v),
                 })
               }
             />
@@ -422,7 +422,7 @@ function SeasonsTab({ seasons, edit }: { seasons: FounderTeamDetail['seasons']; 
                           initial: e,
                           successMessage: 'Event updated.',
                           updatedId: e.id,
-                          onSave: (v) => writes.updateSeasonEvent(e.id, v),
+                          onSave: (v) => writes.updateSeasonEvent(orgId, e.id, v),
                         })
                       }
                     />
@@ -433,7 +433,7 @@ function SeasonsTab({ seasons, edit }: { seasons: FounderTeamDetail['seasons']; 
                       disabled={action.pending}
                       onClick={() =>
                         action.run({
-                          write: () => writes.deleteSeasonEvent(e.id),
+                          write: () => writes.deleteSeasonEvent(orgId, e.id, e.title ?? e.kind),
                           success: 'Event deleted.',
                           confirmTitle: 'Delete Event',
                           confirmMessage: `Delete "${e.title ?? e.kind}" and its RSVPs? This can't be undone.`,
@@ -509,7 +509,7 @@ function EvaluationsTab({ evaluations, orgId }: { evaluations: FounderTeamDetail
                 onClick={() => router.push(`/founder/organizations/${orgId}/evaluations/${ev.id}`)}
               />
             ) : null}
-            <TryoutStateButtons tryout={ev} />
+            <TryoutStateButtons accountId={orgId} tryout={ev} />
           </FounderActionRow>
         </Card>
       ))}
