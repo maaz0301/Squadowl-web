@@ -30,8 +30,9 @@ import {
 import { getDataSource } from '@/data';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { getDefaultRubrics } from '@/data/rubrics';
+import { END_BEFORE_START_MESSAGE, isEndAfterStart } from '@/data/timeRange';
 import type { Assessor } from '@/data/types';
-import { useUser } from '@/state/authStore';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { isAtAssessmentLimit } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -46,9 +47,10 @@ export default function SettingsPage() {
   const colors = useThemeColors();
   const router = useRouter();
   const { alert, confirm, toast } = useAlert();
-  const user = useUser();
   const welcomedRef = useRef(false);
   const tryoutQuery = useTryoutQuery(id);
+  // A team someone else owns is run on that team's plan, not the viewer's own.
+  const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   // Just the number, for the copy-assessment plan check. This used to be
   // useTryoutsQuery(false) — every roster, evaluation, score and registration
   // in the account fetched on arrival so one `.length` could be read off it.
@@ -68,6 +70,7 @@ export default function SettingsPage() {
   const [tryoutDate, setTryoutDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [endTimeError, setEndTimeError] = useState('');
   const [rink, setRink] = useState('');
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
 
@@ -92,11 +95,17 @@ export default function SettingsPage() {
     setTryoutDate(tryout.tryoutDate ?? '');
     setStartTime(tryout.startTime ?? '');
     setEndTime(tryout.endTime ?? '');
+    setEndTimeError('');
     setRink(tryout.rink ?? '');
     setShowEdit(true);
   };
 
   const saveEdit = async () => {
+    if (!isEndAfterStart(startTime, endTime)) {
+      setEndTimeError(END_BEFORE_START_MESSAGE);
+      return;
+    }
+    setEndTimeError('');
     await updateTryout.mutateAsync({
       id: tryout.id,
       updates: {
@@ -252,8 +261,8 @@ export default function SettingsPage() {
 
   const handleCopy = async () => {
     const count = assessmentCount.data ?? 0;
-    if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
-      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'evaluations'));
+    if (isAtAssessmentLimit(effectiveTier, count)) {
+      setLimitMsg(buildLimitReachedMessage(effectiveTier, 'assessments', 'evaluations'));
       return;
     }
     const copy = await copyTryout.mutateAsync(tryout.id);
@@ -400,8 +409,23 @@ export default function SettingsPage() {
         <div className="flex flex-col gap-3">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <DateField label="Date" value={tryoutDate} onChange={setTryoutDate} />
-          <TimeField label="Start Time" value={startTime} onChange={setStartTime} />
-          <TimeField label="End Time" value={endTime} onChange={setEndTime} />
+          <TimeField
+            label="Start Time"
+            value={startTime}
+            onChange={(v) => {
+              setStartTime(v);
+              setEndTimeError('');
+            }}
+          />
+          <TimeField
+            label="End Time"
+            value={endTime}
+            onChange={(v) => {
+              setEndTime(v);
+              setEndTimeError('');
+            }}
+            error={endTimeError || undefined}
+          />
           <div>
             <Input
               label="Location"

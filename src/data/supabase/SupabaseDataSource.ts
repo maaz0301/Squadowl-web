@@ -3,6 +3,7 @@ import { getSupabase } from '@/lib/supabase';
 import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
+import { bulkImportPlayers } from '../bulkTeamImport';
 import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
 import { deriveAccountAccess, isExpiredTrial } from '@/lib/accountAccess';
 import {
@@ -466,6 +467,16 @@ const PARTICIPANT_COUNT_CONCURRENCY = 6;
 const EVALUATIONS_TRYOUT_CHUNK = 1;
 
 const REGISTRATION_CHUNK = 20;
+/** Athlete ids per request when removing players from a team roster in bulk. */
+const TEAM_ROSTER_REMOVE_CHUNK = 50;
+/** Removal requests in flight at once. */
+const TEAM_ROSTER_REMOVE_CONCURRENCY = 4;
+/**
+ * Players deleted from an assessment roster at once. Each delete is its own
+ * round trip, so an unbounded fan-out over a whole roster is what a bulk delete
+ * used to do.
+ */
+const PLAYER_DELETE_CONCURRENCY = 4;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
 const GUARDIAN_EMAIL_CONCURRENCY = 20;
 const GUARDIAN_RESOLVE_BATCH = 50;
@@ -1470,6 +1481,7 @@ export class SupabaseDataSource implements DataSource {
         eventType: EVENT_TYPE_FROM_DB[t.event_type] ?? 'Tryout',
         tryoutDate: t.tryout_date ?? undefined,
         startTime: t.start_time ?? undefined,
+        endTime: t.end_time ?? undefined,
         rink: t.location ?? undefined,
         sport: t.sport,
         sportOther: t.sport_other ?? undefined,
@@ -2534,7 +2546,77 @@ export class SupabaseDataSource implements DataSource {
     rows: { line: number; form: AddPlayerForm }[],
     onProgress?: (done: number) => void,
   ): Promise<PlayerImportResult> {
-    return this.importPlayers(rows, (form) => this.addManualTeamPlayer(teamId, form), onProgress);
+    const oneAtATime = () =>
+      this.importPlayers(rows, (form) => this.addManualTeamPlayer(teamId, form), onProgress);
+
+    // The batched path files every athlete under the caller's own account, which
+    // is right only when that account owns the team. A delegated manager, or
+    // anyone whose ownership couldn't be read, keeps the per-row path — its
+    // owner-side RPC has no batch form. A row naming an existing athlete isn't
+    // a spreadsheet row and takes the same path.
+    const ownerAccountId = await this.ownerAccountId('teams', teamId);
+    const callerAccountId = await this.writableAccountIdOrNull();
+    const writesAsOwner =
+      callerAccountId !== null && (ownerAccountId === null || callerAccountId === ownerAccountId);
+    if (!writesAsOwner || rows.some((r) => r.form.athleteId)) return oneAtATime();
+
+    const supabase = getSupabase();
+    return bulkImportPlayers(
+      rows,
+      {
+        resolveGuardians: (forms) =>
+          this.resolveGuardiansForRegistrations(
+            supabase,
+            forms.map((f) => ({ guardian_email: f.guardianEmail, guardian_name: f.guardianName })),
+          ),
+        createAthletes: async (payloads) => {
+          const { data, error } = await supabase.rpc('create_athletes_for_caller', {
+            account_hint: callerAccountId,
+            players: payloads,
+          });
+          if (error) throw new Error(error.message);
+          return (data ?? []) as string[];
+        },
+        addToRoster: async (entries) => {
+          await this.addTeamRosterPlayers(teamId, entries);
+        },
+        addOne: (form) => this.addManualTeamPlayer(teamId, form),
+      },
+      onProgress,
+    );
+  }
+
+  async removeTeamRosterPlayers(teamId: string, athleteIds: string[]): Promise<void> {
+    const unique = [...new Set(athleteIds.filter(Boolean))];
+    if (unique.length === 0) return;
+    const { supabase } = await this.ctx();
+    // Ids ride in the query string of each request, so they go in modest chunks.
+    const chunks: string[][] = [];
+    for (let i = 0; i < unique.length; i += TEAM_ROSTER_REMOVE_CHUNK) {
+      chunks.push(unique.slice(i, i + TEAM_ROSTER_REMOVE_CHUNK));
+    }
+    let deleted = 0;
+    await mapPool(chunks, TEAM_ROSTER_REMOVE_CONCURRENCY, async (chunk) => {
+      const rows = unwrap(
+        await supabase.from('team_roster').delete().eq('team_id', teamId).in('athlete_id', chunk).select('id'),
+      ) as Row[] | null;
+      deleted += rows?.length ?? 0;
+    });
+    if (deleted >= unique.length) return;
+
+    // Fewer rows came back than were asked for. Either someone else already
+    // removed some (fine) or RLS filtered them out without an error (not fine),
+    // and only a re-read tells the two apart.
+    let remaining = 0;
+    await mapPool(chunks, TEAM_ROSTER_REMOVE_CONCURRENCY, async (chunk) => {
+      const { data } = await supabase.from('team_roster').select('id').eq('team_id', teamId).in('athlete_id', chunk);
+      remaining += data?.length ?? 0;
+    });
+    if (remaining > 0) {
+      throw new Error(
+        `Could not remove ${remaining} of ${unique.length} players. You may not have permission to change this team’s roster.`,
+      );
+    }
   }
 
   async removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void> {
@@ -3011,6 +3093,7 @@ export class SupabaseDataSource implements DataSource {
       eventType: EVENT_TYPE_FROM_DB[t.event_type] ?? 'Tryout',
       tryoutDate: t.tryout_date ?? undefined,
       startTime: t.start_time ?? undefined,
+      endTime: t.end_time ?? undefined,
       rink: t.location ?? undefined,
       sport: t.sport,
       sportOther: t.sport_other ?? undefined,
@@ -3953,6 +4036,23 @@ export class SupabaseDataSource implements DataSource {
         .select()
         .maybeSingle(),
     );
+  }
+
+  async deletePlayers(
+    tryoutId: string,
+    playerIds: string[],
+  ): Promise<{ deleted: string[]; failed: { id: string; message: string }[] }> {
+    const deleted: string[] = [];
+    const failed: { id: string; message: string }[] = [];
+    await mapPool([...new Set(playerIds)], PLAYER_DELETE_CONCURRENCY, async (playerId) => {
+      try {
+        await this.deletePlayer(tryoutId, playerId);
+        deleted.push(playerId);
+      } catch (e) {
+        failed.push({ id: playerId, message: e instanceof Error ? e.message : 'Could not delete this player.' });
+      }
+    });
+    return { deleted, failed };
   }
 
 
@@ -5122,6 +5222,12 @@ export class SupabaseDataSource implements DataSource {
       });
       if (error) throw new Error(error.message);
       const athleteIds = (data ?? []) as string[];
+      // One id per registration, in order — the zip below depends on it. A
+      // short answer would leave undefined athlete ids that the roster upsert
+      // then collapses into a single row, i.e. "added 20, only one landed".
+      if (athleteIds.length !== regs.length || athleteIds.some((athleteId) => !athleteId)) {
+        throw new Error(`Could not create every player in this batch (${athleteIds.length} of ${regs.length}). Please try again.`);
+      }
       const placed = regs.map((reg, i) => ({ reg, athleteId: athleteIds[i] }));
 
       await place(placed);

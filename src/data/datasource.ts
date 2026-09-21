@@ -118,6 +118,15 @@ export interface DataSource {
   ): Promise<import('./types').PlayerImportResult>;
   updatePlayer(tryoutId: string, playerId: string, updates: Partial<Player>): Promise<Player>;
   deletePlayer(tryoutId: string, playerId: string): Promise<void>;
+  /**
+   * Delete several players from an assessment roster with bounded concurrency.
+   * Never throws for an individual player: the ones that could not be removed
+   * come back in `failed` so a partial run can say exactly what is left.
+   */
+  deletePlayers(
+    tryoutId: string,
+    playerIds: string[],
+  ): Promise<{ deleted: string[]; failed: { id: string; message: string }[] }>;
   uploadPlayerPhoto(athleteId: string, fileUri: string, fileType: string): Promise<string>;
 
   // Evaluations
@@ -392,6 +401,12 @@ export interface DataSource {
     onProgress?: (done: number) => void,
   ): Promise<import('./types').PlayerImportResult>;
   removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void>;
+  /**
+   * Remove many players from a team roster in a few chunked statements rather
+   * than one request each. Throws if any of them is still on the roster
+   * afterwards (RLS filtering a delete reports success while removing nothing).
+   */
+  removeTeamRosterPlayers(teamId: string, athleteIds: string[]): Promise<void>;
   /**
    * Invite a team's roster to the player/guardian portal — each player's own
    * email and their guardian's, both when present.

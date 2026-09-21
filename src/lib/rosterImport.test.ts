@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as XLSX from 'xlsx';
 
-import { buildImportRows, guessMapping, parseWorkbook, type ParsedSheet } from './rosterImport';
+import { buildImportRows, guessMapping, parseSheetOf, parseWorkbook, type ParsedSheet } from './rosterImport';
 
 function sheet(headers: string[], rows: string[][], headerLine = 1): ParsedSheet {
   return {
@@ -153,5 +153,63 @@ describe.each(['xlsx', 'csv'] as const)('%s round trip', (type) => {
     expect(rows[0]).toMatchObject({ line: 4, errors: [], form: { first: 'Maaz', last: 'Khan', jersey: '23', pos: 'FWD', yearOfBirth: '2011' } });
     expect(rows[1].form).toMatchObject({ first: 'Carlos', last: 'Lopez', yearOfBirth: '2012' });
     expect(rows[2].errors).toContain('Please enter a valid email address');
+  });
+});
+
+describe('sheets whose declared range is wrong or missing', () => {
+  const header = ['First Name', 'Last Name', 'Jersey', 'Position', 'Guardian Email'];
+  const names = Array.from({ length: 20 }, (_, i) => [`First${i + 1}`, `Last${i + 1}`, String(i + 1), 'F', `p${i + 1}@x.com`]);
+  const book = (aoa: unknown[][], mutate?: (ws: XLSX.WorkSheet) => void, sheetName = 'Roster') => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    mutate?.(ws);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    return wb;
+  };
+
+  it('reads every row when the declared range says A1:E2', () => {
+    const sheet = parseSheetOf(book([header, ...names], (ws) => { ws['!ref'] = 'A1:E2'; }));
+    expect(sheet.rows).toHaveLength(20);
+    expect(buildImportRows(sheet, guessMapping(sheet.headers)).filter((r) => r.errors.length === 0)).toHaveLength(20);
+  });
+
+  it('reads every row when the declared range is a single cell', () => {
+    expect(parseSheetOf(book([header, ...names], (ws) => { ws['!ref'] = 'A1'; })).rows).toHaveLength(20);
+  });
+
+  it('reads a sheet with no declared range at all', () => {
+    expect(parseSheetOf(book([header, ...names], (ws) => { delete ws['!ref']; })).rows).toHaveLength(20);
+  });
+
+  it('reads a sheet with a single Name column', () => {
+    const sheet = parseSheetOf(book([['Name'], ...names.map((n) => [`${n[0]} ${n[1]}`])]));
+    expect(sheet.headers).toEqual(['Name']);
+    expect(sheet.rows).toHaveLength(20);
+    const rows = buildImportRows(sheet, guessMapping(sheet.headers));
+    expect(rows[0].form).toMatchObject({ first: 'First1', last: 'Last1' });
+  });
+
+  it('keeps line numbers true when the table starts lower down the sheet', () => {
+    const sheet = parseSheetOf(book([[], [], header, names[0], names[1]]));
+    expect(sheet.headerLine).toBe(3);
+    expect(sheet.rows.map((r) => r.line)).toEqual([4, 5]);
+  });
+
+  it('opens on the first tab that has players when a cover sheet leads', () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Instructions']]), 'Cover');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...names]), 'Roster');
+    const sheet = parseWorkbook(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer);
+    expect(sheet.sheetName).toBe('Roster');
+    expect(sheet.rows).toHaveLength(20);
+    expect(sheet.sheetNames).toEqual(['Cover', 'Roster']);
+  });
+
+  it('still honours an explicitly chosen tab', () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...names]), 'Roster');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, names[0]]), 'Small');
+    const data = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+    expect(parseWorkbook(data, 'Small').rows).toHaveLength(1);
   });
 });

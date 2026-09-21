@@ -41,7 +41,7 @@ import {
   useUpdateTryoutMutation,
 } from '@/features/queries';
 import { useSessionStore } from '@/state/sessionStore';
-import { useUser } from '@/state/authStore';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { MapLocationHint } from '@/components/MapLink';
 import { isAtAssessmentLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -60,7 +60,6 @@ function NewAssessmentForm() {
   const setCurrentTryout = useSessionStore((s) => s.setCurrentTryout);
   const teamsQuery = useTeamsQuery();
   const assessmentCount = useAssessmentCountQuery();
-  const user = useUser();
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [rubricError, setRubricError] = useState<string | null>(null);
@@ -199,6 +198,9 @@ function NewAssessmentForm() {
   const sport = watch('sport');
   const eventType = watch('eventType');
   const teamId = watch('teamId');
+  // An evaluation for a team someone else owns is created on that team's plan,
+  // not the creator's own — the manager's account stays as it is.
+  const effectiveTier = useEffectivePlanTier(teamId);
 
   const onSubmit = handleSubmit(async (data) => {
     if (pendingRubrics.length === 0) {
@@ -211,8 +213,8 @@ function NewAssessmentForm() {
       // waits for it here rather than reading a not-yet-loaded 0 and waving the
       // user past their plan limit.
       const count = assessmentCount.data ?? (await assessmentCount.refetch()).data ?? 0;
-      if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
-        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'evaluations'));
+      if (isAtAssessmentLimit(effectiveTier, count)) {
+        setLimitMsg(buildLimitReachedMessage(effectiveTier, 'assessments', 'evaluations'));
         return;
       }
       let tryout;
@@ -360,8 +362,8 @@ function NewAssessmentForm() {
               <Controller
                 control={control}
                 name="endTime"
-                render={({ field }) => (
-                  <TimeField label="End Time" value={field.value} onChange={field.onChange} />
+                render={({ field, fieldState }) => (
+                  <TimeField label="End Time" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
                 )}
               />
             </div>

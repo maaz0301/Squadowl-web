@@ -29,7 +29,7 @@ import { getDataSource } from '@/data';
 import type { AddPlayerForm as AddPlayerFormValues } from '@/data/types';
 import {
   useAddPlayerMutation,
-  useDeletePlayerMutation,
+  useDeletePlayersMutation,
   useImportTryoutPlayersMutation,
   useClearTestDataMutation,
   useGenerateTestDataMutation,
@@ -44,6 +44,7 @@ import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { tryoutBulkWriteKey } from '@/lib/queryClient';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { useUser, usePermissions } from '@/state/authStore';
 import { useSessionStore, type RosterFilter } from '@/state/sessionStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -55,13 +56,15 @@ export default function RosterPage() {
   const router = useRouter();
   const { alert, confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
+  // A team someone else owns is run on that team's plan, not the viewer's own.
+  const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   const { canComplete, completing, complete } = useCompleteAssessing(tryoutQuery.data);
   const addPlayer = useAddPlayerMutation(id!);
   const inviteParticipant = useTryoutRosterInvitesMutation(id!);
   const importPlayers = useImportTryoutPlayersMutation(id!);
   const uploadPhoto = useUploadPlayerPhotoMutation(id!);
-  const deletePlayer = useDeletePlayerMutation(id!);
+  const deletePlayers = useDeletePlayersMutation(id!);
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
   const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
   const clearTest = useClearTestDataMutation(id!);
@@ -88,7 +91,7 @@ export default function RosterPage() {
   // batch looks exactly like an assessment nobody has added anyone to.
   const bulkWriting = useIsMutating({ mutationKey: tryoutBulkWriteKey(id ?? '') }) > 0;
 
-  const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
+  const isAssociation = canUseFeature(effectiveTier, 'enterprise');
 
   useEffect(() => {
     if (tryoutQuery.data && user && !activeAssessor) {
@@ -161,8 +164,8 @@ export default function RosterPage() {
   const tryout = tryoutQuery.data;
 
   const openAdd = () => {
-    if (isAtPlayerLimit(user?.planTier ?? 'free', tryout.roster.length)) {
-      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
+    if (isAtPlayerLimit(effectiveTier, tryout.roster.length)) {
+      setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
       return;
     }
     setShowAdd(true);
@@ -171,8 +174,8 @@ export default function RosterPage() {
   // Same plan gate as adding one by hand — a spreadsheet is a faster way onto
   // the roster, not a way around the cap.
   const openImport = () => {
-    if (isAtPlayerLimit(user?.planTier ?? 'free', tryout.roster.length)) {
-      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
+    if (isAtPlayerLimit(effectiveTier, tryout.roster.length)) {
+      setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
       return;
     }
     setShowImport(true);
@@ -319,7 +322,7 @@ export default function RosterPage() {
       {hasPlayers ? (
         <div className="mb-5 flex flex-col gap-4">
           <UsageNudgeBanner
-            tier={user?.planTier ?? 'free'}
+            tier={effectiveTier}
             metric="players"
             count={tryout.roster.length}
             label="players in this roster"
@@ -361,9 +364,20 @@ export default function RosterPage() {
                   if (!ok) return;
                   setDeletingSelected(true);
                   try {
-                    await Promise.all(ids.map((pid) => deletePlayer.mutateAsync(pid)));
-                    setSelectedIds(new Set());
-                    setSelectMode(false);
+                    const { deleted, failed } = await deletePlayers.mutateAsync(ids);
+                    if (failed.length === 0) {
+                      setSelectedIds(new Set());
+                      setSelectMode(false);
+                    } else {
+                      // Keep only the players that are still on the roster selected,
+                      // so a retry goes straight at what is left.
+                      const gone = new Set(deleted);
+                      setSelectedIds(new Set(ids.filter((pid) => !gone.has(pid))));
+                      await alert(
+                        'Some Players Were Not Deleted',
+                        `${deleted.length} of ${ids.length} deleted. ${failed.length} could not be removed: ${failed[0].message}`,
+                      );
+                    }
                   } catch (e) {
                     await alert('Delete Failed', e instanceof Error ? e.message : 'Could not delete the selected players.');
                   } finally {

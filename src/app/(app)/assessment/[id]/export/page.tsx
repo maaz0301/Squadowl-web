@@ -9,7 +9,7 @@ import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useTryoutQuery, useShareLinkMutation } from '@/features/queries';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
-import { useUser } from '@/state/authStore';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import type { ExportFormat } from '@/data/types';
 
 export default function ExportPage() {
@@ -17,8 +17,9 @@ export default function ExportPage() {
   const router = useRouter();
   const colors = useThemeColors();
   const { alert, toast } = useAlert();
-  const user = useUser();
   const tryoutQuery = useTryoutQuery(id);
+  // A team someone else owns is run on that team's plan, not the viewer's own.
+  const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   const shareMut = useShareLinkMutation(id!);
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -30,7 +31,7 @@ export default function ExportPage() {
 
   const tryout = tryoutQuery.data;
   if (!tryout.viewerIsOwner) return <CoachOnlyState what="export this evaluation" />;
-  const tier = user?.planTier ?? 'free';
+  const tier = effectiveTier;
   const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
   const allowedFormats = getPlanDefinition(tier).limits.exports;
 

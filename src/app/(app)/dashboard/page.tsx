@@ -202,7 +202,7 @@ export default function DashboardPage() {
   // me; once they Complete Assessing it leaves their list. Coaches and admins
   // are never filtered — completing is the assessor's own view only.
   const myEmail = user?.email?.toLowerCase();
-  const tryouts = (tryoutsQuery.data ?? []).filter(
+  const allTryouts = (tryoutsQuery.data ?? []).filter(
     (t) =>
       role !== 'assessor' ||
       !t.assessors.some(
@@ -212,6 +212,14 @@ export default function DashboardPage() {
       ),
   );
   const teams = teamsQuery.data ?? [];
+  // The Evaluations list is for standalone evaluations. One created for a team
+  // lives on that team's own Evaluations tab, so showing it here as well made it
+  // look like it belonged to both. Only hidden when its team is one this user
+  // can actually open — an evaluation pointing at a team that isn't in their list
+  // would otherwise be unreachable from anywhere. The plan-limit checks below
+  // still count every evaluation the account owns, team-linked included.
+  const visibleTeamIds = new Set(teams.map((t) => t.id));
+  const tryouts = allTryouts.filter((t) => !t.teamId || !visibleTeamIds.has(t.teamId));
   const planTier = user?.planTier ?? 'free';
 
   // Hover / keyboard focus / the touch before the tap: a few hundred ms of
@@ -223,7 +231,7 @@ export default function DashboardPage() {
   };
 
   const newAssessment = () => {
-    if (isAtAssessmentLimit(planTier, tryouts.length)) {
+    if (isAtAssessmentLimit(planTier, allTryouts.length)) {
       setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'evaluations'));
       return;
     }
@@ -249,7 +257,7 @@ export default function DashboardPage() {
       />
 
       {loadingTryouts ? null : (
-        <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="evaluations" />
+        <UsageNudgeBanner tier={planTier} metric="assessments" count={allTryouts.length} label="evaluations" />
       )}
 
       {canUseFeature(planTier, 'enterprise') ? (
@@ -502,6 +510,17 @@ export default function DashboardPage() {
           <p className="mb-1 text-sm" style={{ color: colors.inkMuted }}>
             What would you like to do with &quot;{actionTryout?.name}&quot;?
           </p>
+          <Button
+            label="Edit Details"
+            variant="secondary"
+            onClick={() => {
+              const target = actionTryout;
+              setActionTryout(null);
+              // Name, date, times and location are edited on the evaluation's
+              // Settings page.
+              if (target) router.push(`/assessment/${target.id}/settings`);
+            }}
+          />
           <Button
             label="Archive Evaluation"
             variant="secondary"

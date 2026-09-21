@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { END_BEFORE_START_MESSAGE, isEndAfterStart } from './timeRange';
 
 import { LETTER_KINDS } from './letters';
 
@@ -310,6 +311,7 @@ export interface TryoutSummary {
   eventType: EventType;
   tryoutDate?: string;
   startTime?: string;
+  endTime?: string;
   rink?: string;
   sport: Sport;
   sportOther?: string;
@@ -569,6 +571,9 @@ export const CreateAssessmentFormSchema = z.object({
   teamId: z.string().optional(),
   headAssessor: z.string().optional(),
   headCoach: z.string().optional(),
+}).refine((data) => isEndAfterStart(data.startTime, data.endTime), {
+  message: END_BEFORE_START_MESSAGE,
+  path: ['endTime'],
 });
 
 export type CreateAssessmentForm = z.infer<typeof CreateAssessmentFormSchema>;
@@ -844,6 +849,9 @@ export const CreateEventFormSchema = z.object({
 }).refine((data) => !data.endDate || data.endDate >= data.date, {
   message: 'End date must be on or after the start date',
   path: ['endDate'],
+}).refine((data) => isEndAfterStart(data.startTime, data.endTime), {
+  message: END_BEFORE_START_MESSAGE,
+  path: ['endTime'],
 });
 
 export type CreateEventForm = z.infer<typeof CreateEventFormSchema>;

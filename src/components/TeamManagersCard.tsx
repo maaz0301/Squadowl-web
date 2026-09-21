@@ -17,8 +17,8 @@ import { useUser } from '@/state/authStore';
 
 /**
  * CLUB mode delegation: hand this one team to another manager by email. They
- * get the team, its roster, schedule, and chat — but not its evaluations,
- * and nothing else on the club's account. The club's own staff keep full
+ * get the team, its roster, schedule, chat, and its evaluations (run on the
+ * club's plan) — and nothing else on the club's account. The club's own staff keep full
  * access either way, which is why this list never affects the inviter's own
  * rights.
  *
@@ -112,8 +112,8 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
           </h3>
           <p className="mt-1 text-xs" style={{ color: colors.inkMuted }}>
             Give another manager access to run {teamName}. They&apos;ll see this team&apos;s roster,
-            schedule, and chat — but not evaluations, and nothing else on your account. You keep full
-            access.
+            schedule, and chat, and can create and run its evaluations — but nothing else on your account.
+            You keep full access.
           </p>
         </div>
 

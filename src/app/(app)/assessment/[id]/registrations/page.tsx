@@ -39,7 +39,7 @@ import {
   useTryoutSummariesQuery,
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
-import { useUser } from '@/state/authStore';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { APP_CONFIG } from '@/config/app';
 
@@ -52,6 +52,8 @@ export default function RegistrationsPage() {
   const router = useRouter();
   const { alert, toast } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
+  // A team someone else owns is run on that team's plan, not the viewer's own.
+  const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   const regsQuery = useRegistrationsQuery(id!);
   const ensureCloud = useEnsureCloudSessionMutation();
   // Only the destination's roster size is read off this — summaries carry the
@@ -62,7 +64,6 @@ export default function RegistrationsPage() {
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
   const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
   const clearTest = useClearTestDataMutation(id!);
-  const user = useUser();
   const [showQr, setShowQr] = useState(false);
   const [showSimulate, setShowSimulate] = useState(false);
   const [showTestGen, setShowTestGen] = useState(false);
@@ -76,7 +77,7 @@ export default function RegistrationsPage() {
   // Registration whose submitted profile is open. Non-null == profile open.
   const [viewingId, setViewingId] = useState<string | null>(null);
 
-  const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
+  const isAssociation = canUseFeature(effectiveTier, 'enterprise');
 
   const cloudId = tryoutQuery.data?.cloud?.id;
   useEffect(() => {
@@ -129,6 +130,19 @@ export default function RegistrationsPage() {
     });
   };
 
+  // What "Add N to Roster" actually places: the ticked registrations that are
+  // still pending. A player dismissed (or placed elsewhere) after being ticked
+  // stays in `selected`, and would otherwise be counted and sent anyway.
+  const pendingIds = (regsQuery.data ?? []).filter((r) => r.status === 'pending').map((r) => r.id);
+  const pendingIdSet = new Set(pendingIds);
+  const selectedIds = [...selected].filter((regId) => pendingIdSet.has(regId));
+  const allPendingSelected = pendingIds.length > 0 && pendingIds.every((regId) => selected.has(regId));
+  // The "Add to Roster" on a card means the whole ticked group when that card is
+  // one of them — clicking it on one of several ticked players used to place only
+  // that one, which is how a multi-select "sent one player".
+  const addFromCard = (regId: string) =>
+    setPlacing(selected.has(regId) && selectedIds.length > 1 ? selectedIds : [regId]);
+
   const runPlacement = async (destination: RosterDestination) => {
     const ids = placing ?? [];
     if (ids.length === 0) return;
@@ -139,8 +153,8 @@ export default function RegistrationsPage() {
     if (destination.kind === 'assessment') {
       const target = (allTryouts.data ?? []).find((t) => t.id === destination.id);
       const existing = target?.playerCount ?? 0;
-      if (isAtPlayerLimit(user?.planTier ?? 'free', existing + ids.length - 1)) {
-        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
+      if (isAtPlayerLimit(effectiveTier, existing + ids.length - 1)) {
+        setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
         return;
       }
     }
@@ -253,19 +267,17 @@ export default function RegistrationsPage() {
         <span className="ml-auto flex flex-wrap gap-2">
           {tab === 'pending' && filtered.length > 0 ? (
             <Button
-              label={selected.size === filtered.length ? 'Deselect All' : 'Select All'}
+              label={allPendingSelected ? 'Deselect All' : 'Select All'}
               size="sm"
               variant="secondary"
-              onClick={() =>
-                setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map((r) => r.id)))
-              }
+              onClick={() => setSelected(allPendingSelected ? new Set() : new Set(pendingIds))}
             />
           ) : null}
-          {tab === 'pending' && selected.size > 0 ? (
+          {tab === 'pending' && selectedIds.length > 0 ? (
             <Button
-              label={`Add ${selected.size} to Roster`}
+              label={`Add ${selectedIds.length} to Roster`}
               size="sm"
-              onClick={() => setPlacing([...selected])}
+              onClick={() => setPlacing(selectedIds)}
             />
           ) : null}
           <Button label="Export CSV" variant="ghost" size="sm" onClick={exportCsv} />
@@ -346,10 +358,14 @@ export default function RegistrationsPage() {
                     onClick={() => toggleSelect(item.id)}
                   />
                   <Button
-                    label="Add to Roster"
+                    label={
+                      selected.has(item.id) && selectedIds.length > 1
+                        ? `Add ${selectedIds.length} to Roster`
+                        : 'Add to Roster'
+                    }
                     size="sm"
                     disabled={dismissReg.isPending && dismissReg.variables === item.id}
-                    onClick={() => setPlacing([item.id])}
+                    onClick={() => addFromCard(item.id)}
                   />
                   <Button
                     label="Dismiss"
@@ -364,6 +380,22 @@ export default function RegistrationsPage() {
           ))}
         </div>
       )}
+
+      {/* Sticks to the bottom of the viewport, so the group action stays on
+          screen however far down the list the coach has scrolled while ticking
+          players. */}
+      {tab === 'pending' && selectedIds.length > 0 ? (
+        <div
+          className="sticky bottom-0 z-10 mt-4 flex items-center gap-2 rounded-xl border px-4 py-3"
+          style={{ borderColor: colors.border, backgroundColor: colors.card }}
+        >
+          <span className="flex-1 text-sm font-bold" style={{ color: colors.ink }}>
+            {selectedIds.length} selected
+          </span>
+          <Button label="Clear" variant="ghost" size="sm" onClick={() => setSelected(new Set())} />
+          <Button label={`Add ${selectedIds.length} to Roster`} size="sm" onClick={() => setPlacing(selectedIds)} />
+        </div>
+      ) : null}
 
       <Modal visible={showQr} title="Registration QR" size="sm" onClose={() => setShowQr(false)}>
         <div className="flex flex-col items-center gap-4 py-4">
