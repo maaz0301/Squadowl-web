@@ -93,7 +93,13 @@ export function TemplateEditor({
                     onClick={() =>
                       onChange({
                         ...draft,
-                        name: draft.name || t.name,
+                        // Keep a name the coach typed, but not one a previous standard
+                        // chip filled in — otherwise switching Offer -> Decision left
+                        // a "Offer Letter" name on decision wording and type.
+                        name:
+                          !draft.name.trim() || BUILT_IN_LETTER_TEMPLATES.some((b) => b.name === draft.name)
+                            ? t.name
+                            : draft.name,
                         kind: t.kind,
                         subject: t.subject,
                         body: t.body,

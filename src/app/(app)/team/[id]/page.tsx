@@ -80,6 +80,7 @@ import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
+import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { getDataSource } from '@/data';
 
 function feeCentsFromInput(feeInput: string): number {
@@ -206,7 +207,10 @@ export default function TeamDetailPage() {
   const addManualPlayer = useAddManualTeamPlayerMutation(id);
   const uploadTeamPlayerPhoto = useUploadTeamPlayerPhotoMutation(id);
   const removeRosterPlayer = useRemoveTeamRosterPlayerMutation(id);
-  const removeRosterPlayers = useRemoveTeamRosterPlayersMutation(id);
+  const [removeProgress, setRemoveProgress] = useState<{ done: number; total: number } | null>(null);
+  const removeRosterPlayers = useRemoveTeamRosterPlayersMutation(id, (done, total) =>
+    setRemoveProgress({ done, total }),
+  );
   // Players-tab select mode: pick several (or everyone) and remove them together.
   const [rosterSelectMode, setRosterSelectMode] = useState(false);
   const [selectedRosterIds, setSelectedRosterIds] = useState<Set<string>>(new Set());
@@ -639,11 +643,14 @@ export default function TeamDetailPage() {
       destructive: true,
     });
     if (!ok) return;
+    setRemoveProgress({ done: 0, total: ids.length });
     try {
       await removeRosterPlayers.mutateAsync(ids);
       exitRosterSelect();
     } catch (e) {
       await alert('Remove Failed', e instanceof Error ? e.message : 'Could not remove the selected players.');
+    } finally {
+      setRemoveProgress(null);
     }
   };
 
@@ -786,7 +793,7 @@ export default function TeamDetailPage() {
       const [y, m, d] = data.date.split('-').map(Number);
       const [hour, min] = (data.startTime || '00:00').split(':').map(Number);
       if (new Date(y, m - 1, d, hour, min) < new Date()) {
-        const msg = 'Event must be scheduled from today onwards.';
+        const msg = 'The start time you picked has already passed. Choose a date and start time that are later than now.';
         eventForm.setError('date', { type: 'manual', message: msg });
         await alert('Validation Error', msg);
         return;
@@ -1718,6 +1725,8 @@ export default function TeamDetailPage() {
           </>
         )}
       </Modal>
+
+      <DeleteProgressModal visible={removeRosterPlayers.isPending} progress={removeProgress} />
 
       <ImportPlayersModal
         visible={showImportPlayers}

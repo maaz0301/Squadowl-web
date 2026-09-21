@@ -477,6 +477,10 @@ const TEAM_ROSTER_REMOVE_CONCURRENCY = 4;
  * used to do.
  */
 const PLAYER_DELETE_CONCURRENCY = 4;
+/** Participants soft-deleted per request in a bulk delete. */
+const PLAYER_DELETE_CHUNK = 25;
+/** Batches in flight at once. */
+const PLAYER_DELETE_BATCH_CONCURRENCY = 2;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
 const GUARDIAN_EMAIL_CONCURRENCY = 20;
 const GUARDIAN_RESOLVE_BATCH = 50;
@@ -2586,7 +2590,11 @@ export class SupabaseDataSource implements DataSource {
     );
   }
 
-  async removeTeamRosterPlayers(teamId: string, athleteIds: string[]): Promise<void> {
+  async removeTeamRosterPlayers(
+    teamId: string,
+    athleteIds: string[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
     const unique = [...new Set(athleteIds.filter(Boolean))];
     if (unique.length === 0) return;
     const { supabase } = await this.ctx();
@@ -2596,11 +2604,15 @@ export class SupabaseDataSource implements DataSource {
       chunks.push(unique.slice(i, i + TEAM_ROSTER_REMOVE_CHUNK));
     }
     let deleted = 0;
+    let processed = 0;
+    onProgress?.(0, unique.length);
     await mapPool(chunks, TEAM_ROSTER_REMOVE_CONCURRENCY, async (chunk) => {
       const rows = unwrap(
         await supabase.from('team_roster').delete().eq('team_id', teamId).in('athlete_id', chunk).select('id'),
       ) as Row[] | null;
       deleted += rows?.length ?? 0;
+      processed += chunk.length;
+      onProgress?.(processed, unique.length);
     });
     if (deleted >= unique.length) return;
 
@@ -4041,16 +4053,48 @@ export class SupabaseDataSource implements DataSource {
   async deletePlayers(
     tryoutId: string,
     playerIds: string[],
+    onProgress?: (done: number, total: number) => void,
   ): Promise<{ deleted: string[]; failed: { id: string; message: string }[] }> {
+    const ids = [...new Set(playerIds)];
     const deleted: string[] = [];
     const failed: { id: string; message: string }[] = [];
-    await mapPool([...new Set(playerIds)], PLAYER_DELETE_CONCURRENCY, async (playerId) => {
+    if (ids.length === 0) return { deleted, failed };
+    const { supabase } = await this.ctx();
+
+    // One soft-delete request per batch rather than one per player, which took
+    // minutes for a full roster. Progress is reported as each batch lands, so the
+    // count is players actually removed rather than a guess.
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += PLAYER_DELETE_CHUNK) chunks.push(ids.slice(i, i + PLAYER_DELETE_CHUNK));
+    onProgress?.(0, ids.length);
+    await mapPool(chunks, PLAYER_DELETE_BATCH_CONCURRENCY, async (chunk) => {
       try {
-        await this.deletePlayer(tryoutId, playerId);
-        deleted.push(playerId);
-      } catch (e) {
-        failed.push({ id: playerId, message: e instanceof Error ? e.message : 'Could not delete this player.' });
+        const rows = unwrap(
+          await supabase
+            .from('tryout_participants')
+            .update({ removed_at: new Date().toISOString() })
+            .in('id', chunk)
+            .select('id'),
+        ) as Row[] | null;
+        const landed = new Set((rows ?? []).map((r) => r.id as string));
+        for (const id of chunk) {
+          // RLS reports a refused UPDATE as zero rows rather than an error.
+          if (landed.has(id)) deleted.push(id);
+          else failed.push({ id, message: 'Could not delete this player.' });
+        }
+      } catch {
+        // The batch failed as a whole — fall back to one at a time so each
+        // player still gets its own outcome (and error message).
+        await mapPool(chunk, PLAYER_DELETE_CONCURRENCY, async (playerId) => {
+          try {
+            await this.deletePlayer(tryoutId, playerId);
+            deleted.push(playerId);
+          } catch (e) {
+            failed.push({ id: playerId, message: e instanceof Error ? e.message : 'Could not delete this player.' });
+          }
+        });
       }
+      onProgress?.(deleted.length + failed.length, ids.length);
     });
     return { deleted, failed };
   }
@@ -6361,6 +6405,11 @@ export class SupabaseDataSource implements DataSource {
       await supabase.from('season_events').update(patch).eq('id', eventId).select().single(),
     ) as Row;
 
+    // Notifying the roster is deliberately not awaited. It needs the RSVP-token
+    // RPC and a recipient lookup across the whole roster, and awaiting it kept
+    // the edit dialog open for that long — seconds, growing with the roster —
+    // for a save that had already landed. Errors are logged inside.
+    void (async () => {
     try {
       const playerEmails = new Set<string>();
       const guardianEmails = new Set<string>();
@@ -6453,6 +6502,7 @@ export class SupabaseDataSource implements DataSource {
     } catch (e) {
       console.error('Failed to send update emails', e);
     }
+    })();
 
     return this.rowToSeasonEvent(row, {});
   }

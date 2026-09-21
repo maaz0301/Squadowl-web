@@ -292,10 +292,10 @@ export function useRemoveTeamRosterPlayerMutation(teamId: string) {
  * "select all, delete". Same optimistic drop as the single removal, applied to
  * every id at once so the list doesn't shed rows one refetch at a time.
  */
-export function useRemoveTeamRosterPlayersMutation(teamId: string) {
+export function useRemoveTeamRosterPlayersMutation(teamId: string, onProgress?: (done: number, total: number) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (athleteIds: string[]) => getDataSource().removeTeamRosterPlayers(teamId, athleteIds),
+    mutationFn: (athleteIds: string[]) => getDataSource().removeTeamRosterPlayers(teamId, athleteIds, onProgress),
     onSuccess: (_data, athleteIds) => {
       const ids = new Set(athleteIds);
       qc.setQueriesData<TeamRosterCache>({ queryKey: teamRosterKey(teamId) }, (old) =>
@@ -796,10 +796,10 @@ export function useDeletePlayerMutation(tryoutId: string) {
  * whole roster that is hundreds of refetches, so this drops the rows from the
  * cache once and invalidates once.
  */
-export function useDeletePlayersMutation(tryoutId: string) {
+export function useDeletePlayersMutation(tryoutId: string, onProgress?: (done: number, total: number) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (playerIds: string[]) => getDataSource().deletePlayers(tryoutId, playerIds),
+    mutationFn: (playerIds: string[]) => getDataSource().deletePlayers(tryoutId, playerIds, onProgress),
     onSettled: (result) => {
       const gone = new Set(result?.deleted ?? []);
       if (gone.size > 0) {

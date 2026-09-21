@@ -311,73 +311,99 @@ export default function RegistrationsPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {filtered.map((item) => (
-            <Card key={item.id} className="flex flex-col gap-2">
-              {/* Only the identity block opens the profile — the action buttons
-                  below stay independently clickable. */}
-              <button
-                type="button"
-                className="flex flex-col gap-2 text-left"
-                onClick={() => setViewingId(item.id)}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-lg font-bold" style={{ color: colors.ink }}>
-                    {item.firstName} {item.lastName}
-                  </span>
-                  <span className="flex flex-col items-end gap-1">
-                    <Badge
-                      label={item.status}
-                      variant={item.status === 'pending' ? 'warning' : item.status === 'added' ? 'success' : 'info'}
-                    />
-                    {item.paymentStatus ? (
-                      <Badge
-                        label={item.paymentStatus}
-                        variant={item.paymentStatus === 'paid' ? 'success' : 'warning'}
-                      />
+          {filtered.map((item) => {
+            const pending = item.status === 'pending';
+            const isSelected = pending && selected.has(item.id);
+            return (
+              <Card key={item.id} className="flex flex-col gap-3" accent={isSelected}>
+                <div className="flex items-start gap-3">
+                  {/* The tick is its own big click target, so picking a player never
+                      opens the profile and opening the profile never picks. */}
+                  {pending ? (
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={isSelected}
+                      aria-label={`Select ${item.firstName} ${item.lastName}`}
+                      onClick={() => toggleSelect(item.id)}
+                      className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 text-lg font-extrabold text-white"
+                      style={{
+                        borderColor: isSelected ? colors.primary : colors.border,
+                        backgroundColor: isSelected ? colors.primary : 'transparent',
+                      }}
+                    >
+                      {isSelected ? '✓' : null}
+                    </button>
+                  ) : null}
+
+                  {/* Only the identity block opens the profile — the action buttons
+                      below stay independently clickable. */}
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 flex-col gap-1 text-left"
+                    onClick={() => setViewingId(item.id)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xl font-bold" style={{ color: colors.ink }}>
+                        {item.firstName} {item.lastName}
+                      </span>
+                      <span className="flex flex-col items-end gap-1">
+                        <Badge
+                          label={item.status}
+                          variant={pending ? 'warning' : item.status === 'added' ? 'success' : 'info'}
+                        />
+                        {item.paymentStatus ? (
+                          <Badge
+                            label={item.paymentStatus}
+                            variant={item.paymentStatus === 'paid' ? 'success' : 'warning'}
+                          />
+                        ) : null}
+                      </span>
+                    </div>
+                    <span className="truncate text-base" style={{ color: colors.inkMuted }}>
+                      {item.guardianName}
+                    </span>
+                    <span className="truncate text-sm" style={{ color: colors.inkFaint }}>
+                      {item.guardianEmail}
+                    </span>
+                    {item.yearOfBirth || item.positionTryingOutFor ? (
+                      <span className="text-sm" style={{ color: colors.inkFaint }}>
+                        {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}
+                      </span>
                     ) : null}
-                  </span>
+                    <span className="text-xs" style={{ color: colors.inkFaint }}>
+                      Click to view profile
+                    </span>
+                  </button>
                 </div>
-                <span className="text-sm" style={{ color: colors.inkMuted }}>
-                  {item.guardianName} · {item.guardianEmail}
-                </span>
-                {item.yearOfBirth || item.positionTryingOutFor ? (
-                  <span className="text-sm" style={{ color: colors.inkFaint }}>
-                    {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}
-                  </span>
+
+                {pending ? (
+                  <div className="flex items-center gap-2">
+                    {/* With a group ticked the bar below does the adding; repeating
+                        "Add 9 to Roster" on every card only made them look alike. */}
+                    {selectedIds.length === 0 ? (
+                      <div className="flex-1">
+                        <Button
+                          label="Add to Roster"
+                          className="w-full"
+                          disabled={dismissReg.isPending && dismissReg.variables === item.id}
+                          onClick={() => addFromCard(item.id)}
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex-1" />
+                    )}
+                    <Button
+                      label="Dismiss"
+                      variant="ghost"
+                      loading={dismissReg.isPending && dismissReg.variables === item.id}
+                      onClick={() => dismissReg.mutate(item.id)}
+                    />
+                  </div>
                 ) : null}
-                <span className="text-xs" style={{ color: colors.inkFaint }}>
-                  Click to view profile
-                </span>
-              </button>
-              {item.status === 'pending' ? (
-                <div className="mt-1 flex flex-wrap gap-2">
-                  <Button
-                    label={selected.has(item.id) ? 'Selected' : 'Select'}
-                    size="sm"
-                    variant={selected.has(item.id) ? 'primary' : 'secondary'}
-                    onClick={() => toggleSelect(item.id)}
-                  />
-                  <Button
-                    label={
-                      selected.has(item.id) && selectedIds.length > 1
-                        ? `Add ${selectedIds.length} to Roster`
-                        : 'Add to Roster'
-                    }
-                    size="sm"
-                    disabled={dismissReg.isPending && dismissReg.variables === item.id}
-                    onClick={() => addFromCard(item.id)}
-                  />
-                  <Button
-                    label="Dismiss"
-                    size="sm"
-                    variant="ghost"
-                    loading={dismissReg.isPending && dismissReg.variables === item.id}
-                    onClick={() => dismissReg.mutate(item.id)}
-                  />
-                </div>
-              ) : null}
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -386,14 +412,19 @@ export default function RegistrationsPage() {
           players. */}
       {tab === 'pending' && selectedIds.length > 0 ? (
         <div
-          className="sticky bottom-0 z-10 mt-4 flex items-center gap-2 rounded-xl border px-4 py-3"
+          className="sticky bottom-0 z-10 mt-4 flex items-center gap-3 rounded-xl border px-4 py-4"
           style={{ borderColor: colors.border, backgroundColor: colors.card }}
         >
-          <span className="flex-1 text-sm font-bold" style={{ color: colors.ink }}>
-            {selectedIds.length} selected
-          </span>
-          <Button label="Clear" variant="ghost" size="sm" onClick={() => setSelected(new Set())} />
-          <Button label={`Add ${selectedIds.length} to Roster`} size="sm" onClick={() => setPlacing(selectedIds)} />
+          <div className="flex-1">
+            <p className="font-display text-xl font-bold" style={{ color: colors.ink }}>
+              {selectedIds.length} selected
+            </p>
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              of {pendingIds.length} pending
+            </p>
+          </div>
+          <Button label="Clear" variant="ghost" onClick={() => setSelected(new Set())} />
+          <Button label={`Add ${selectedIds.length}`} onClick={() => setPlacing(selectedIds)} />
         </div>
       ) : null}
 

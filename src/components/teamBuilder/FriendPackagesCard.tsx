@@ -1,9 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Badge, Button, Card, Checkbox, Input, Modal, ModalFooter, useAlert } from '@/components/ui';
 import { useSetFriendPackagesMutation } from '@/features/queries';
+import { queryKeys } from '@/lib/queryClient';
 import { generateId, playerDisplayName } from '@/data/rubrics';
 import type { FriendPackage } from '@/data/teamBuilder';
 import type { Player, Tryout } from '@/data/types';
@@ -20,6 +22,58 @@ const MAX_PACKAGES = 100;
  * several of them stacked in a narrow sidebar.
  */
 const PACKAGE_ACCENTS = ['#38bdf8', '#22c55e', '#a78bfa', '#f472b6', '#facc15', '#2dd4bf'] as const;
+
+/**
+ * One picker row. Memoised so ticking a player re-renders that row alone — the
+ * roster can run to a thousand players, and rebuilding every row on each click
+ * was a large part of the modal feeling stuck.
+ */
+const PickerRow = memo(function PickerRow({
+  player,
+  selected,
+  claimedBy,
+  onToggle,
+}: {
+  player: Player;
+  selected: boolean;
+  claimedBy?: string;
+  onToggle: (playerId: string) => void;
+}) {
+  const colors = useThemeColors();
+  return (
+    <div
+      className="flex items-center gap-2 border-b px-3 transition-colors last:border-b-0"
+      style={{
+        borderColor: colors.border,
+        // Picked rows are tinted rather than only ticked: with a
+        // long roster the checkbox column alone is easy to lose
+        // track of while scrolling.
+        backgroundColor: selected ? 'rgba(255,107,43,0.10)' : 'transparent',
+      }}
+    >
+      <Checkbox
+        checked={selected}
+        onChange={() => onToggle(player.id)}
+        disabled={!!claimedBy}
+        label={
+          <span className="flex min-w-0 items-center gap-2">
+            <Avatar first={player.first} last={player.last} pos={player.pos} uri={player.avatarUrl} size={24} />
+            <span className="flex min-w-0 flex-col leading-tight">
+              <span className="truncate text-[13px]" style={{ color: colors.ink }}>
+                {playerDisplayName(player)}
+              </span>
+              {claimedBy ? (
+                <span className="truncate text-[11px]" style={{ color: colors.inkFaint }}>
+                  Already in &ldquo;{claimedBy}&rdquo;
+                </span>
+              ) : null}
+            </span>
+          </span>
+        }
+      />
+    </div>
+  );
+});
 
 interface Props {
   tryout: Tryout;
@@ -41,6 +95,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
   const colors = useThemeColors();
   const { confirm, alert } = useAlert();
   const setFriendPackages = useSetFriendPackagesMutation();
+  const qc = useQueryClient();
 
   const [editing, setEditing] = useState<FriendPackage | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -74,6 +129,8 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
     [tryout.roster],
   );
 
+  const selectedIds = useMemo(() => new Set(editing?.playerIds ?? []), [editing?.playerIds]);
+
   const visibleRoster = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return sortedRoster;
@@ -100,7 +157,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
     setEditing({ ...pkg, playerIds: [...pkg.playerIds] });
   };
 
-  const toggleMember = (playerId: string) => {
+  const toggleMember = useCallback((playerId: string) => {
     setEditing((cur) =>
       cur
         ? {
@@ -111,7 +168,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
           }
         : cur,
     );
-  };
+  }, []);
 
   const handleSave = async () => {
     if (!editing) return;
@@ -131,10 +188,21 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
     const next = isNew
       ? [...packages, saved]
       : packages.map((p) => (p.id === saved.id ? saved : p));
+    // Close and show the package straight away instead of holding the dialog open
+    // behind a spinner for the round trip (it reads and rewrites the tryout's
+    // stored data). If the save is refused the cache goes back to what it was and
+    // the coach is told, with the dialog reopened so nothing they picked is lost.
+    const key = queryKeys.tryout(tryout.id);
+    const previous = qc.getQueryData<Tryout>(key);
+    qc.setQueryData<Tryout | undefined>(key, (cur) => (cur ? { ...cur, friendPackages: next } : cur));
+    const draft = editing;
+    setEditing(null);
     try {
       await save(next);
-      setEditing(null);
     } catch (e) {
+      qc.setQueryData(key, previous);
+      setIsNew(isNew);
+      setEditing(draft);
       await alert('Could not save', e instanceof Error ? e.message : 'The package was not saved.');
     }
   };
@@ -287,7 +355,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
         footer={
           <ModalFooter>
             <Button label="Cancel" variant="ghost" onClick={() => setEditing(null)} />
-            <Button label="Save Package" onClick={handleSave} loading={setFriendPackages.isPending} />
+            <Button label="Save Package" onClick={handleSave} />
           </ModalFooter>
         }
       >
@@ -325,44 +393,15 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
                   No players match &ldquo;{search}&rdquo;.
                 </p>
               ) : (
-                visibleRoster.map((p) => {
-                  const claimedBy = claimedElsewhere.get(p.id);
-                  const selected = editing.playerIds.includes(p.id);
-                  return (
-                    <div
-                      key={p.id}
-                      className="flex items-center gap-2 border-b px-3 transition-colors last:border-b-0"
-                      style={{
-                        borderColor: colors.border,
-                        // Picked rows are tinted rather than only ticked: with a
-                        // long roster the checkbox column alone is easy to lose
-                        // track of while scrolling.
-                        backgroundColor: selected ? 'rgba(255,107,43,0.10)' : 'transparent',
-                      }}
-                    >
-                      <Checkbox
-                        checked={selected}
-                        onChange={() => toggleMember(p.id)}
-                        disabled={!!claimedBy}
-                        label={
-                          <span className="flex min-w-0 items-center gap-2">
-                            <Avatar first={p.first} last={p.last} pos={p.pos} uri={p.avatarUrl} size={24} />
-                            <span className="flex min-w-0 flex-col leading-tight">
-                              <span className="truncate text-[13px]" style={{ color: colors.ink }}>
-                                {playerDisplayName(p)}
-                              </span>
-                              {claimedBy ? (
-                                <span className="truncate text-[11px]" style={{ color: colors.inkFaint }}>
-                                  Already in &ldquo;{claimedBy}&rdquo;
-                                </span>
-                              ) : null}
-                            </span>
-                          </span>
-                        }
-                      />
-                    </div>
-                  );
-                })
+                visibleRoster.map((p) => (
+                  <PickerRow
+                    key={p.id}
+                    player={p}
+                    selected={selectedIds.has(p.id)}
+                    claimedBy={claimedElsewhere.get(p.id)}
+                    onToggle={toggleMember}
+                  />
+                ))
               )}
             </div>
           </div>

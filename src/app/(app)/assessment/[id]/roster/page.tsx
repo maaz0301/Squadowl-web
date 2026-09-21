@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useIsMutating } from '@tanstack/react-query';
 
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
+import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
@@ -64,12 +65,19 @@ export default function RosterPage() {
   const inviteParticipant = useTryoutRosterInvitesMutation(id!);
   const importPlayers = useImportTryoutPlayersMutation(id!);
   const uploadPhoto = useUploadPlayerPhotoMutation(id!);
-  const deletePlayers = useDeletePlayersMutation(id!);
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+  const deletePlayers = useDeletePlayersMutation(id!, (done, total) => setDeleteProgress({ done, total }));
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
   const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
   const clearTest = useClearTestDataMutation(id!);
   const rosterFilter = useSessionStore((s) => s.rosterFilter);
   const setRosterFilter = useSessionStore((s) => s.setRosterFilter);
+  // The filter lives in the persisted session store, so without this a
+  // "Scored" pick on one evaluation greets the next (or a fresh, all-unscored
+  // one) with "No players match".
+  useEffect(() => {
+    setRosterFilter('all');
+  }, [id, setRosterFilter]);
   const activeAssessor = useSessionStore((s) => s.activeAssessor);
   const setActiveAssessor = useSessionStore((s) => s.setActiveAssessor);
   const setCurrentPlayer = useSessionStore((s) => s.setCurrentPlayer);
@@ -362,6 +370,7 @@ export default function RosterPage() {
                     destructive: true,
                   });
                   if (!ok) return;
+                  setDeleteProgress({ done: 0, total: ids.length });
                   setDeletingSelected(true);
                   try {
                     const { deleted, failed } = await deletePlayers.mutateAsync(ids);
@@ -382,6 +391,7 @@ export default function RosterPage() {
                     await alert('Delete Failed', e instanceof Error ? e.message : 'Could not delete the selected players.');
                   } finally {
                     setDeletingSelected(false);
+                    setDeleteProgress(null);
                   }
                 }}
               />
@@ -624,6 +634,8 @@ export default function RosterPage() {
           </button>
         ))}
       </Modal>
+
+      <DeleteProgressModal visible={deletingSelected} progress={deleteProgress} />
 
       <DummyDataModal
         variant="assessment"

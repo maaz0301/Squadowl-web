@@ -29,7 +29,6 @@ import {
 } from '@/features/queries';
 import { getDataSource } from '@/data';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
-import { getDefaultRubrics } from '@/data/rubrics';
 import { END_BEFORE_START_MESSAGE, isEndAfterStart } from '@/data/timeRange';
 import type { Assessor } from '@/data/types';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -88,7 +87,8 @@ export default function SettingsPage() {
 
   const tryout = tryoutQuery.data;
   if (!tryout.viewerIsOwner) return <CoachOnlyState what="change or delete this evaluation" />;
-  const rubrics = getDefaultRubrics(tryout.sport);
+  // Templates were removed — every rubric is custom, so this is the whole set.
+  const rubrics = tryout.settings.customRubrics ?? [];
 
   const openEdit = () => {
     setName(tryout.name);
@@ -319,7 +319,7 @@ export default function SettingsPage() {
       <Card className="flex flex-col gap-3">
         <SectionLabel>Rubrics</SectionLabel>
         <span className="text-sm" style={{ color: colors.inkMuted }}>
-          {rubrics.skater.length} skater + {rubrics.goalie.length} goalie reference categories
+          {rubrics.length} {rubrics.length === 1 ? 'rubric' : 'rubrics'}
         </span>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -440,36 +440,23 @@ export default function SettingsPage() {
       </Modal>
 
       <Modal visible={showRubrics} title="Rubric Reference" onClose={() => setShowRubrics(false)}>
-        <p className="mb-2 text-sm font-bold" style={{ color: colors.primary }}>
-          Skater Categories
-        </p>
-        {rubrics.skater.map((r) => (
+        {rubrics.length === 0 ? (
+          <p className="text-sm" style={{ color: colors.inkMuted }}>
+            No rubrics yet. Open the Rubric Builder to add some.
+          </p>
+        ) : null}
+        {rubrics.map((r) => (
           <div key={r.key} className="mb-2">
             <p className="text-base" style={{ color: colors.ink }}>
               {r.label}
             </p>
-            <p className="text-sm" style={{ color: colors.inkMuted }}>
-              {r.subskills.map((s) => s.label).join(', ')}
-            </p>
+            {r.category ? (
+              <p className="text-sm" style={{ color: colors.inkMuted }}>
+                {r.category}
+              </p>
+            ) : null}
           </div>
         ))}
-        {rubrics.goalie.length > 0 ? (
-          <>
-            <p className="mb-2 mt-4 text-sm font-bold" style={{ color: colors.primary }}>
-              Goalie Categories
-            </p>
-            {rubrics.goalie.map((r) => (
-              <div key={r.key} className="mb-2">
-                <p className="text-base" style={{ color: colors.ink }}>
-                  {r.label}
-                </p>
-                <p className="text-sm" style={{ color: colors.inkMuted }}>
-                  {r.subskills.map((s) => s.label).join(', ')}
-                </p>
-              </div>
-            ))}
-          </>
-        ) : null}
       </Modal>
 
       <Modal visible={showAssessor} title="Add Assessor" onClose={() => setShowAssessor(false)} hideDefaultFooter>

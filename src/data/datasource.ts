@@ -126,6 +126,7 @@ export interface DataSource {
   deletePlayers(
     tryoutId: string,
     playerIds: string[],
+    onProgress?: (done: number, total: number) => void,
   ): Promise<{ deleted: string[]; failed: { id: string; message: string }[] }>;
   uploadPlayerPhoto(athleteId: string, fileUri: string, fileType: string): Promise<string>;
 
@@ -406,7 +407,11 @@ export interface DataSource {
    * than one request each. Throws if any of them is still on the roster
    * afterwards (RLS filtering a delete reports success while removing nothing).
    */
-  removeTeamRosterPlayers(teamId: string, athleteIds: string[]): Promise<void>;
+  removeTeamRosterPlayers(
+    teamId: string,
+    athleteIds: string[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void>;
   /**
    * Invite a team's roster to the player/guardian portal — each player's own
    * email and their guardian's, both when present.
