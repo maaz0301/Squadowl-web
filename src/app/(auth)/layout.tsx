@@ -35,25 +35,9 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
 
         <div className="w-full max-w-[420px]">
           <div className="mb-7 flex flex-col items-center gap-3">
-            {/* The lockup PNG bakes in white type, which all but disappears on
-                the light theme's near-white background. Dark keeps the original
-                treatment — straight on the page, no plate; light gets a dark
-                plate behind it purely so the wordmark stays legible. */}
-            <div
-              style={{
-                width: 'min(260px, 70vw)',
-                ...(isDark
-                  ? null
-                  : {
-                      backgroundColor: '#080c16',
-                      padding: '18px 22px',
-                      borderRadius: 24,
-                      boxShadow: '0 14px 40px rgba(8,12,24,0.18)',
-                    }),
-              }}
-            >
+            <div style={{ width: 'min(260px, 70vw)' }}>
               <Image
-                src="/images/tryouthq_logo_v2.png"
+                src={isDark ? '/images/tryouthq_logo_v2.png' : '/images/tryouthq_logo_v2_light.png'}
                 alt="TryoutHQ"
                 width={1024}
                 height={777}
