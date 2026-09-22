@@ -395,6 +395,8 @@ export interface DataSource {
   // them from), rather than only being reachable via "Add Players from
   // Assessments".
   addManualTeamPlayer(teamId: string, form: AddPlayerForm): Promise<{ athleteId: string }>;
+  /** Edits an existing team-roster player's details — the athlete's own fields plus this team's jersey/position. */
+  updateTeamRosterPlayer(teamId: string, athleteId: string, form: AddPlayerForm): Promise<void>;
   /** The team-roster counterpart of importTryoutPlayers. */
   importTeamRosterPlayers(
     teamId: string,

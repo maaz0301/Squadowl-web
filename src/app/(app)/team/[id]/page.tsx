@@ -40,6 +40,7 @@ import {
   useTeamRosterAthleteIdsQuery,
   useAddTeamRosterPlayersMutation,
   useAddManualTeamPlayerMutation,
+  useUpdateTeamRosterPlayerMutation,
   useImportTeamRosterPlayersMutation,
   useUploadTeamPlayerPhotoMutation,
   useRemoveTeamRosterPlayerMutation,
@@ -205,7 +206,9 @@ export default function TeamDetailPage() {
   const [addPlayersProgress, setAddPlayersProgress] = useState<{ done: number; total: number } | null>(null);
   const addRosterPlayers = useAddTeamRosterPlayersMutation(id, (done, total) => setAddPlayersProgress({ done, total }));
   const addManualPlayer = useAddManualTeamPlayerMutation(id);
+  const updateRosterPlayer = useUpdateTeamRosterPlayerMutation(id);
   const uploadTeamPlayerPhoto = useUploadTeamPlayerPhotoMutation(id);
+  const [showEditPlayer, setShowEditPlayer] = useState(false);
   const removeRosterPlayer = useRemoveTeamRosterPlayerMutation(id);
   const [removeProgress, setRemoveProgress] = useState<{ done: number; total: number } | null>(null);
   const removeRosterPlayers = useRemoveTeamRosterPlayersMutation(id, (done, total) =>
@@ -445,6 +448,58 @@ export default function TeamDetailPage() {
   // player who was never on an assessment roster. The Player record stays as a
   // fallback for the case where only it resolved.
   const guardianLinked = !!(viewingRosterEntry?.linkedGuardianId ?? viewingFullPlayer?.linkedGuardianId);
+
+  const editPlayerDefaultValues: Partial<AddPlayerFormValues> | undefined = viewingRosterEntry
+    ? {
+        athleteId: viewingRosterEntry.athleteId,
+        first: viewingRosterEntry.first,
+        last: viewingRosterEntry.last,
+        jersey: viewingRosterEntry.jersey ?? '',
+        pos: viewingRosterEntry.pos ?? '',
+        yearOfBirth: viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : '',
+        playerEmail: viewingRosterEntry.playerEmail ?? viewingFullPlayer?.playerEmail ?? '',
+        guardianName: viewingRosterEntry.guardianName ?? viewingFullPlayer?.guardianName ?? '',
+        guardianEmail: viewingRosterEntry.guardianEmail ?? viewingFullPlayer?.guardianEmail ?? '',
+        guardianPhone: viewingRosterEntry.guardianPhone ?? viewingFullPlayer?.guardianPhone ?? '',
+        // Left undefined rather than '' when the viewer can't see it, so
+        // saving other fields never blanks out medical info this account
+        // isn't shown.
+        medicalInfo: viewingRosterEntry.canViewMedical ? viewingRosterEntry.medicalInfo : undefined,
+        // Not on TeamRosterPlayer itself — only the assessment-scoped Player
+        // record carries a photo on web, same as the read-only card above.
+        avatarUrl: viewingFullPlayer?.avatarUrl ?? '',
+      }
+    : undefined;
+
+  const submitEditPlayer = async (data: AddPlayerFormValues) => {
+    if (!viewingRosterEntry) return;
+    try {
+      if (data.avatarUrl?.startsWith('blob:')) {
+        try {
+          data.avatarUrl = await uploadTeamPlayerPhoto.mutateAsync({
+            athleteId: viewingRosterEntry.athleteId,
+            fileUri: data.avatarUrl,
+            fileType: 'image/jpeg',
+          });
+        } catch (e) {
+          await alert(
+            'Upload Error',
+            `Failed to upload profile picture: ${e instanceof Error ? e.message : 'Unknown error'}`,
+          );
+        }
+      }
+      if (!viewingRosterEntry.canViewMedical) delete data.medicalInfo;
+      // TeamRosterPlayer carries no avatarUrl on web (only the assessment-scoped
+      // Player record does), so an untouched field here is unknown, not empty —
+      // leaving it out of the write keeps a team-only player's existing photo
+      // intact instead of blanking it on every unrelated edit.
+      if (!viewingFullPlayer?.avatarUrl && !data.avatarUrl) delete data.avatarUrl;
+      await updateRosterPlayer.mutateAsync({ athleteId: viewingRosterEntry.athleteId, form: data });
+      setShowEditPlayer(false);
+    } catch (err) {
+      await alert('Save Error', `Failed to update player: ${err instanceof Error ? err.message : ''}`);
+    }
+  };
 
   // Candidates: every athlete on any assessment roster, deduped. Already-on-team
   // athletes stay in the list and are flagged instead of hidden.
@@ -1189,7 +1244,7 @@ export default function TeamDetailPage() {
           {playerCount > 0 ? (
             <Input
               containerClassName="mb-3"
-              placeholder="Search players by name"
+              placeholder="Search players by name or jersey #"
               value={playerSearch}
               onChange={(e) => setPlayerSearch(e.target.value)}
             />
@@ -1237,7 +1292,14 @@ export default function TeamDetailPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => (rosterSelectMode ? toggleRosterSelected(p.athleteId) : setViewPlayerId(p.athleteId))}
+                    onClick={() => {
+                      if (rosterSelectMode) {
+                        toggleRosterSelected(p.athleteId);
+                        return;
+                      }
+                      setShowEditPlayer(false);
+                      setViewPlayerId(p.athleteId);
+                    }}
                     aria-pressed={rosterSelectMode ? selectedRosterIds.has(p.athleteId) : undefined}
                     className="flex min-w-0 flex-1 items-center gap-3 text-left"
                   >
@@ -1989,7 +2051,10 @@ export default function TeamDetailPage() {
       <Modal
         visible={!!viewPlayerId}
         title={viewingRosterEntry ? `${viewingRosterEntry.first} ${viewingRosterEntry.last}` : 'Player'}
-        onClose={() => setViewPlayerId(null)}
+        onClose={() => {
+          setViewPlayerId(null);
+          setShowEditPlayer(false);
+        }}
         hideDefaultFooter
       >
         {!viewingRosterEntry ? (
@@ -1998,6 +2063,11 @@ export default function TeamDetailPage() {
           </p>
         ) : (
           <div className="flex flex-col gap-4">
+            {canManageTeam ? (
+              <div className="flex justify-end">
+                <Button label="Edit" variant="secondary" size="sm" onClick={() => setShowEditPlayer(true)} />
+              </div>
+            ) : null}
             {!viewingFullPlayer && (tryoutsQuery.isLoading || tryoutsQuery.isError) ? (
               <p className="text-xs" style={{ color: colors.inkMuted }}>
                 {tryoutsQuery.isLoading
@@ -2097,6 +2167,24 @@ export default function TeamDetailPage() {
             ) : null}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        visible={showEditPlayer && !!viewingRosterEntry}
+        title="Edit Player"
+        size="lg"
+        onClose={() => {
+          if (updateRosterPlayer.isPending || uploadTeamPlayerPhoto.isPending) return;
+          setShowEditPlayer(false);
+        }}
+        hideDefaultFooter
+      >
+        <AddPlayerForm
+          defaultValues={editPlayerDefaultValues}
+          loading={updateRosterPlayer.isPending || uploadTeamPlayerPhoto.isPending}
+          showFamilyContacts={false}
+          onSubmit={submitEditPlayer}
+        />
       </Modal>
     </div>
   );

@@ -159,7 +159,12 @@ export default function RosterPage() {
     }
     const search = playerSearch.trim().toLowerCase();
     if (search) {
-      result = result.filter((p) => `${p.first} ${p.last}`.toLowerCase().includes(search));
+      // Jersey number too, not just name: a coach scanning a bench sheet reads
+      // numbers first, and on a roster in the hundreds "who's #59" is a much
+      // faster search than spelling a last name right on the first try.
+      result = result.filter(
+        (p) => `${p.first} ${p.last}`.toLowerCase().includes(search) || p.jersey?.toLowerCase().includes(search),
+      );
     }
     return result;
   }, [tryoutQuery.data, activeFilter, playerSearch, scoredIds, positionGroups]);
@@ -446,7 +451,7 @@ export default function RosterPage() {
           <Input
             value={playerSearch}
             onChange={(e) => setPlayerSearch(e.target.value)}
-            placeholder="Search players by name"
+            placeholder="Search players by name or jersey #"
           />
 
           <div>

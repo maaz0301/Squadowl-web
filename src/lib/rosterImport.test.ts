@@ -212,4 +212,32 @@ describe('sheets whose declared range is wrong or missing', () => {
     const data = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
     expect(parseWorkbook(data, 'Small').rows).toHaveLength(1);
   });
+
+  // Reported bug: a template with a row of section labels ("Player
+  // Information" / "Guardian Information", each spanning several merged
+  // columns) above the real per-column headings only filled two cells in
+  // that top row — clearing the old ">= 2 filled cells" bar and getting
+  // picked as the header row instead of the real one below it. Every field
+  // then read "not in this file" and only one row (whichever happened to
+  // collide with the leftover mapping) came through as importable.
+  it('skips a row of section labels to find the real header row beneath it', () => {
+    const sectionLabels = ['Player Information', '', '', '', '', '', 'Guardian Information', ''];
+    const realHeaders = ['First Name', 'Last Name', 'Jersey #', 'Position', 'Year of Birth', 'Player Email', 'Guardian Name', 'Guardian Email'];
+    const players = Array.from({ length: 20 }, (_, i) => [
+      `First${i + 1}`,
+      `Last${i + 1}`,
+      String(i + 1),
+      'F',
+      '2012',
+      '',
+      `Guardian${i + 1}`,
+      `g${i + 1}@x.com`,
+    ]);
+    const sheet = parseSheetOf(book([sectionLabels, realHeaders, ...players]));
+    expect(sheet.headers).toEqual(realHeaders);
+    expect(sheet.rows).toHaveLength(20);
+    const mapping = guessMapping(sheet.headers);
+    expect(mapping).toMatchObject({ first: 0, last: 1 });
+    expect(buildImportRows(sheet, mapping).filter((r) => r.errors.length === 0)).toHaveLength(20);
+  });
 });

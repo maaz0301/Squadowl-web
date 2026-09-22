@@ -40,6 +40,8 @@ import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
 import { prefetchNewAssessment, prefetchTryout } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 import { GuardianAthleteCard } from '@/components/GuardianAthleteCard';
+import { EditEvaluationModal } from '@/components/assessment/EditEvaluationModal';
+import type { TryoutSummary } from '@/data/types';
 
 export default function DashboardPage() {
   const colors = useThemeColors();
@@ -56,7 +58,14 @@ export default function DashboardPage() {
   const [assignedExpanded, setAssignedExpanded] = useState(true);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [decliningId, setDecliningId] = useState<string | null>(null);
-  const [actionTryout, setActionTryout] = useState<{ id: string; name: string } | null>(null);
+  const [actionTryout, setActionTryout] = useState<Pick<
+    TryoutSummary,
+    'id' | 'name' | 'tryoutDate' | 'startTime' | 'endTime' | 'rink'
+  > | null>(null);
+  const [editingTryout, setEditingTryout] = useState<Pick<
+    TryoutSummary,
+    'id' | 'name' | 'tryoutDate' | 'startTime' | 'endTime' | 'rink'
+  > | null>(null);
   // Tracks which card is mid archive/delete so its spinner shows immediately —
   // mirrors mobile's dashboard, where relying on the mutation's own isPending
   // was flaky because the modal closes (and re-renders the list) before the
@@ -124,8 +133,10 @@ export default function DashboardPage() {
   };
 
 
-  const handleDeleteAssessment = (id: string, name: string) => {
-    setActionTryout({ id, name });
+  const handleDeleteAssessment = (
+    tryout: Pick<TryoutSummary, 'id' | 'name' | 'tryoutDate' | 'startTime' | 'endTime' | 'rink'>,
+  ) => {
+    setActionTryout(tryout);
   };
 
   if (isGuardian) {
@@ -483,7 +494,7 @@ export default function DashboardPage() {
                             // Inside a Link now, so the default has to go too.
                             e.preventDefault();
                             e.stopPropagation();
-                            handleDeleteAssessment(item.id, item.name);
+                            handleDeleteAssessment(item);
                           }}
                           className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
                         >
@@ -516,9 +527,9 @@ export default function DashboardPage() {
             onClick={() => {
               const target = actionTryout;
               setActionTryout(null);
-              // Name, date, times and location are edited on the evaluation's
-              // Settings page.
-              if (target) router.push(`/assessment/${target.id}/settings`);
+              // Straight from the tile instead of navigating to the
+              // evaluation's Settings page to find the same fields.
+              if (target) setEditingTryout(target);
             }}
           />
           <Button
@@ -561,6 +572,8 @@ export default function DashboardPage() {
           />
         </div>
       </Modal>
+
+      <EditEvaluationModal tryout={editingTryout} onClose={() => setEditingTryout(null)} />
 
       <LimitReachedModal visible={!!limitMsg} message={limitMsg || ''} onClose={() => setLimitMsg(null)} />
     </>

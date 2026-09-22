@@ -159,11 +159,11 @@ export default function SettingsPage() {
   };
 
   const addAssessor = async () => {
-    if (!assessorName.trim()) return;
     const emailToInvite = assessorEmail.trim();
 
-    if (!emailToInvite) {
-      await alert('Email Required', 'You must provide a valid email address for the assessor.');
+    // Was a silent return for a blank name, which looks like a dead button.
+    if (!assessorName.trim() || !emailToInvite) {
+      await alert('Missing Info', 'An assessor needs both a name and an email address.');
       return;
     }
 

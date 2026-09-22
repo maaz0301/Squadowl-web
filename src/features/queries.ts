@@ -256,6 +256,17 @@ export function useAddManualTeamPlayerMutation(teamId: string) {
   });
 }
 
+export function useUpdateTeamRosterPlayerMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ athleteId, form }: { athleteId: string; form: AddPlayerForm }) =>
+      getDataSource().updateTeamRosterPlayer(teamId, athleteId, form),
+    onSuccess: () => {
+      invalidateTeamRoster(qc, teamId);
+    },
+  });
+}
+
 export function useUploadTeamPlayerPhotoMutation(teamId: string) {
   const qc = useQueryClient();
   return useMutation({

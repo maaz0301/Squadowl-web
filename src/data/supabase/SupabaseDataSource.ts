@@ -315,14 +315,9 @@ export const TEAM_ROSTER_PAGE = 200;
  */
 const TEAM_ROSTER_SCREEN_PAGE = 50;
 
-/**
- * The columns both team-roster reads select. `inner` is for the paged read's
- * name search only: filtering on an embedded resource narrows the embed by
- * default, so without an inner join a search comes back as the whole roster
- * with most rows carrying an empty `athletes`.
- */
-function teamRosterSelect(inner = false): string {
-  return `*, athletes${inner ? '!inner' : ''}(*), tryouts:source_tryout_id(name)`;
+/** The columns both team-roster reads select. */
+function teamRosterSelect(): string {
+  return `*, athletes(*), tryouts:source_tryout_id(name)`;
 }
 
 /**
@@ -481,6 +476,10 @@ const PLAYER_DELETE_CONCURRENCY = 4;
 const PLAYER_DELETE_CHUNK = 25;
 /** Batches in flight at once. */
 const PLAYER_DELETE_BATCH_CONCURRENCY = 2;
+/** release_athlete_share_for_participant RPCs in flight at once during a bulk delete. */
+const PLAYER_RELEASE_CONCURRENCY = 4;
+/** Athlete ids checked per request when clearing guardian contacts off a bulk delete. */
+const GUARDIAN_CLEAR_CHUNK = 20;
 const REGISTRATION_CHUNK_CONCURRENCY = 6;
 const GUARDIAN_EMAIL_CONCURRENCY = 20;
 const GUARDIAN_RESOLVE_BATCH = 50;
@@ -2246,7 +2245,7 @@ export class SupabaseDataSource implements DataSource {
 
     let q = supabase
       .from('team_roster')
-      .select(teamRosterSelect(!!search))
+      .select(teamRosterSelect())
       .eq('team_id', teamId)
       // Total order, so pages can neither overlap nor skip rows, and the same
       // order listTeamRoster reads in so the list doesn't reshuffle against the
@@ -2262,9 +2261,22 @@ export class SupabaseDataSource implements DataSource {
       q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
     }
     if (search) {
-      q = q.or(`first_name.ilike.*${search}*,last_name.ilike.*${search}*`, {
-        referencedTable: 'athletes',
-      });
+      // Jersey number too, not just name. `jersey` lives on team_roster
+      // itself, so a single or() can't reach both it and the embedded
+      // athletes' name columns: mixing a top-level column into an or()
+      // scoped to an embedded resource isn't something PostgREST accepts as
+      // one cheap plan — against a 1000+-player roster it came back as a hard
+      // timeout on every attempt, not an occasional slow one. Name is
+      // resolved to athlete ids first instead, so the roster query itself
+      // stays a single plain or() over columns on team_roster alone.
+      const { data: nameMatches } = await supabase
+        .from('athletes')
+        .select('id')
+        .eq('account_id', accountId)
+        .or(`first_name.ilike.*${search}*,last_name.ilike.*${search}*`)
+        .limit(500);
+      const idList = (nameMatches ?? []).map((a) => a.id as string).join(',');
+      q = q.or(`jersey.ilike.*${search}*,athlete_id.in.(${idList})`);
     }
     const rows = ((unwrap(await q) ?? []) as unknown) as Row[];
 
@@ -2496,6 +2508,52 @@ export class SupabaseDataSource implements DataSource {
     }
     await this.addTeamRosterPlayers(teamId, [{ athleteId, jersey: form.jersey, pos: form.pos }]);
     return { athleteId };
+  }
+
+  /**
+   * Edit an existing team-roster player — the athlete's own fields (name,
+   * contact, guardian, medical) plus this team's jersey/position, which live
+   * on team_roster rather than the athlete.
+   *
+   * Both tables carry `for all` policies for the team's owner and its
+   * delegated managers, so this writes directly rather than routing through
+   * the owner/RPC dance _addManualTeamPlayer needs for creating a brand new
+   * athlete row.
+   */
+  async updateTeamRosterPlayer(teamId: string, athleteId: string, form: AddPlayerForm): Promise<void> {
+    const { supabase } = await this.ctx();
+
+    const athletePatch: Row = {
+      first_name: form.first,
+      last_name: form.last,
+      year_of_birth: form.yearOfBirth ? Number(form.yearOfBirth) : null,
+      guardian_name: form.guardianName || null,
+      guardian_email: form.guardianEmail || null,
+      guardian_phone: form.guardianPhone || null,
+      player_email: form.playerEmail || null,
+    };
+    // `about` is deliberately left untouched: the team-roster read
+    // (TeamRosterPlayerSchema) never carries it, so there is no reliable
+    // value here to round-trip — writing it would just blank out whatever an
+    // assessment roster set.
+    //
+    // medical_info and avatar_url are only touched when the caller explicitly
+    // sent them. TeamRosterPlayerSchema omits medical_info for anyone without
+    // canViewMedical, and never carries avatar_url at all (only the
+    // assessment-scoped Player record does on web) — either way, an untouched
+    // field here means "unknown", not "clear it".
+    if (form.medicalInfo !== undefined) athletePatch.medical_info = form.medicalInfo || null;
+    if (form.avatarUrl !== undefined) athletePatch.avatar_url = form.avatarUrl || null;
+
+    unwrap(await supabase.from('athletes').update(athletePatch).eq('id', athleteId));
+
+    unwrap(
+      await supabase
+        .from('team_roster')
+        .update({ jersey: form.jersey || null, position: form.pos || null })
+        .eq('team_id', teamId)
+        .eq('athlete_id', athleteId),
+    );
   }
 
   /**
@@ -4036,18 +4094,27 @@ export class SupabaseDataSource implements DataSource {
 
   async deletePlayer(_tryoutId: string, playerId: string): Promise<void> {
     const { supabase } = await this.ctx();
+    // Best-effort: if this player was created by accepting a guardian's shared
+    // athlete, flip that share to 'released' so the guardian is told the coach
+    // let them go. Never let this block the actual removal below.
+    try {
+      await supabase.rpc('release_athlete_share_for_participant', { p_participant_id: playerId });
+    } catch {
+      // non-blocking
+    }
     // Soft delete — the participant row (and its evaluations/scores) stays in
     // the database so it still counts toward the player's permanent profile
     // history, it just disappears from this tryout's active roster (see the
     // removed_at filter in assembleTryouts).
-    unwrap(
+    const removed = unwrap(
       await supabase
         .from('tryout_participants')
         .update({ removed_at: new Date().toISOString() })
         .eq('id', playerId)
-        .select()
+        .select('athlete_id')
         .maybeSingle(),
-    );
+    ) as Row | null;
+    if (removed?.athlete_id) await this.clearGuardianIfUnrostered(removed.athlete_id as string);
   }
 
   async deletePlayers(
@@ -4061,26 +4128,42 @@ export class SupabaseDataSource implements DataSource {
     if (ids.length === 0) return { deleted, failed };
     const { supabase } = await this.ctx();
 
-    // One soft-delete request per batch rather than one per player, which took
-    // minutes for a full roster. Progress is reported as each batch lands, so the
-    // count is players actually removed rather than a guess.
+    // deletePlayer() costs about four round trips per player, and this used to
+    // run it four players at a time — minutes for a full roster. It now works in
+    // batches: the share release stays one RPC per player (it carries its own
+    // permission check, so it is not replaced with a client-side write), the soft
+    // delete is one request per batch, and the guardian cleanup below is grouped.
+    // Progress is reported as each batch lands, so the count is players actually
+    // removed rather than a guess.
+    const freed = new Set<string>();
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += PLAYER_DELETE_CHUNK) chunks.push(ids.slice(i, i + PLAYER_DELETE_CHUNK));
     onProgress?.(0, ids.length);
     await mapPool(chunks, PLAYER_DELETE_BATCH_CONCURRENCY, async (chunk) => {
+      await mapPool(chunk, PLAYER_RELEASE_CONCURRENCY, async (playerId) => {
+        try {
+          await supabase.rpc('release_athlete_share_for_participant', { p_participant_id: playerId });
+        } catch {
+          // best-effort, same as deletePlayer()
+        }
+      });
       try {
         const rows = unwrap(
           await supabase
             .from('tryout_participants')
             .update({ removed_at: new Date().toISOString() })
             .in('id', chunk)
-            .select('id'),
+            .select('id, athlete_id'),
         ) as Row[] | null;
-        const landed = new Set((rows ?? []).map((r) => r.id as string));
+        const landed = new Set<string>();
+        for (const r of rows ?? []) {
+          landed.add(r.id as string);
+          deleted.push(r.id as string);
+          if (r.athlete_id) freed.add(r.athlete_id as string);
+        }
+        // RLS reports a refused UPDATE as zero rows rather than an error.
         for (const id of chunk) {
-          // RLS reports a refused UPDATE as zero rows rather than an error.
-          if (landed.has(id)) deleted.push(id);
-          else failed.push({ id, message: 'Could not delete this player.' });
+          if (!landed.has(id)) failed.push({ id, message: 'Could not delete this player.' });
         }
       } catch {
         // The batch failed as a whole — fall back to one at a time so each
@@ -4096,7 +4179,75 @@ export class SupabaseDataSource implements DataSource {
       }
       onProgress?.(deleted.length + failed.length, ids.length);
     });
+
+    // Guardian contacts go once the athlete is on no roster anywhere, same rule
+    // as clearGuardianIfUnrostered(), evaluated for a group at a time. A failure
+    // here must not undo or hide deletions that already landed.
+    try {
+      const athleteIds = [...freed];
+      const groups: string[][] = [];
+      for (let i = 0; i < athleteIds.length; i += GUARDIAN_CLEAR_CHUNK) {
+        groups.push(athleteIds.slice(i, i + GUARDIAN_CLEAR_CHUNK));
+      }
+      await mapPool(groups, PLAYER_DELETE_BATCH_CONCURRENCY, async (group) => {
+        const [participants, teamRoster, seasonRoster] = await Promise.all([
+          supabase.from('tryout_participants').select('athlete_id').in('athlete_id', group).is('removed_at', null),
+          supabase.from('team_roster').select('athlete_id').in('athlete_id', group),
+          supabase.from('season_roster').select('athlete_id').in('athlete_id', group),
+        ]);
+        // If any read failed, clear nobody: keeping a contact is the safe side.
+        if (participants.error || teamRoster.error || seasonRoster.error) return;
+        const still = new Set<string>();
+        for (const set of [participants.data, teamRoster.data, seasonRoster.data]) {
+          for (const r of (set ?? []) as Row[]) still.add(r.athlete_id as string);
+        }
+        const orphans = group.filter((a) => !still.has(a));
+        if (orphans.length === 0) return;
+        await supabase
+          .from('athletes')
+          .update({ guardian_name: null, guardian_email: null, guardian_phone: null, guardian_user_id: null })
+          .in('id', orphans);
+      });
+    } catch (e) {
+      console.error('Bulk guardian cleanup failed; players were still removed.', e);
+    }
     return { deleted, failed };
+  }
+
+  /**
+   * Drop the guardian contact from an athlete once that athlete is off every
+   * roster. Guardians have no rows of their own — they are contact columns on
+   * `athletes`, and everything that lists them derives them from those columns.
+   * Removing a player therefore has to clear them here, or the parent lingers
+   * as a "member" of the org with no player attached.
+   *
+   * Guarded on the athlete holding no remaining spot in any assessment, team, or
+   * season: one athlete row is shared across all three, so a player cut from one
+   * assessment but still rostered elsewhere keeps their guardian.
+   */
+  private async clearGuardianIfUnrostered(athleteId: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    const [participants, teamRoster, seasonRoster] = await Promise.all([
+      supabase
+        .from('tryout_participants')
+        .select('id', { count: 'exact', head: true })
+        .eq('athlete_id', athleteId)
+        .is('removed_at', null),
+      supabase.from('team_roster').select('id', { count: 'exact', head: true }).eq('athlete_id', athleteId),
+      supabase.from('season_roster').select('id', { count: 'exact', head: true }).eq('athlete_id', athleteId),
+    ]);
+    const stillRostered =
+      (participants.count ?? 0) + (teamRoster.count ?? 0) + (seasonRoster.count ?? 0) > 0;
+    if (stillRostered) return;
+    await supabase
+      .from('athletes')
+      .update({
+        guardian_name: null,
+        guardian_email: null,
+        guardian_phone: null,
+        guardian_user_id: null,
+      })
+      .eq('id', athleteId);
   }
 
 
