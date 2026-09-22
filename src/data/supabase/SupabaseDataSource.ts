@@ -2228,29 +2228,75 @@ export class SupabaseDataSource implements DataSource {
     const limit = opts?.limit ?? TEAM_ROSTER_SCREEN_PAGE;
     const search = likeTerm(opts?.search ?? '');
 
-    let q = supabase
-      .from('team_roster')
-      .select(teamRosterSelect(!!search))
-      .eq('team_id', teamId)
-      // Total order, so pages can neither overlap nor skip rows, and the same
-      // order listTeamRoster reads in so the list doesn't reshuffle against the
-      // rest of the app.
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .limit(limit);
-    if (opts?.after) {
-      const { createdAt, id } = opts.after;
-      // "strictly after (created_at, id)": a later timestamp, or the same
-      // timestamp and a later id. Quoted because a timestamptz carries `+` and
-      // `:`, which the filter grammar would otherwise read as syntax.
-      q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
-    }
+    let rows: Row[];
+
     if (search) {
-      q = q.or(`first_name.ilike.*${search}*,last_name.ilike.*${search}*`, {
-        referencedTable: 'athletes',
-      });
+      const parts = search.split(/\s+/).filter(Boolean);
+      const nameFilter =
+        parts.length > 1
+          ? `and(first_name.ilike.*${parts[0]}*,last_name.ilike.*${parts[1]}*),and(first_name.ilike.*${parts[1]}*,last_name.ilike.*${parts[0]}*),first_name.ilike.*${search}*,last_name.ilike.*${search}*`
+          : `first_name.ilike.*${search}*,last_name.ilike.*${search}*`;
+
+      let nameQ = supabase
+        .from('team_roster')
+        .select(teamRosterSelect(true))
+        .eq('team_id', teamId)
+        .or(nameFilter, { foreignTable: 'athletes' })
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(limit);
+
+      let jerseyQ = supabase
+        .from('team_roster')
+        .select(teamRosterSelect(false))
+        .eq('team_id', teamId)
+        .ilike('jersey', `*${search}*`)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(limit);
+
+      if (opts?.after) {
+        const { createdAt, id } = opts.after;
+        const afterFilter = `created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`;
+        nameQ = nameQ.or(afterFilter);
+        jerseyQ = jerseyQ.or(afterFilter);
+      }
+
+      const [nameRes, jerseyRes] = await Promise.all([nameQ, jerseyQ]);
+      const nameRows = ((unwrap(nameRes) ?? []) as unknown) as Row[];
+      const jerseyRows = ((unwrap(jerseyRes) ?? []) as unknown) as Row[];
+
+      const seen = new Set<string>();
+      const combined: Row[] = [];
+      for (const r of [...nameRows, ...jerseyRows]) {
+        const rowId = String(r.id);
+        if (!seen.has(rowId)) {
+          seen.add(rowId);
+          combined.push(r);
+        }
+      }
+      combined.sort(
+        (a, b) =>
+          String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) ||
+          String(a.id ?? '').localeCompare(String(b.id ?? '')),
+      );
+      rows = combined.slice(0, limit);
+    } else {
+      let q = supabase
+        .from('team_roster')
+        .select(teamRosterSelect())
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(limit);
+
+      if (opts?.after) {
+        const { createdAt, id } = opts.after;
+        q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
+      }
+
+      rows = ((unwrap(await q) ?? []) as unknown) as Row[];
     }
-    const rows = ((unwrap(await q) ?? []) as unknown) as Row[];
 
     const last = rows[rows.length - 1];
     return {
