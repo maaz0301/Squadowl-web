@@ -2265,18 +2265,32 @@ export class SupabaseDataSource implements DataSource {
       // itself, so a single or() can't reach both it and the embedded
       // athletes' name columns: mixing a top-level column into an or()
       // scoped to an embedded resource isn't something PostgREST accepts as
-      // one cheap plan — against a 1000+-player roster it came back as a hard
-      // timeout on every attempt, not an occasional slow one. Name is
-      // resolved to athlete ids first instead, so the roster query itself
-      // stays a single plain or() over columns on team_roster alone.
-      const { data: nameMatches } = await supabase
-        .from('athletes')
-        .select('id')
-        .eq('account_id', accountId)
-        .or(`first_name.ilike.*${search}*,last_name.ilike.*${search}*`)
-        .limit(500);
-      const idList = (nameMatches ?? []).map((a) => a.id as string).join(',');
-      q = q.or(`jersey.ilike.*${search}*,athlete_id.in.(${idList})`);
+      // one cheap plan. Name is resolved to athlete ids first instead, so
+      // the roster query itself stays a single plain or() over columns on
+      // team_roster alone.
+      //
+      // That id lookup has to stay scoped to this team's own roster, not
+      // every athlete the account has ever had: an unscoped ilike scan
+      // there — with can_access_athlete() evaluated per candidate row —
+      // hit the Postgres statement timeout (57014) on real accounts, and
+      // the error was silently swallowed into "no players match" instead
+      // of surfacing as a failure. A team's roster tops out in the low
+      // hundreds, so filtering to just those ids first keeps the ilike
+      // cheap no matter how large the account's full athlete history is.
+      const rosterAthleteIds = await this.listTeamRosterAthleteIds(teamId);
+      let nameMatches: { id: string }[] = [];
+      if (rosterAthleteIds.length) {
+        const { data, error } = await supabase
+          .from('athletes')
+          .select('id')
+          .in('id', rosterAthleteIds)
+          .or(`first_name.ilike.*${search}*,last_name.ilike.*${search}*`)
+          .limit(500);
+        if (error) throw error;
+        nameMatches = data ?? [];
+      }
+      const idList = nameMatches.map((a) => a.id as string).join(',');
+      q = q.or(`jersey.ilike.*${search}*${idList ? `,athlete_id.in.(${idList})` : ''}`);
     }
     const rows = ((unwrap(await q) ?? []) as unknown) as Row[];
 

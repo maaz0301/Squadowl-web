@@ -39,6 +39,7 @@ export function EditEvaluationModal({
   const id = tryout?.id;
   useEffect(() => {
     if (!tryout) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seeds the form from a prop that only changes when a different evaluation opens, not from external state to sync with.
     setName(tryout.name);
     setTryoutDate(tryout.tryoutDate ?? '');
     setStartTime(tryout.startTime ?? '');
