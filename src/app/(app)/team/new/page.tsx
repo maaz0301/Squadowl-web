@@ -296,8 +296,8 @@ export default function NewTeamPage() {
               <div className="flex flex-col gap-2">
                 <SectionLabel>Invite a manager (optional)</SectionLabel>
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
-                  Give them this team&apos;s roster, schedule, and chat as soon as it&apos;s created — but
-                  not evaluations, and nothing else on your account. If they don&apos;t have a TryoutHQ
+                  Give them this team&apos;s roster, schedule, and chat as soon as it&apos;s created, and let
+                  them create its evaluations — but nothing else on your account. If they don&apos;t have a TryoutHQ
                   account yet, one is created and their sign-in details are emailed to them.
                 </p>
                 <Input

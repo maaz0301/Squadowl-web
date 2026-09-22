@@ -39,7 +39,7 @@ import {
   useTryoutSummariesQuery,
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
-import { useUser } from '@/state/authStore';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { APP_CONFIG } from '@/config/app';
 
@@ -52,6 +52,8 @@ export default function RegistrationsPage() {
   const router = useRouter();
   const { alert, toast } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
+  // A team someone else owns is run on that team's plan, not the viewer's own.
+  const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   const regsQuery = useRegistrationsQuery(id!);
   const ensureCloud = useEnsureCloudSessionMutation();
   // Only the destination's roster size is read off this — summaries carry the
@@ -62,7 +64,6 @@ export default function RegistrationsPage() {
   const [dummyProgress, setDummyProgress] = useState<{ done: number; total: number } | null>(null);
   const genTest = useGenerateTestDataMutation(id!, (done, total) => setDummyProgress({ done, total }));
   const clearTest = useClearTestDataMutation(id!);
-  const user = useUser();
   const [showQr, setShowQr] = useState(false);
   const [showSimulate, setShowSimulate] = useState(false);
   const [showTestGen, setShowTestGen] = useState(false);
@@ -76,7 +77,7 @@ export default function RegistrationsPage() {
   // Registration whose submitted profile is open. Non-null == profile open.
   const [viewingId, setViewingId] = useState<string | null>(null);
 
-  const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
+  const isAssociation = canUseFeature(effectiveTier, 'enterprise');
 
   const cloudId = tryoutQuery.data?.cloud?.id;
   useEffect(() => {
@@ -129,6 +130,19 @@ export default function RegistrationsPage() {
     });
   };
 
+  // What "Add N to Roster" actually places: the ticked registrations that are
+  // still pending. A player dismissed (or placed elsewhere) after being ticked
+  // stays in `selected`, and would otherwise be counted and sent anyway.
+  const pendingIds = (regsQuery.data ?? []).filter((r) => r.status === 'pending').map((r) => r.id);
+  const pendingIdSet = new Set(pendingIds);
+  const selectedIds = [...selected].filter((regId) => pendingIdSet.has(regId));
+  const allPendingSelected = pendingIds.length > 0 && pendingIds.every((regId) => selected.has(regId));
+  // The "Add to Roster" on a card means the whole ticked group when that card is
+  // one of them — clicking it on one of several ticked players used to place only
+  // that one, which is how a multi-select "sent one player".
+  const addFromCard = (regId: string) =>
+    setPlacing(selected.has(regId) && selectedIds.length > 1 ? selectedIds : [regId]);
+
   const runPlacement = async (destination: RosterDestination) => {
     const ids = placing ?? [];
     if (ids.length === 0) return;
@@ -139,8 +153,8 @@ export default function RegistrationsPage() {
     if (destination.kind === 'assessment') {
       const target = (allTryouts.data ?? []).find((t) => t.id === destination.id);
       const existing = target?.playerCount ?? 0;
-      if (isAtPlayerLimit(user?.planTier ?? 'free', existing + ids.length - 1)) {
-        setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'players', 'players'));
+      if (isAtPlayerLimit(effectiveTier, existing + ids.length - 1)) {
+        setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
         return;
       }
     }
@@ -253,19 +267,17 @@ export default function RegistrationsPage() {
         <span className="ml-auto flex flex-wrap gap-2">
           {tab === 'pending' && filtered.length > 0 ? (
             <Button
-              label={selected.size === filtered.length ? 'Deselect All' : 'Select All'}
+              label={allPendingSelected ? 'Deselect All' : 'Select All'}
               size="sm"
               variant="secondary"
-              onClick={() =>
-                setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map((r) => r.id)))
-              }
+              onClick={() => setSelected(allPendingSelected ? new Set() : new Set(pendingIds))}
             />
           ) : null}
-          {tab === 'pending' && selected.size > 0 ? (
+          {tab === 'pending' && selectedIds.length > 0 ? (
             <Button
-              label={`Add ${selected.size} to Roster`}
+              label={`Add ${selectedIds.length} to Roster`}
               size="sm"
-              onClick={() => setPlacing([...selected])}
+              onClick={() => setPlacing(selectedIds)}
             />
           ) : null}
           <Button label="Export CSV" variant="ghost" size="sm" onClick={exportCsv} />
@@ -299,71 +311,122 @@ export default function RegistrationsPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {filtered.map((item) => (
-            <Card key={item.id} className="flex flex-col gap-2">
-              {/* Only the identity block opens the profile — the action buttons
-                  below stay independently clickable. */}
-              <button
-                type="button"
-                className="flex flex-col gap-2 text-left"
-                onClick={() => setViewingId(item.id)}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-lg font-bold" style={{ color: colors.ink }}>
-                    {item.firstName} {item.lastName}
-                  </span>
-                  <span className="flex flex-col items-end gap-1">
-                    <Badge
-                      label={item.status}
-                      variant={item.status === 'pending' ? 'warning' : item.status === 'added' ? 'success' : 'info'}
-                    />
-                    {item.paymentStatus ? (
-                      <Badge
-                        label={item.paymentStatus}
-                        variant={item.paymentStatus === 'paid' ? 'success' : 'warning'}
-                      />
+          {filtered.map((item) => {
+            const pending = item.status === 'pending';
+            const isSelected = pending && selected.has(item.id);
+            return (
+              <Card key={item.id} className="flex flex-col gap-3" accent={isSelected}>
+                <div className="flex items-start gap-3">
+                  {/* The tick is its own big click target, so picking a player never
+                      opens the profile and opening the profile never picks. */}
+                  {pending ? (
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={isSelected}
+                      aria-label={`Select ${item.firstName} ${item.lastName}`}
+                      onClick={() => toggleSelect(item.id)}
+                      className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 text-lg font-extrabold text-white"
+                      style={{
+                        borderColor: isSelected ? colors.primary : colors.border,
+                        backgroundColor: isSelected ? colors.primary : 'transparent',
+                      }}
+                    >
+                      {isSelected ? '✓' : null}
+                    </button>
+                  ) : null}
+
+                  {/* Only the identity block opens the profile — the action buttons
+                      below stay independently clickable. */}
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 flex-col gap-1 text-left"
+                    onClick={() => setViewingId(item.id)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xl font-bold" style={{ color: colors.ink }}>
+                        {item.firstName} {item.lastName}
+                      </span>
+                      <span className="flex flex-col items-end gap-1">
+                        <Badge
+                          label={item.status}
+                          variant={pending ? 'warning' : item.status === 'added' ? 'success' : 'info'}
+                        />
+                        {item.paymentStatus ? (
+                          <Badge
+                            label={item.paymentStatus}
+                            variant={item.paymentStatus === 'paid' ? 'success' : 'warning'}
+                          />
+                        ) : null}
+                      </span>
+                    </div>
+                    <span className="truncate text-base" style={{ color: colors.inkMuted }}>
+                      {item.guardianName}
+                    </span>
+                    <span className="truncate text-sm" style={{ color: colors.inkFaint }}>
+                      {item.guardianEmail}
+                    </span>
+                    {item.yearOfBirth || item.positionTryingOutFor ? (
+                      <span className="text-sm" style={{ color: colors.inkFaint }}>
+                        {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}
+                      </span>
                     ) : null}
-                  </span>
+                    <span className="text-xs" style={{ color: colors.inkFaint }}>
+                      Click to view profile
+                    </span>
+                  </button>
                 </div>
-                <span className="text-sm" style={{ color: colors.inkMuted }}>
-                  {item.guardianName} · {item.guardianEmail}
-                </span>
-                {item.yearOfBirth || item.positionTryingOutFor ? (
-                  <span className="text-sm" style={{ color: colors.inkFaint }}>
-                    {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}
-                  </span>
+
+                {pending ? (
+                  <div className="flex items-center gap-2">
+                    {/* With a group ticked the bar below does the adding; repeating
+                        "Add 9 to Roster" on every card only made them look alike. */}
+                    {selectedIds.length === 0 ? (
+                      <div className="flex-1">
+                        <Button
+                          label="Add to Roster"
+                          className="w-full"
+                          disabled={dismissReg.isPending && dismissReg.variables === item.id}
+                          onClick={() => addFromCard(item.id)}
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex-1" />
+                    )}
+                    <Button
+                      label="Dismiss"
+                      variant="ghost"
+                      loading={dismissReg.isPending && dismissReg.variables === item.id}
+                      onClick={() => dismissReg.mutate(item.id)}
+                    />
+                  </div>
                 ) : null}
-                <span className="text-xs" style={{ color: colors.inkFaint }}>
-                  Click to view profile
-                </span>
-              </button>
-              {item.status === 'pending' ? (
-                <div className="mt-1 flex flex-wrap gap-2">
-                  <Button
-                    label={selected.has(item.id) ? 'Selected' : 'Select'}
-                    size="sm"
-                    variant={selected.has(item.id) ? 'primary' : 'secondary'}
-                    onClick={() => toggleSelect(item.id)}
-                  />
-                  <Button
-                    label="Add to Roster"
-                    size="sm"
-                    disabled={dismissReg.isPending && dismissReg.variables === item.id}
-                    onClick={() => setPlacing([item.id])}
-                  />
-                  <Button
-                    label="Dismiss"
-                    size="sm"
-                    variant="ghost"
-                    loading={dismissReg.isPending && dismissReg.variables === item.id}
-                    onClick={() => dismissReg.mutate(item.id)}
-                  />
-                </div>
-              ) : null}
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
+
+      {/* Sticks to the bottom of the viewport, so the group action stays on
+          screen however far down the list the coach has scrolled while ticking
+          players. */}
+      {tab === 'pending' && selectedIds.length > 0 ? (
+        <div
+          className="sticky bottom-0 z-10 mt-4 flex items-center gap-3 rounded-xl border px-4 py-4"
+          style={{ borderColor: colors.border, backgroundColor: colors.card }}
+        >
+          <div className="flex-1">
+            <p className="font-display text-xl font-bold" style={{ color: colors.ink }}>
+              {selectedIds.length} selected
+            </p>
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              of {pendingIds.length} pending
+            </p>
+          </div>
+          <Button label="Clear" variant="ghost" onClick={() => setSelected(new Set())} />
+          <Button label={`Add ${selectedIds.length}`} onClick={() => setPlacing(selectedIds)} />
+        </div>
+      ) : null}
 
       <Modal visible={showQr} title="Registration QR" size="sm" onClose={() => setShowQr(false)}>
         <div className="flex flex-col items-center gap-4 py-4">

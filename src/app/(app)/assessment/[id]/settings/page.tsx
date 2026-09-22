@@ -29,9 +29,9 @@ import {
 } from '@/features/queries';
 import { getDataSource } from '@/data';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
-import { getDefaultRubrics } from '@/data/rubrics';
+import { END_BEFORE_START_MESSAGE, isEndAfterStart } from '@/data/timeRange';
 import type { Assessor } from '@/data/types';
-import { useUser } from '@/state/authStore';
+import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { isAtAssessmentLimit } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -46,9 +46,10 @@ export default function SettingsPage() {
   const colors = useThemeColors();
   const router = useRouter();
   const { alert, confirm, toast } = useAlert();
-  const user = useUser();
   const welcomedRef = useRef(false);
   const tryoutQuery = useTryoutQuery(id);
+  // A team someone else owns is run on that team's plan, not the viewer's own.
+  const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   // Just the number, for the copy-assessment plan check. This used to be
   // useTryoutsQuery(false) — every roster, evaluation, score and registration
   // in the account fetched on arrival so one `.length` could be read off it.
@@ -68,6 +69,7 @@ export default function SettingsPage() {
   const [tryoutDate, setTryoutDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [endTimeError, setEndTimeError] = useState('');
   const [rink, setRink] = useState('');
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
 
@@ -85,18 +87,25 @@ export default function SettingsPage() {
 
   const tryout = tryoutQuery.data;
   if (!tryout.viewerIsOwner) return <CoachOnlyState what="change or delete this evaluation" />;
-  const rubrics = getDefaultRubrics(tryout.sport);
+  // Templates were removed — every rubric is custom, so this is the whole set.
+  const rubrics = tryout.settings.customRubrics ?? [];
 
   const openEdit = () => {
     setName(tryout.name);
     setTryoutDate(tryout.tryoutDate ?? '');
     setStartTime(tryout.startTime ?? '');
     setEndTime(tryout.endTime ?? '');
+    setEndTimeError('');
     setRink(tryout.rink ?? '');
     setShowEdit(true);
   };
 
   const saveEdit = async () => {
+    if (!isEndAfterStart(startTime, endTime)) {
+      setEndTimeError(END_BEFORE_START_MESSAGE);
+      return;
+    }
+    setEndTimeError('');
     await updateTryout.mutateAsync({
       id: tryout.id,
       updates: {
@@ -150,11 +159,11 @@ export default function SettingsPage() {
   };
 
   const addAssessor = async () => {
-    if (!assessorName.trim()) return;
     const emailToInvite = assessorEmail.trim();
 
-    if (!emailToInvite) {
-      await alert('Email Required', 'You must provide a valid email address for the assessor.');
+    // Was a silent return for a blank name, which looks like a dead button.
+    if (!assessorName.trim() || !emailToInvite) {
+      await alert('Missing Info', 'An assessor needs both a name and an email address.');
       return;
     }
 
@@ -252,8 +261,8 @@ export default function SettingsPage() {
 
   const handleCopy = async () => {
     const count = assessmentCount.data ?? 0;
-    if (isAtAssessmentLimit(user?.planTier ?? 'free', count)) {
-      setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'assessments', 'evaluations'));
+    if (isAtAssessmentLimit(effectiveTier, count)) {
+      setLimitMsg(buildLimitReachedMessage(effectiveTier, 'assessments', 'evaluations'));
       return;
     }
     const copy = await copyTryout.mutateAsync(tryout.id);
@@ -310,7 +319,7 @@ export default function SettingsPage() {
       <Card className="flex flex-col gap-3">
         <SectionLabel>Rubrics</SectionLabel>
         <span className="text-sm" style={{ color: colors.inkMuted }}>
-          {rubrics.skater.length} skater + {rubrics.goalie.length} goalie reference categories
+          {rubrics.length} {rubrics.length === 1 ? 'rubric' : 'rubrics'}
         </span>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -400,8 +409,23 @@ export default function SettingsPage() {
         <div className="flex flex-col gap-3">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <DateField label="Date" value={tryoutDate} onChange={setTryoutDate} />
-          <TimeField label="Start Time" value={startTime} onChange={setStartTime} />
-          <TimeField label="End Time" value={endTime} onChange={setEndTime} />
+          <TimeField
+            label="Start Time"
+            value={startTime}
+            onChange={(v) => {
+              setStartTime(v);
+              setEndTimeError('');
+            }}
+          />
+          <TimeField
+            label="End Time"
+            value={endTime}
+            onChange={(v) => {
+              setEndTime(v);
+              setEndTimeError('');
+            }}
+            error={endTimeError || undefined}
+          />
           <div>
             <Input
               label="Location"
@@ -416,36 +440,23 @@ export default function SettingsPage() {
       </Modal>
 
       <Modal visible={showRubrics} title="Rubric Reference" onClose={() => setShowRubrics(false)}>
-        <p className="mb-2 text-sm font-bold" style={{ color: colors.primary }}>
-          Skater Categories
-        </p>
-        {rubrics.skater.map((r) => (
+        {rubrics.length === 0 ? (
+          <p className="text-sm" style={{ color: colors.inkMuted }}>
+            No rubrics yet. Open the Rubric Builder to add some.
+          </p>
+        ) : null}
+        {rubrics.map((r) => (
           <div key={r.key} className="mb-2">
             <p className="text-base" style={{ color: colors.ink }}>
               {r.label}
             </p>
-            <p className="text-sm" style={{ color: colors.inkMuted }}>
-              {r.subskills.map((s) => s.label).join(', ')}
-            </p>
+            {r.category ? (
+              <p className="text-sm" style={{ color: colors.inkMuted }}>
+                {r.category}
+              </p>
+            ) : null}
           </div>
         ))}
-        {rubrics.goalie.length > 0 ? (
-          <>
-            <p className="mb-2 mt-4 text-sm font-bold" style={{ color: colors.primary }}>
-              Goalie Categories
-            </p>
-            {rubrics.goalie.map((r) => (
-              <div key={r.key} className="mb-2">
-                <p className="text-base" style={{ color: colors.ink }}>
-                  {r.label}
-                </p>
-                <p className="text-sm" style={{ color: colors.inkMuted }}>
-                  {r.subskills.map((s) => s.label).join(', ')}
-                </p>
-              </div>
-            ))}
-          </>
-        ) : null}
       </Modal>
 
       <Modal visible={showAssessor} title="Add Assessor" onClose={() => setShowAssessor(false)} hideDefaultFooter>

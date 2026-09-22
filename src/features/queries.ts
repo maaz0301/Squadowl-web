@@ -256,6 +256,17 @@ export function useAddManualTeamPlayerMutation(teamId: string) {
   });
 }
 
+export function useUpdateTeamRosterPlayerMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ athleteId, form }: { athleteId: string; form: AddPlayerForm }) =>
+      getDataSource().updateTeamRosterPlayer(teamId, athleteId, form),
+    onSuccess: () => {
+      invalidateTeamRoster(qc, teamId);
+    },
+  });
+}
+
 export function useUploadTeamPlayerPhotoMutation(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -280,10 +291,31 @@ export function useRemoveTeamRosterPlayerMutation(teamId: string) {
     // source of truth.
     onSuccess: (_data, athleteId) => {
       qc.setQueriesData<TeamRosterCache>({ queryKey: teamRosterKey(teamId) }, (old) =>
-        dropRosterPlayer(old, athleteId),
+        dropRosterPlayer(old ?? null, athleteId),
       );
       invalidateTeamRoster(qc, teamId);
     },
+  });
+}
+
+/**
+ * Remove a set of players from a team roster in one go — the Players tab's
+ * "select all, delete". Same optimistic drop as the single removal, applied to
+ * every id at once so the list doesn't shed rows one refetch at a time.
+ */
+export function useRemoveTeamRosterPlayersMutation(teamId: string, onProgress?: (done: number, total: number) => void) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (athleteIds: string[]) => getDataSource().removeTeamRosterPlayers(teamId, athleteIds, onProgress),
+    onSuccess: (_data, athleteIds) => {
+      const ids = new Set(athleteIds);
+      qc.setQueriesData<TeamRosterCache>({ queryKey: teamRosterKey(teamId) }, (old) =>
+        dropRosterPlayers(old ?? null, ids),
+      );
+    },
+    // Whatever the outcome: a partial failure still changed the roster, and the
+    // refetch is what shows which players are actually left.
+    onSettled: () => invalidateTeamRoster(qc, teamId),
   });
 }
 
@@ -296,22 +328,28 @@ type TeamRosterCache =
   | string[]
   | undefined;
 
-/** Removes an athlete from whichever of those shapes a cache entry holds. */
-function dropRosterPlayer(cache: TeamRosterCache, athleteId: string): TeamRosterCache {
+/** Removes athletes from whichever of those shapes a cache entry holds. The
+ * prefix also covers the single-player entry (useTeamRosterPlayerQuery), which
+ * has no `pages`; it is left alone here and dropped by the invalidate. */
+function dropRosterPlayers(cache: TeamRosterCache | TeamRosterPlayer | null, athleteIds: ReadonlySet<string>): TeamRosterCache {
   if (Array.isArray(cache)) {
     // Either the flat roster or the athlete-id list, depending on the entry.
     return (cache as unknown[]).filter((p) =>
-      typeof p === 'string' ? p !== athleteId : (p as TeamRosterPlayer).athleteId !== athleteId,
+      typeof p === 'string' ? !athleteIds.has(p) : !athleteIds.has((p as TeamRosterPlayer).athleteId),
     ) as TeamRosterCache;
   }
-  if (!cache) return cache;
+  if (!cache || !Array.isArray((cache as InfiniteData<TeamRosterPage>).pages)) return cache as TeamRosterCache;
   return {
-    ...cache,
-    pages: cache.pages.map((page) => ({
+    ...(cache as InfiniteData<TeamRosterPage>),
+    pages: (cache as InfiniteData<TeamRosterPage>).pages.map((page) => ({
       ...page,
-      players: page.players.filter((p) => p.athleteId !== athleteId),
+      players: page.players.filter((p) => !athleteIds.has(p.athleteId)),
     })),
   };
+}
+
+function dropRosterPlayer(cache: TeamRosterCache | TeamRosterPlayer | null, athleteId: string): TeamRosterCache {
+  return dropRosterPlayers(cache, new Set([athleteId]));
 }
 
 /**
@@ -756,6 +794,36 @@ export function useDeletePlayerMutation(tryoutId: string) {
             }
           : old,
       );
+      qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });
+    },
+  });
+}
+
+/**
+ * Delete several players from an assessment roster in one mutation. The
+ * per-player mutation invalidates several queries on every success; run over a
+ * whole roster that is hundreds of refetches, so this drops the rows from the
+ * cache once and invalidates once.
+ */
+export function useDeletePlayersMutation(tryoutId: string, onProgress?: (done: number, total: number) => void) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (playerIds: string[]) => getDataSource().deletePlayers(tryoutId, playerIds, onProgress),
+    onSettled: (result) => {
+      const gone = new Set(result?.deleted ?? []);
+      if (gone.size > 0) {
+        qc.setQueryData<Tryout | undefined>(queryKeys.tryout(tryoutId), (old) =>
+          old
+            ? {
+                ...old,
+                roster: old.roster.filter((p) => !gone.has(p.id)),
+                evals: old.evals.filter((e) => !gone.has(e.playerId)),
+              }
+            : old,
+        );
+      }
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
       qc.invalidateQueries({ queryKey: queryKeys.tryouts(true) });

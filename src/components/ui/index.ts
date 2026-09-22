@@ -4,7 +4,7 @@ export { Input, Textarea, Select, Checkbox, Switch, FieldShell, useFieldStyle } 
 export { Badge } from './Badge';
 export { Chip } from './Chip';
 export { Tabs, type TabItem } from './Tabs';
-export { Avatar } from './Avatar';
+export { Avatar, positionColor } from './Avatar';
 export { Modal, ModalFooter } from './Modal';
 export { EmptyState, ErrorState, LoadingState, Skeleton, CardGridSkeleton } from './States';
 export { PageHeader } from './PageHeader';
