@@ -40,6 +40,8 @@ import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
 import { prefetchNewAssessment, prefetchTryout } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 import { GuardianAthleteCard } from '@/components/GuardianAthleteCard';
+import { EditEvaluationModal } from '@/components/assessment/EditEvaluationModal';
+import type { TryoutSummary } from '@/data/types';
 
 export default function DashboardPage() {
   const colors = useThemeColors();
@@ -56,7 +58,14 @@ export default function DashboardPage() {
   const [assignedExpanded, setAssignedExpanded] = useState(true);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [decliningId, setDecliningId] = useState<string | null>(null);
-  const [actionTryout, setActionTryout] = useState<{ id: string; name: string } | null>(null);
+  const [actionTryout, setActionTryout] = useState<Pick<
+    TryoutSummary,
+    'id' | 'name' | 'tryoutDate' | 'startTime' | 'endTime' | 'rink'
+  > | null>(null);
+  const [editingTryout, setEditingTryout] = useState<Pick<
+    TryoutSummary,
+    'id' | 'name' | 'tryoutDate' | 'startTime' | 'endTime' | 'rink'
+  > | null>(null);
   // Tracks which card is mid archive/delete so its spinner shows immediately —
   // mirrors mobile's dashboard, where relying on the mutation's own isPending
   // was flaky because the modal closes (and re-renders the list) before the
@@ -124,8 +133,10 @@ export default function DashboardPage() {
   };
 
 
-  const handleDeleteAssessment = (id: string, name: string) => {
-    setActionTryout({ id, name });
+  const handleDeleteAssessment = (
+    tryout: Pick<TryoutSummary, 'id' | 'name' | 'tryoutDate' | 'startTime' | 'endTime' | 'rink'>,
+  ) => {
+    setActionTryout(tryout);
   };
 
   if (isGuardian) {
@@ -202,7 +213,7 @@ export default function DashboardPage() {
   // me; once they Complete Assessing it leaves their list. Coaches and admins
   // are never filtered — completing is the assessor's own view only.
   const myEmail = user?.email?.toLowerCase();
-  const tryouts = (tryoutsQuery.data ?? []).filter(
+  const allTryouts = (tryoutsQuery.data ?? []).filter(
     (t) =>
       role !== 'assessor' ||
       !t.assessors.some(
@@ -212,6 +223,14 @@ export default function DashboardPage() {
       ),
   );
   const teams = teamsQuery.data ?? [];
+  // The Evaluations list is for standalone evaluations. One created for a team
+  // lives on that team's own Evaluations tab, so showing it here as well made it
+  // look like it belonged to both. Only hidden when its team is one this user
+  // can actually open — an evaluation pointing at a team that isn't in their list
+  // would otherwise be unreachable from anywhere. The plan-limit checks below
+  // still count every evaluation the account owns, team-linked included.
+  const visibleTeamIds = new Set(teams.map((t) => t.id));
+  const tryouts = allTryouts.filter((t) => !t.teamId || !visibleTeamIds.has(t.teamId));
   const planTier = user?.planTier ?? 'free';
 
   // Hover / keyboard focus / the touch before the tap: a few hundred ms of
@@ -223,7 +242,7 @@ export default function DashboardPage() {
   };
 
   const newAssessment = () => {
-    if (isAtAssessmentLimit(planTier, tryouts.length)) {
+    if (isAtAssessmentLimit(planTier, allTryouts.length)) {
       setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'evaluations'));
       return;
     }
@@ -249,7 +268,7 @@ export default function DashboardPage() {
       />
 
       {loadingTryouts ? null : (
-        <UsageNudgeBanner tier={planTier} metric="assessments" count={tryouts.length} label="evaluations" />
+        <UsageNudgeBanner tier={planTier} metric="assessments" count={allTryouts.length} label="evaluations" />
       )}
 
       {canUseFeature(planTier, 'enterprise') ? (
@@ -475,7 +494,7 @@ export default function DashboardPage() {
                             // Inside a Link now, so the default has to go too.
                             e.preventDefault();
                             e.stopPropagation();
-                            handleDeleteAssessment(item.id, item.name);
+                            handleDeleteAssessment(item);
                           }}
                           className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
                         >
@@ -502,6 +521,17 @@ export default function DashboardPage() {
           <p className="mb-1 text-sm" style={{ color: colors.inkMuted }}>
             What would you like to do with &quot;{actionTryout?.name}&quot;?
           </p>
+          <Button
+            label="Edit Details"
+            variant="secondary"
+            onClick={() => {
+              const target = actionTryout;
+              setActionTryout(null);
+              // Straight from the tile instead of navigating to the
+              // evaluation's Settings page to find the same fields.
+              if (target) setEditingTryout(target);
+            }}
+          />
           <Button
             label="Archive Evaluation"
             variant="secondary"
@@ -542,6 +572,8 @@ export default function DashboardPage() {
           />
         </div>
       </Modal>
+
+      <EditEvaluationModal tryout={editingTryout} onClose={() => setEditingTryout(null)} />
 
       <LimitReachedModal visible={!!limitMsg} message={limitMsg || ''} onClose={() => setLimitMsg(null)} />
     </>

@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 
+import { normalizePosition } from '@/data/positions';
 import { AddPlayerFormSchema, type AddPlayerForm } from '@/data/types';
 
 /**
@@ -111,27 +112,78 @@ function cellText(value: unknown): string {
 }
 
 /**
- * Read a workbook into a heading row plus data rows.
+ * The block of the sheet that actually holds cells.
  *
- * The heading row is the first row with two or more filled cells, not simply
- * the first row: exported rosters routinely open with a title line, a club
- * name, or a blank spacer above the real headings.
+ * A sheet's declared range (`!ref`, from the file's <dimension> tag) is only a
+ * claim, and exporters get it wrong: a file that says `A1` or `A1:E2` over a
+ * twenty-row table reads back as one row, and a sheet with no dimension at all
+ * reads back as empty — the "imported one name out of twenty" case. So the range
+ * read is the union of what the file claims and where the cells really are.
  */
-export function parseWorkbook(data: ArrayBuffer, sheetName?: string): ParsedSheet {
-  const workbook = XLSX.read(data, { type: 'array' });
+function occupiedRange(sheet: XLSX.WorkSheet): XLSX.Range | null {
+  let range: XLSX.Range | null = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : null;
+  for (const key of Object.keys(sheet)) {
+    if (key.charAt(0) === '!') continue;
+    const { r, c } = XLSX.utils.decode_cell(key);
+    if (!range) {
+      range = { s: { r, c }, e: { r, c } };
+      continue;
+    }
+    if (r < range.s.r) range.s.r = r;
+    if (c < range.s.c) range.s.c = c;
+    if (r > range.e.r) range.e.r = r;
+    if (c > range.e.c) range.e.c = c;
+  }
+  return range;
+}
+
+/**
+ * Shape one sheet of a read workbook into a heading row plus data rows.
+ *
+ * The heading row is the first row that fills a majority of the sheet's
+ * columns, not simply the first row: exported rosters routinely open with a
+ * title line, a club name, a blank spacer, or a row of section labels
+ * ("Player Information" / "Guardian Information") above the real headings —
+ * all of which fill only a cell or two. Failing that, it falls back to the
+ * first row with two filled cells, then the first row with anything in it at
+ * all, for the sheets too narrow to ever have a majority-filled row.
+ */
+export function parseSheetOf(workbook: XLSX.WorkBook, sheetName?: string): ParsedSheet {
   if (workbook.SheetNames.length === 0) throw new Error('That file has no sheets in it.');
   const name = sheetName && workbook.SheetNames.includes(sheetName) ? sheetName : workbook.SheetNames[0];
+  const sheet = workbook.Sheets[name];
+  const range = sheet ? occupiedRange(sheet) : null;
+  if (!sheet || !range) throw new Error('No column headings found in that sheet.');
+  // sheet_to_json answers nothing at all for a sheet without a declared range,
+  // whatever `range` it is handed, so the one measured above becomes the declared one.
+  if (!sheet['!ref']) sheet['!ref'] = XLSX.utils.encode_range(range);
   // raw:false so dates and numbers arrive as the text the coach sees in Excel.
   // blankrows:true so a row's index in the grid is still its line in the file —
   // a blank spacer dropped here would shift every row number reported after it.
-  const grid = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], {
+  const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
     raw: false,
     defval: '',
     blankrows: true,
+    range,
   });
+  // The grid starts at the range's first row, which is only line 1 when the
+  // sheet does — a range that starts lower would otherwise shift every line.
+  const firstLine = range.s.r + 1;
 
-  const headerIndex = grid.findIndex((row) => row.filter((c) => cellText(c) !== '').length >= 2);
+  const filled = (row: unknown[]) => row.filter((c) => cellText(c) !== '').length;
+  // A row of section labels above the real headings ("Player Information" /
+  // "Guardian Information", each spanning several merged columns) fills just as
+  // many cells as the ">= 2" bar below asks for, so it would otherwise win over
+  // the real per-column header row underneath it. A row that fills a majority
+  // of the sheet's columns is what an actual header row looks like, so it gets
+  // first refusal; only when nothing clears that bar do we fall back to the
+  // looser thresholds for title lines and single-column sheets.
+  const sheetWidth = range.e.c - range.s.c + 1;
+  const majority = Math.max(2, Math.ceil(sheetWidth * 0.5));
+  let headerIndex = grid.findIndex((row) => filled(row) >= majority);
+  if (headerIndex === -1) headerIndex = grid.findIndex((row) => filled(row) >= 2);
+  if (headerIndex === -1) headerIndex = grid.findIndex((row) => filled(row) >= 1);
   if (headerIndex === -1) throw new Error('No column headings found in that sheet.');
 
   const headers = grid[headerIndex].map(cellText);
@@ -139,13 +191,42 @@ export function parseWorkbook(data: ArrayBuffer, sheetName?: string): ParsedShee
   const rows: SheetRow[] = grid
     .slice(headerIndex + 1)
     .map((row, i) => ({
-      line: headerIndex + 2 + i,
+      line: firstLine + headerIndex + 1 + i,
       cells: Array.from({ length: width }, (_, c) => cellText(row[c])),
     }))
     // Only now: blank rows carry no player, but they did carry a line number.
     .filter((row) => row.cells.some((c) => c !== ''));
 
-  return { sheetNames: workbook.SheetNames, sheetName: name, headers, rows, headerLine: headerIndex + 1 };
+  return {
+    sheetNames: workbook.SheetNames,
+    sheetName: name,
+    headers,
+    rows,
+    headerLine: firstLine + headerIndex,
+  };
+}
+
+/** Read a workbook into a heading row plus data rows. */
+export function parseWorkbook(data: ArrayBuffer, sheetName?: string): ParsedSheet {
+  const workbook = XLSX.read(data, { type: 'array' });
+  if (sheetName) return parseSheetOf(workbook, sheetName);
+
+  // No tab chosen yet: open on the first one that has players in it, so a
+  // workbook that leads with a cover or instructions sheet doesn't read as an
+  // empty roster. A workbook with nothing usable anywhere reports on its first.
+  let first: ParsedSheet | null = null;
+  let firstError: unknown = null;
+  for (const candidate of workbook.SheetNames) {
+    try {
+      const parsed = parseSheetOf(workbook, candidate);
+      if (parsed.rows.length > 0) return parsed;
+      first ??= parsed;
+    } catch (e) {
+      firstError ??= e;
+    }
+  }
+  if (first) return first;
+  throw firstError ?? new Error('No column headings found in that sheet.');
 }
 
 export async function parseRosterFile(file: File, sheetName?: string): Promise<ParsedSheet> {
@@ -169,14 +250,21 @@ export function guessMapping(headers: string[]): ColumnMapping {
     taken.add(index);
   };
 
+  const isSummaryHeader = (header: string) =>
+    /\b(total|count|summary|breakdown|average|avg|statistics|stats)\b/i.test(header) ||
+    header.startsWith('number of');
+
   const findColumn = (field: ImportField, loose: boolean): number | undefined => {
     for (const synonym of field.synonyms) {
-      const index = normalized.findIndex(
-        (header, i) =>
-          !taken.has(i) &&
-          header !== '' &&
-          (loose ? header.includes(synonym) || synonym.includes(header) : header === synonym),
-      );
+      const index = normalized.findIndex((header, i) => {
+        if (taken.has(i) || header === '') return false;
+        if (!loose) return header === synonym;
+        // In loose mode, skip summary/count headers for name fields
+        if (['first', 'last', 'fullName', 'guardianName'].includes(field.key) && isSummaryHeader(header)) {
+          return false;
+        }
+        return header.includes(synonym) || (header.length >= 3 && synonym.includes(header));
+      });
       if (index !== -1) return index;
     }
     return undefined;
@@ -250,7 +338,7 @@ export function buildImportRows(sheet: ParsedSheet, mapping: ColumnMapping): Imp
       first,
       last,
       jersey: at(row, 'jersey'),
-      pos: at(row, 'pos').toUpperCase(),
+      pos: normalizePosition(at(row, 'pos')),
       yearOfBirth: extractYear(at(row, 'yearOfBirth')),
       playerEmail: at(row, 'playerEmail'),
       guardianName: at(row, 'guardianName'),

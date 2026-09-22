@@ -193,6 +193,96 @@ export function rosterPositionGroups(sport: Sport, roster: { pos?: string | null
   return codes.map((code) => ({ key: code.toLowerCase(), label: code, codes: [code] }));
 }
 
+const POSITION_MAP: Record<string, string> = {
+  // Hockey & General
+  'LEFT WING': 'LW',
+  'RIGHT WING': 'RW',
+  'CENTRE': 'C',
+  'CENTER': 'C',
+  'LEFT DEFENCE': 'LD',
+  'LEFT DEFENSE': 'LD',
+  'RIGHT DEFENCE': 'RD',
+  'RIGHT DEFENSE': 'RD',
+  'DEFENCE': 'DEF',
+  'DEFENSE': 'DEF',
+  'DEFENDER': 'DEF',
+  'DEFENCEMAN': 'DEF',
+  'DEFENSEMAN': 'DEF',
+  'GOALIE': 'G',
+  'GOALTENDER': 'G',
+  'GOALKEEPER': 'GK',
+  'FORWARD': 'FWD',
+  'FORWARDS': 'FWD',
+  // Soccer
+  'CENTER BACK': 'CB',
+  'CENTRE BACK': 'CB',
+  'FULL BACK': 'FB',
+  'FULLBACK': 'FB',
+  'LEFT BACK': 'FB',
+  'RIGHT BACK': 'FB',
+  'DEFENSIVE MIDFIELDER': 'CDM',
+  'CENTRAL MIDFIELDER': 'CM',
+  'MIDFIELDER': 'CM',
+  'MIDFIELD': 'CM',
+  'ATTACKING MIDFIELDER': 'CAM',
+  'WINGER': 'W',
+  'STRIKER': 'ST',
+  // Baseball
+  'PITCHER': 'P',
+  'CATCHER': 'C',
+  'FIRST BASE': '1B',
+  'SECOND BASE': '2B',
+  'THIRD BASE': '3B',
+  'SHORTSTOP': 'SS',
+  'LEFT FIELD': 'LF',
+  'CENTER FIELD': 'CF',
+  'CENTRE FIELD': 'CF',
+  'RIGHT FIELD': 'RF',
+  'DESIGNATED HITTER': 'DH',
+  // Basketball
+  'POINT GUARD': 'PG',
+  'SHOOTING GUARD': 'SG',
+  'SMALL FORWARD': 'SF',
+  'POWER FORWARD': 'PF',
+  // Football
+  'QUARTERBACK': 'QB',
+  'RUNNING BACK': 'RB',
+  'WIDE RECEIVER': 'WR',
+  'TIGHT END': 'TE',
+  'OFFENSIVE LINE': 'OL',
+  'DEFENSIVE LINE': 'DL',
+  'LINEBACKER': 'LB',
+  'CORNERBACK': 'CB',
+  'SAFETY': 'S',
+  'KICKER': 'K',
+  'PUNTER': 'P',
+  // Volleyball
+  'SETTER': 'S',
+  'OUTSIDE HITTER': 'OH',
+  'OPPOSITE HITTER': 'OPP',
+  'MIDDLE BLOCKER': 'MB',
+  'LIBERO': 'L',
+  'DEFENSIVE SPECIALIST': 'DS',
+  // Lacrosse
+  'ATTACK': 'A',
+  'ATTACKER': 'A',
+  'FACE-OFF': 'FOGO',
+  'FACEOFF': 'FOGO',
+};
+
+/**
+ * Normalizes free-text or imported position labels (e.g. "Left Wing", "Defence", "Centre", "Goalie")
+ * into standard sport position codes (e.g. "LW", "DEF", "C", "G").
+ */
+export function normalizePosition(pos?: string | null): string {
+  if (!pos) return '';
+  const trimmed = pos.trim().toUpperCase();
+  return POSITION_MAP[trimmed] ?? trimmed;
+}
+
 export function isInPositionGroup(group: PositionGroup, pos?: string | null): boolean {
-  return !!pos && group.codes.includes(pos.trim().toUpperCase());
+  if (!pos) return false;
+  const raw = pos.trim().toUpperCase();
+  const normalized = normalizePosition(pos);
+  return group.codes.includes(raw) || group.codes.includes(normalized);
 }
