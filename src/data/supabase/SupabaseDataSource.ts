@@ -2241,63 +2241,54 @@ export class SupabaseDataSource implements DataSource {
   ): Promise<{ players: TeamRosterPlayer[]; nextCursor?: TeamRosterCursor }> {
     const { supabase, accountId, userId } = await this.ctx();
     const limit = opts?.limit ?? TEAM_ROSTER_SCREEN_PAGE;
-    const search = likeTerm(opts?.search ?? '');
-
-    let rows: Row[];
+    const search = opts?.search?.trim() ?? '';
 
     if (search) {
-      const parts = search.split(/\s+/).filter(Boolean);
-      const nameFilter =
-        parts.length > 1
-          ? `and(first_name.ilike.*${parts[0]}*,last_name.ilike.*${parts[1]}*),and(first_name.ilike.*${parts[1]}*,last_name.ilike.*${parts[0]}*),first_name.ilike.*${search}*,last_name.ilike.*${search}*`
-          : `first_name.ilike.*${search}*,last_name.ilike.*${search}*`;
+      const allPlayers = await this.listTeamRoster(teamId);
+      const searchLower = search.toLowerCase();
+      const parts = searchLower.split(/\s+/).filter(Boolean);
+      const filtered = allPlayers.filter((p) => {
+        const fullName = `${p.first} ${p.last}`.toLowerCase();
+        const jersey = p.jersey?.toLowerCase() ?? '';
+        const pos = p.pos?.toLowerCase() ?? '';
+        return (
+          parts.every((part) => fullName.includes(part) || jersey.includes(part) || pos.includes(part)) ||
+          fullName.includes(searchLower) ||
+          jersey.includes(searchLower)
+        );
+      });
 
-      const rosterAthleteIds = await this.listTeamRosterAthleteIds(teamId);
-      let nameMatches: { id: string }[] = [];
-      if (rosterAthleteIds.length) {
-        const { data, error } = await supabase
-          .from('athletes')
-          .select('id')
-          .in('id', rosterAthleteIds)
-          .or(nameFilter)
-          .limit(500);
-        if (error) throw error;
-        nameMatches = data ?? [];
-      }
-
-      const idList = nameMatches.map((a) => a.id as string).join(',');
-      let q = supabase
-        .from('team_roster')
-        .select(teamRosterSelect())
-        .eq('team_id', teamId)
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-        .limit(limit);
-
+      let startIndex = 0;
       if (opts?.after) {
-        const { createdAt, id } = opts.after;
-        q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
+        const { id } = opts.after;
+        const afterIdx = filtered.findIndex((p) => p.id === id);
+        if (afterIdx !== -1) {
+          startIndex = afterIdx + 1;
+        }
       }
-
-      q = q.or(`jersey.ilike.*${search}*${idList ? `,athlete_id.in.(${idList})` : ''}`);
-      rows = ((unwrap(await q) ?? []) as unknown) as Row[];
-    } else {
-      let q = supabase
-        .from('team_roster')
-        .select(teamRosterSelect())
-        .eq('team_id', teamId)
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-        .limit(limit);
-
-      if (opts?.after) {
-        const { createdAt, id } = opts.after;
-        q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
-      }
-
-      rows = ((unwrap(await q) ?? []) as unknown) as Row[];
+      const pagePlayers = filtered.slice(startIndex, startIndex + limit);
+      const last = pagePlayers[pagePlayers.length - 1];
+      const hasMore = startIndex + limit < filtered.length;
+      return {
+        players: pagePlayers,
+        nextCursor: hasMore && last ? { createdAt: '', id: last.id } : undefined,
+      };
     }
 
+    let q = supabase
+      .from('team_roster')
+      .select(teamRosterSelect())
+      .eq('team_id', teamId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(limit);
+
+    if (opts?.after) {
+      const { createdAt, id } = opts.after;
+      q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
+    }
+
+    const rows = ((unwrap(await q) ?? []) as unknown) as Row[];
     const last = rows[rows.length - 1];
     return {
       players: rows.map((r) => this.rowToTeamRosterPlayer(r, { accountId, userId })),
