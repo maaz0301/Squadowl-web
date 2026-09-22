@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { supabaseAdmin } from '../_shared/supabaseAdmin.ts';
@@ -58,9 +57,10 @@ serve(async (req: Request) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
-  } catch (error: any) {
-    console.error('request-password-reset Error:', error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('request-password-reset Error:', message);
+    return new Response(JSON.stringify({ error: message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     });
