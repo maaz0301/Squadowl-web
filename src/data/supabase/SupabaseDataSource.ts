@@ -2243,60 +2243,59 @@ export class SupabaseDataSource implements DataSource {
     const limit = opts?.limit ?? TEAM_ROSTER_SCREEN_PAGE;
     const search = likeTerm(opts?.search ?? '');
 
-let rows: Row[];
+    let rows: Row[];
 
-if (search) {
-  const parts = search.split(/\s+/).filter(Boolean);
-  const nameFilter =
-    parts.length > 1
-      ? `and(first_name.ilike.*${parts[0]}*,last_name.ilike.*${parts[1]}*),and(first_name.ilike.*${parts[1]}*,last_name.ilike.*${parts[0]}*),first_name.ilike.*${search}*,last_name.ilike.*${search}*`
-      : `first_name.ilike.*${search}*,last_name.ilike.*${search}*`;
+    if (search) {
+      const parts = search.split(/\s+/).filter(Boolean);
+      const nameFilter =
+        parts.length > 1
+          ? `and(first_name.ilike.*${parts[0]}*,last_name.ilike.*${parts[1]}*),and(first_name.ilike.*${parts[1]}*,last_name.ilike.*${parts[0]}*),first_name.ilike.*${search}*,last_name.ilike.*${search}*`
+          : `first_name.ilike.*${search}*,last_name.ilike.*${search}*`;
 
-  const rosterAthleteIds = await this.listTeamRosterAthleteIds(teamId);
-  let nameMatches: { id: string }[] = [];
-  if (rosterAthleteIds.length) {
-    const { data, error } = await supabase
-      .from('athletes')
-      .select('id')
-      .in('id', rosterAthleteIds)
-      .or(nameFilter)
-      .limit(500);
-    if (error) throw error;
-    nameMatches = data ?? [];
-  }
+      const rosterAthleteIds = await this.listTeamRosterAthleteIds(teamId);
+      let nameMatches: { id: string }[] = [];
+      if (rosterAthleteIds.length) {
+        const { data, error } = await supabase
+          .from('athletes')
+          .select('id')
+          .in('id', rosterAthleteIds)
+          .or(nameFilter)
+          .limit(500);
+        if (error) throw error;
+        nameMatches = data ?? [];
+      }
 
-  const idList = nameMatches.map((a) => a.id as string).join(',');
-  let q = supabase
-    .from('team_roster')
-    .select(teamRosterSelect())
-    .eq('team_id', teamId)
-    .order('created_at', { ascending: true })
-    .order('id', { ascending: true })
-    .limit(limit);
+      const idList = nameMatches.map((a) => a.id as string).join(',');
+      let q = supabase
+        .from('team_roster')
+        .select(teamRosterSelect())
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(limit);
 
-  if (opts?.after) {
-    const { createdAt, id } = opts.after;
-    q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
-  }
+      if (opts?.after) {
+        const { createdAt, id } = opts.after;
+        q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
+      }
 
-  q = q.or(`jersey.ilike.*${search}*${idList ? `,athlete_id.in.(${idList})` : ''}`);
-  rows = ((unwrap(await q) ?? []) as unknown) as Row[];
-} else {
-  let q = supabase
-    .from('team_roster')
-    .select(teamRosterSelect())
-    .eq('team_id', teamId)
-    .order('created_at', { ascending: true })
-    .order('id', { ascending: true })
-    .limit(limit);
+      q = q.or(`jersey.ilike.*${search}*${idList ? `,athlete_id.in.(${idList})` : ''}`);
+      rows = ((unwrap(await q) ?? []) as unknown) as Row[];
+    } else {
+      let q = supabase
+        .from('team_roster')
+        .select(teamRosterSelect())
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(limit);
 
-  if (opts?.after) {
-    const { createdAt, id } = opts.after;
-    q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
-  }
+      if (opts?.after) {
+        const { createdAt, id } = opts.after;
+        q = q.or(`created_at.gt."${createdAt}",and(created_at.eq."${createdAt}",id.gt.${id})`);
+      }
 
-  rows = ((unwrap(await q) ?? []) as unknown) as Row[];
-}
+      rows = ((unwrap(await q) ?? []) as unknown) as Row[];
     }
 
     const last = rows[rows.length - 1];
