@@ -6,7 +6,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Card, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
-import { useTryoutQuery, useShareLinkMutation } from '@/features/queries';
+import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery } from '@/features/queries';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -21,6 +21,8 @@ export default function ExportPage() {
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   const shareMut = useShareLinkMutation(id!);
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
 
@@ -104,7 +106,7 @@ export default function ExportPage() {
                 PDF Export
               </span>
               <span style={{ color: colors.inkMuted }}>Requires the Coach+ plan or higher. You&apos;re on {tier}.</span>
-              <Button label="View Plans" onClick={() => router.push('/upgrade')} />
+              {!billingBlocked ? <Button label="View Plans" onClick={() => router.push('/upgrade')} /> : null}
             </Card>
           ) : null}
           {!allowedFormats.includes('xlsx') ? (
@@ -113,7 +115,7 @@ export default function ExportPage() {
                 XLSX Export
               </span>
               <span style={{ color: colors.inkMuted }}>Requires the Club plan or higher. You&apos;re on {tier}.</span>
-              <Button label="View Plans" onClick={() => router.push('/upgrade')} />
+              {!billingBlocked ? <Button label="View Plans" onClick={() => router.push('/upgrade')} /> : null}
             </Card>
           ) : null}
         </div>

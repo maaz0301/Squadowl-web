@@ -7,6 +7,7 @@ import { Button, Card } from '@/components/ui';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import type { PlanTier } from '@/data/types';
 import { useUser } from '@/state/authStore';
+import { usePlatformBlockedFeaturesQuery } from '@/features/queries';
 
 type Feature = keyof ReturnType<typeof getPlanDefinition>['limits'];
 
@@ -45,6 +46,8 @@ export function PlanGate({ feature, children, title, tierOverride }: Props) {
   const router = useRouter();
   const user = useUser();
   const tier = tierOverride ?? user?.planTier ?? 'free';
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
 
   if (canUseFeature(tier, feature)) return <>{children}</>;
 
@@ -58,7 +61,11 @@ export function PlanGate({ feature, children, title, tierOverride }: Props) {
       <p style={{ color: colors.inkMuted }}>
         This feature requires the {planLabel(required)} plan or higher. You&apos;re on {planLabel(tier)}.
       </p>
-      <Button label="View Plans" onClick={() => router.push('/upgrade')} />
+      {billingBlocked ? (
+        <Button label="Upgrades unavailable right now" variant="secondary" disabled />
+      ) : (
+        <Button label="View Plans" onClick={() => router.push('/upgrade')} />
+      )}
     </Card>
   );
 }

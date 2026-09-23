@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, SectionLabel, useAlert } from '@/components/ui';
 import { formatCad } from '@/data/plans';
-import { useReferralSummaryQuery } from '@/features/queries';
+import { useReferralSummaryQuery, usePlatformBlockedFeaturesQuery } from '@/features/queries';
 import type { ReferralLedgerEntry } from '@/data/types';
 
 const REFERRAL_BONUS_CENTS = 100;
@@ -43,6 +43,8 @@ export default function LoyaltyPage() {
   const { alert } = useAlert();
   const summaryQuery = useReferralSummaryQuery();
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
 
   if (summaryQuery.isLoading) return <LoadingState message="Loading your loyalty program..." />;
   if (summaryQuery.isError) {
@@ -143,7 +145,7 @@ export default function LoyaltyPage() {
             ? ` · ${formatCad(remainingCents)} still available to earn this year.`
             : ' · you have reached this year’s maximum.'}
         </p>
-        {balanceCents > 0 ? (
+        {balanceCents > 0 && !billingBlocked ? (
           <Button label="Redeem on a Subscription" className="mt-1" onClick={() => router.push('/upgrade')} />
         ) : null}
       </Card>

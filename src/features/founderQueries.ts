@@ -7,6 +7,9 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import * as billingApi from '@/data/founder/billingApi';
 import * as founderApi from '@/data/founder/founderApi';
+import type { BlockableFeature } from '@/lib/blockableFeatures';
+import type { PlanTier } from '@/data/types';
+import { queryKeys } from '@/lib/queryClient';
 import type {
   FounderAccessKind,
   FounderCreateOrganizationInput,
@@ -154,6 +157,28 @@ export function useUpdateOrganizationAccessMutation() {
       trialDays?: number;
     }) => founderApi.updateOrganizationAccess(accountId, planTier, access, trialDays),
     onSuccess: () => invalidateFounder(qc),
+  });
+}
+
+export function useSetPlatformBlockedFeaturesMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (blockedFeatures: BlockableFeature[]) => founderApi.setPlatformBlockedFeatures(blockedFeatures),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.platformBlockedFeatures });
+      void qc.invalidateQueries({ queryKey: founderKeys.auditLog });
+    },
+  });
+}
+
+export function useSetPlatformBlockedPlanTiersMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (blockedPlanTiers: PlanTier[]) => founderApi.setPlatformBlockedPlanTiers(blockedPlanTiers),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.platformBlockedPlanTiers });
+      void qc.invalidateQueries({ queryKey: founderKeys.auditLog });
+    },
   });
 }
 

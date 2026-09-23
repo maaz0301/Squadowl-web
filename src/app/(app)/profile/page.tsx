@@ -13,11 +13,13 @@ import {
   useUpdateProfileMutation,
   useUpdatePasswordMutation,
   useUploadCoachPhotoMutation,
+  usePlatformBlockedFeaturesQuery,
 } from '@/features/queries';
 import { useIsFounderQuery } from '@/features/founderQueries';
 import { FounderProfileCard } from '@/components/founder/FounderProfileCard';
 import { getDataSource } from '@/data';
 import { PasswordSchema } from '@/data/types';
+import { blockableFeatureForPath } from '@/lib/blockableFeatures';
 
 const QUICK_LINKS = [
   { href: '/search', label: 'Search' },
@@ -46,6 +48,14 @@ export default function ProfilePage() {
   const { data: founderCheck } = useIsFounderQuery(!isGuardian);
   // While viewing as an organization, show the profile the way that organization's admin would.
   const isFounder = founderCheck === true && !user?.impersonating;
+  // Same exemption as AppShell's own nav: founder mode and "view as" never see these as blocked.
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const blockedFeatures =
+    isFounder || user?.impersonating ? new Set<string>() : new Set(platformBlockedFeatures ?? []);
+  const quickLinks = QUICK_LINKS.filter((l) => {
+    const feature = blockableFeatureForPath(l.href, isGuardian);
+    return !feature || !blockedFeatures.has(feature);
+  });
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -138,7 +148,7 @@ export default function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Profile" showBack />
+      <PageHeader title="Profile" />
 
       <Card accent className="flex flex-col items-center gap-2 py-6">
         <button type="button" onClick={() => fileRef.current?.click()} disabled={uploadPhoto.isPending} className="flex flex-col items-center gap-1">
@@ -252,7 +262,9 @@ export default function ProfilePage() {
                   </p>
                 ) : null}
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <Button label="Upgrade Plan" variant="secondary" onClick={() => router.push('/upgrade')} />
+                  {!blockedFeatures.has('billing') ? (
+                    <Button label="Upgrade Plan" variant="secondary" onClick={() => router.push('/upgrade')} />
+                  ) : null}
                   {user?.subscriptionStatus === 'active' || user?.subscriptionStatus === 'trialing' ? (
                     <Button
                       label="Manage Subscription"
@@ -269,7 +281,7 @@ export default function ProfilePage() {
 
               <Card className="flex flex-col gap-1">
                 <SectionLabel>Quick Links</SectionLabel>
-                {QUICK_LINKS.map((l) => (
+                {quickLinks.map((l) => (
                   <Link
                     key={l.href}
                     href={l.href}

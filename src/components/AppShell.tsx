@@ -10,7 +10,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Button, LoadingState, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
-import { useIsFeedbackReviewerQuery, useGuardianRostersQuery } from '@/features/queries';
+import { useIsFeedbackReviewerQuery, useGuardianRostersQuery, usePlatformBlockedFeaturesQuery } from '@/features/queries';
 import { useIsFounderQuery } from '@/features/founderQueries';
 import { featureForPath, trackFeatureUse } from '@/lib/analytics';
 import { ImpersonationBanner, SuspendedAccountScreen, TrialEndingNotice } from '@/components/AccountAccessNotices';
@@ -20,6 +20,8 @@ import { NavPending } from '@/components/NavPending';
 import { SubscriptionEndingBanner } from '@/components/SubscriptionEndingBanner';
 import { canUseFeature } from '@/data/plans';
 import { APP_CONFIG } from '@/config/app';
+import { blockableFeatureForPath } from '@/lib/blockableFeatures';
+import { FeatureBlockedScreen } from '@/components/AccountAccessNotices';
 
 /** Mirrors is_founder() in 20260916120000_founder_org_management.sql. */
 const FOUNDER_EMAIL = 'founder@tryout.ca';
@@ -113,6 +115,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // blocked, and neither is "view as" — looking at a suspended org is the point.
   const blocked = user?.accessStatus === 'suspended' && !user.impersonating && !isFounder;
 
+  // The founder blocked the section the current route belongs to (see
+  // blockedFeatures below) — checked once that's in scope, further down.
+  const routeBlockedFeature = blockableFeatureForPath(pathname, isGuardian);
+
   // Shares its cache with the dashboard's own read (same query key), so this
   // costs nothing extra — it just lets the sidebar know whether this
   // coach/assessor account is *also* linked as a guardian on some athlete
@@ -121,9 +127,23 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { data: guardianAthletes } = useGuardianRostersQuery(!isGuardian);
   const hasGuardianAthletes = !isGuardian && (guardianAthletes?.length ?? 0) > 0;
 
-  const primary: NavItem[] = founderMode
+  // Hub sections the founder has turned off for the whole platform (see
+  // src/lib/blockableFeatures.ts). A UI-level gate, so it's exempt for the
+  // founder's own console and for "view as", same as the suspended check above.
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const blockedFeatures =
+    founderMode || user?.impersonating ? new Set<string>() : new Set(platformBlockedFeatures ?? []);
+  const hideIfBlocked = (items: NavItem[]) =>
+    items.filter((item) => {
+      const feature = blockableFeatureForPath(item.href, isGuardian);
+      return !feature || !blockedFeatures.has(feature);
+    });
+  const featureBlocked = !!routeBlockedFeature && blockedFeatures.has(routeBlockedFeature);
+
+  const primaryUnfiltered: NavItem[] = founderMode
     ? [
         { href: '/founder', label: 'Founder Console', icon: 'admin', exact: true },
+        { href: '/founder/feature-blocks', label: 'Feature Blocks', icon: 'lock' },
         { href: '/founder/analytics', label: 'Analytics', icon: 'chart' },
         { href: '/founder/billing', label: 'Billing & Revenue', icon: 'payments' },
         { href: '/founder/users', label: 'Users', icon: 'members' },
@@ -146,8 +166,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           ? ([{ href: '/my-athletes', label: 'My Athletes', icon: 'teams' }] as NavItem[])
           : []),
       ];
+  const primary = hideIfBlocked(primaryUnfiltered);
 
-  const secondary: NavItem[] = isGuardian || founderMode
+  const secondaryUnfiltered: NavItem[] = isGuardian || founderMode
     ? []
     : [
         { href: '/archived-assessments', label: 'Archived', icon: 'archive' },
@@ -168,6 +189,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           ? ([{ href: '/feedback/reports', label: 'Feedback Portal', icon: 'feedback' }] as NavItem[])
           : []),
       ];
+  const secondary = hideIfBlocked(secondaryUnfiltered);
 
   const isActive = (item: NavItem) =>
     pathname === item.href ||
@@ -279,7 +301,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : null}
           </span>
         </Link>
-        {!isGuardian && !founderMode && planTier !== 'club' ? (
+        {!isGuardian && !founderMode && planTier !== 'club' && !blockedFeatures.has('billing') ? (
           <Button
             label="Upgrade"
             size="sm"
@@ -407,6 +429,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <LoadingState message="Loading..." />
           ) : blocked ? (
             <SuspendedAccountScreen />
+          ) : featureBlocked && routeBlockedFeature ? (
+            <FeatureBlockedScreen feature={routeBlockedFeature} />
           ) : (
             <>
               <TrialEndingNotice />

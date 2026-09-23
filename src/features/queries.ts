@@ -2493,6 +2493,31 @@ export function useIsFeedbackReviewerQuery(enabled = true) {
   });
 }
 
+/**
+ * Every signed-in screen reads this to hide a blocked nav item and show a
+ * blocked screen in its place — not just the founder console. `staleTime:
+ * Infinity` since it only ever changes when the founder flips a switch, and a
+ * stale copy just means the founder's own follow-up visit refetches on focus.
+ */
+export function usePlatformBlockedFeaturesQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.platformBlockedFeatures,
+    queryFn: () => getDataSource().getPlatformBlockedFeatures(),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
+/** The Plans & Billing screen reads this to hide checkout/upgrade for one plan tier platform-wide. */
+export function usePlatformBlockedPlanTiersQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.platformBlockedPlanTiers,
+    queryFn: () => getDataSource().getPlatformBlockedPlanTiers(),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
 export function useFeedbackSubmissionsQuery(enabled = true) {
   return useQuery({
     queryKey: queryKeys.feedbackSubmissions,

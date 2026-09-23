@@ -7,6 +7,7 @@ import { Card, Button } from '@/components/ui';
 import { hasLiveSubscription } from '@/lib/planChange';
 import { getPlanDefinition } from '@/data/plans';
 import { useUser } from '@/state/authStore';
+import { usePlatformBlockedFeaturesQuery } from '@/features/queries';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
@@ -32,6 +33,8 @@ export function SubscriptionEndingBanner() {
   const pathname = usePathname();
   const user = useUser();
   const [dismissed, setDismissed] = useState(false);
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
 
   const cancelAt = user?.subscriptionCancelAt;
   const pendingTier = user?.pendingPlanTier;
@@ -75,7 +78,7 @@ export function SubscriptionEndingBanner() {
         {message}
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-3">
-        <Button label="Manage Plan" size="sm" onClick={() => router.push('/upgrade')} />
+        {!billingBlocked ? <Button label="Manage Plan" size="sm" onClick={() => router.push('/upgrade')} /> : null}
         <button
           type="button"
           onClick={() => setDismissed(true)}

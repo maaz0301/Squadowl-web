@@ -5,6 +5,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Card, useAlert } from '@/components/ui';
 import { useImpersonation } from '@/features/useImpersonation';
 import { daysUntil } from '@/lib/accountAccess';
+import { BLOCKABLE_FEATURE_LABEL, type BlockableFeature } from '@/lib/blockableFeatures';
 import { useAuthStore, useUser } from '@/state/authStore';
 
 /** Replaces every screen for a member whose organization is suspended. */
@@ -81,6 +82,27 @@ export function SuspendedAccountScreen() {
               router.push('/login');
             }}
           />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/** Replaces one section for an account whose founder has turned that section off. */
+export function FeatureBlockedScreen({ feature }: { feature: BlockableFeature }) {
+  const colors = useThemeColors();
+
+  return (
+    <div className="mx-auto flex max-w-lg flex-col gap-4 py-10">
+      <Card accent className="flex flex-col gap-3">
+        <h1 className="text-xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+          {BLOCKABLE_FEATURE_LABEL[feature]} is unavailable
+        </h1>
+        <p className="text-sm break-words" style={{ color: colors.inkMuted }}>
+          The rest of your account is unaffected — contact TryoutHQ if you think this is a mistake.
+        </p>
+        <div>
+          <Button label="Email founder@tryout.ca" onClick={() => (window.location.href = 'mailto:founder@tryout.ca')} />
         </div>
       </Card>
     </div>

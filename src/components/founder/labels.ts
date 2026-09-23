@@ -80,11 +80,24 @@ export const AUDIT_ACTION_LABEL: Record<FounderAuditAction, string> = {
   remove_assessor: 'Removed an assessor in',
   update_evaluation: 'Edited evaluation scores in',
   delete_evaluation: 'Deleted an evaluation record in',
+  update_platform_blocked_features: 'Changed platform-wide blocked sections for',
+  update_platform_blocked_plan_tiers: 'Changed platform-wide blocked plan tiers for',
 };
 
 export const AUDIT_CATEGORIES: { value: string; label: string; actions: FounderAuditAction[] }[] = [
   { value: '', label: 'All activity', actions: [] },
-  { value: 'organizations', label: 'Organizations & access', actions: ['suspend', 'reactivate', 'create_org', 'update_access'] },
+  {
+    value: 'organizations',
+    label: 'Organizations & access',
+    actions: [
+      'suspend',
+      'reactivate',
+      'create_org',
+      'update_access',
+      'update_platform_blocked_features',
+      'update_platform_blocked_plan_tiers',
+    ],
+  },
   { value: 'view_as', label: 'View-as sessions', actions: ['impersonate_start', 'impersonate_end'] },
   {
     value: 'users',

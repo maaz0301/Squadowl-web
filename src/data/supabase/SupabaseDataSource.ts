@@ -3,9 +3,11 @@ import { getSupabase } from '@/lib/supabase';
 import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
+import { PLAN_TIERS } from '../types';
 import { bulkImportPlayers } from '../bulkTeamImport';
 import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
 import { deriveAccountAccess, isExpiredTrial } from '@/lib/accountAccess';
+import { isBlockableFeature } from '@/lib/blockableFeatures';
 import {
   VIEW_AS_READ_ONLY_MESSAGE,
   getImpersonatedUser,
@@ -100,6 +102,7 @@ import type {
   ExportFormat,
   FamilyContact,
   Org,
+  PlanTier,
   Player,
   LetterTemplate,
   PlayerLetter,
@@ -8092,6 +8095,29 @@ export class SupabaseDataSource implements DataSource {
       return false;
     }
     return data === true;
+  }
+
+  async getPlatformBlockedFeatures() {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc('platform_blocked_features');
+    // A missing function (the migration not yet applied) reads as "nothing
+    // blocked" rather than a broken shell for every signed-in user.
+    if (error) {
+      console.warn('Could not check platform feature blocks:', error.message);
+      return [];
+    }
+    return ((data as string[] | null) ?? []).filter(isBlockableFeature);
+  }
+
+  async getPlatformBlockedPlanTiers(): Promise<PlanTier[]> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc('platform_blocked_plan_tiers');
+    if (error) {
+      console.warn('Could not check platform plan-tier blocks:', error.message);
+      return [];
+    }
+    const tiers: readonly string[] = PLAN_TIERS;
+    return ((data as string[] | null) ?? []).filter((t): t is PlanTier => tiers.includes(t));
   }
 
   async listFeedbackSubmissions(): Promise<FeedbackReport[]> {

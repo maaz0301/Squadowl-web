@@ -337,6 +337,19 @@ export interface DataSource {
   deleteFeedbackAttachment(path: string): Promise<void>;
   /** Whether the signed-in user may read everyone's feedback — see the `feedback_reviewers` allowlist. */
   isFeedbackReviewer(): Promise<boolean>;
+  /**
+   * Hub sections the founder has turned off for the whole platform (every
+   * organization, every user) — see `platform_settings.blocked_features`.
+   * Every signed-in screen reads this to gate its own nav, not just the
+   * founder console.
+   */
+  getPlatformBlockedFeatures(): Promise<import('@/lib/blockableFeatures').BlockableFeature[]>;
+  /**
+   * Plan tiers the founder has hidden from checkout/upgrade for the whole
+   * platform — see `platform_settings.blocked_plan_tiers`. Doesn't affect
+   * anyone already subscribed to a blocked tier.
+   */
+  getPlatformBlockedPlanTiers(): Promise<import('./types').PlanTier[]>;
   /** Every submission, newest first. RLS narrows this to the caller's own unless they are a reviewer. */
   listFeedbackSubmissions(): Promise<import('./extras').FeedbackReport[]>;
   /** A short-lived signed URL for one attachment in the private bucket. */
