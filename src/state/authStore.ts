@@ -7,6 +7,7 @@ import { queryClient } from '@/lib/queryClient';
 import { warmAfterAuth } from '@/features/prefetch';
 import { useSessionStore } from './sessionStore';
 import { flushPendingReferralCode } from '@/lib/pendingReferral';
+import { resetPlanNotice } from '@/lib/planNoticeSession';
 
 /**
  * Set while logout() tears the session down. The SDK fires SIGNED_OUT during
@@ -69,6 +70,7 @@ export const useAuthStore = create<AuthState>()(
       setHydrated: (v) => set({ isHydrated: v }),
       login: async (email, password) => {
         const session = await getDataSource().login(email, password);
+        resetPlanNotice();
         get().setSession(session);
         // The e-mail-confirmation path lands here: signup couldn't attach the
         // referral code because it had no session, so this is the first chance
@@ -77,9 +79,11 @@ export const useAuthStore = create<AuthState>()(
       },
       signup: async (displayName, email, password, accountType) => {
         const session = await getDataSource().signup(displayName, email, password, accountType);
+        resetPlanNotice();
         get().setSession(session);
       },
       logout: async () => {
+        resetPlanNotice();
         deliberateSignOut = true;
         set({ sessionExpired: false });
         try {

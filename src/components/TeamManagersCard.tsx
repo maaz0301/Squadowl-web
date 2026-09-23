@@ -165,8 +165,8 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
             onClick={handleInvite}
           />
           <p className="text-xs" style={{ color: colors.inkMuted }}>
-            If they don&apos;t have a TryoutHQ account yet, one is created and their sign-in details are
-            emailed to them.
+            They&apos;ll get an email with an Accept Invitation button. If they don&apos;t have a TryoutHQ
+            account yet, the email asks them to create one first.
           </p>
         </div>
       </Card>

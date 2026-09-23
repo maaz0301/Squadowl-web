@@ -8,6 +8,7 @@ import { hasLiveSubscription } from '@/lib/planChange';
 import { getPlanDefinition } from '@/data/plans';
 import { useUser } from '@/state/authStore';
 import { usePlatformBlockedFeaturesQuery } from '@/features/queries';
+import { dismissPlanNotice, isPlanNoticeDismissed } from '@/lib/planNoticeSession';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
@@ -24,6 +25,9 @@ function formatDate(ms: number): string {
  * one in a schedule. Without this the only available reading is "I chose it and
  * nothing happened" — which is exactly how both were first reported as bugs.
  *
+ * Shown as soon as the coach logs in, and stays until they dismiss it; after
+ * that it is not shown again in this login session (see planNoticeSession).
+ *
  * Suppressed on /upgrade itself, where the same dates are already shown in the
  * subscription card with the full restart flow attached.
  */
@@ -32,7 +36,8 @@ export function SubscriptionEndingBanner() {
   const router = useRouter();
   const pathname = usePathname();
   const user = useUser();
-  const [dismissed, setDismissed] = useState(false);
+  const [, rerender] = useState(0);
+  const dismissed = isPlanNoticeDismissed(user?.id);
   const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
   const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
 
@@ -81,7 +86,10 @@ export function SubscriptionEndingBanner() {
         {!billingBlocked ? <Button label="Manage Plan" size="sm" onClick={() => router.push('/upgrade')} /> : null}
         <button
           type="button"
-          onClick={() => setDismissed(true)}
+          onClick={() => {
+            if (user) dismissPlanNotice(user.id);
+            rerender((n) => n + 1);
+          }}
           className="min-h-[40px] px-1 text-xs"
           style={{ color: colors.inkMuted }}
         >

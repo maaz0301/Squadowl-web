@@ -297,8 +297,8 @@ export default function NewTeamPage() {
                 <SectionLabel>Invite a manager (optional)</SectionLabel>
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
                   Give them this team&apos;s roster, schedule, and chat as soon as it&apos;s created, and let
-                  them create its evaluations — but nothing else on your account. If they don&apos;t have a TryoutHQ
-                  account yet, one is created and their sign-in details are emailed to them.
+                  them create its evaluations — but nothing else on your account. They&apos;ll get an email with an
+                  Accept Invitation button. If they don&apos;t have a TryoutHQ account yet, it asks them to create one first.
                 </p>
                 <Input
                   label="Email address"

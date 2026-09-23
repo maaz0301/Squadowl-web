@@ -100,26 +100,27 @@ function tplOrgInvite(role: string, password?: string) {
   };
 }
 
-function tplTeamManagerInvite(teamName: string, role: string, password?: string) {
+function tplTeamManagerInvite(teamName: string, role: string, inviteUrl?: string, email?: string, newUser?: boolean) {
   const safeTeam = escapeHtml(teamName);
   const roleLabel = role === 'coach' ? 'Coach' : 'Manager';
-  const pwBlock = password ? `
-    <div style="background:#0f0f13;border:1px solid #6366f1;border-radius:12px;padding:24px;margin:24px 0;text-align:center;">
-      <p style="margin:0 0 8px;color:#9ca3af;font-size:12px;text-transform:uppercase;letter-spacing:1.5px;">Temporary Password</p>
-      <p style="margin:0;font-size:32px;font-weight:700;letter-spacing:8px;color:#a78bfa;font-family:monospace;">${password}</p>
-    </div>
-    <p style="color:#f59e0b;font-size:13px;margin:0 0 24px;padding:12px 16px;background:#1c1200;border-radius:8px;border-left:3px solid #f59e0b;">
-      ⚠️ Please change this password after your first login for security.
-    </p>` : '';
+  const cta = inviteUrl ? `
+      <p style="margin:28px 0 8px;">
+        <a href="${escapeHtml(inviteUrl)}" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;text-decoration:none;border-radius:10px;font-size:16px;font-weight:700;">
+          ${newUser ? 'Create Account' : 'Accept Invitation'}
+        </a>
+      </p>` : '';
+  const who = email ? `<strong style="color:#a78bfa;">${escapeHtml(email)}</strong>` : 'this email address';
+  const next = newUser
+    ? `You don't have a TryoutHQ account yet. Create one with ${who} and choose your own password, then let the club know so they can give you access to the team.`
+    : `Sign in with ${who} to accept the invitation and open the team.`;
   return {
-    subject: `You've been added to ${safeTeam} on TryoutHQ`,
-    html: wrap("You've Been Added to a Team! 🏒", `
+    subject: `You've been invited to manage ${safeTeam} on TryoutHQ`,
+    html: wrap("You're Invited to Manage a Team 🏒", `
       <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
-        You've been given access to manage <strong style="color:#a78bfa;">${safeTeam}</strong> on
+        You've been invited to manage <strong style="color:#a78bfa;">${safeTeam}</strong> on
         <strong style="color:#a78bfa;">TryoutHQ</strong> as its
         <span style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:2px 14px;border-radius:20px;font-size:14px;font-weight:600;">${roleLabel}</span>.
       </p>
-      ${pwBlock}
       <div style="background:#0f0f13;border-radius:12px;padding:20px 24px;margin:20px 0;border-left:4px solid #6366f1;">
         <p style="color:#9ca3af;font-size:13px;margin:0 0 4px;">What you can do</p>
         <p style="color:#fff;font-size:15px;line-height:1.6;margin:0;">
@@ -127,8 +128,9 @@ function tplTeamManagerInvite(teamName: string, role: string, password?: string)
         </p>
       </div>
       <p style="color:#9ca3af;font-size:15px;line-height:1.7;margin:0;">
-        Log in (or sign up with this email) to get started.
+        ${next}
       </p>
+      ${cta}
     `),
   };
 }
@@ -586,7 +588,7 @@ serve(async (req: Request) => {
       payload?.position,
       to,
     ));
-    else if (type === 'team_manager_invite') ({ subject, html } = tplTeamManagerInvite(payload?.teamName ?? 'a team', payload?.role ?? 'manager', payload?.password));
+    else if (type === 'team_manager_invite') ({ subject, html } = tplTeamManagerInvite(payload?.teamName ?? 'a team', payload?.role ?? 'manager', payload?.inviteUrl, to, payload?.newUser === true));
     else if (type === 'tryout_invite') ({ subject, html } = tplTryoutInvite(payload?.tryoutName, payload?.inviteUrl, to));
     else if (type === 'schedule_update') ({ subject, html, attachments } = tplScheduleUpdate(payload ?? {}, to));
     else if (type === 'reminder') ({ subject, html } = tplReminder(payload?.title ?? 'Upcoming Event', payload?.message ?? 'This is a reminder for an upcoming event.'));
