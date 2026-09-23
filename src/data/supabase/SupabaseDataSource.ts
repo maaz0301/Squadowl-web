@@ -2104,6 +2104,8 @@ export class SupabaseDataSource implements DataSource {
       createdAt: toMs(t.created_at),
       updatedAt: t.updated_at ? toMs(t.updated_at) : undefined,
       archived: t.archived || undefined,
+      archivedReason:
+        t.archived_reason === 'plan_downgrade' || t.archived_reason === 'user' ? t.archived_reason : undefined,
     };
   }
 
@@ -2149,6 +2151,88 @@ export class SupabaseDataSource implements DataSource {
       .map((t) => this.rowToTeam(t, true, tierByTeamId.get(t.id)));
 
     return [...own, ...managed];
+  }
+
+  async listArchivedTeams(): Promise<Team[]> {
+    const { supabase, accountId } = await this.ctx();
+    const { data, error } = await supabase
+      .from('teams')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('archived', true)
+      // Deleting a team also sets archived, with no reason — only the ones the
+      // coach archived or a plan downgrade retired are offered back.
+      .in('archived_reason', ['plan_downgrade', 'user'])
+      .order('created_at', { ascending: true });
+    if (error) {
+      // Pre-migration instances have no archived_reason column, so nothing can
+      // have been archived in a restorable way there: the list is simply empty.
+      console.log('archived_reason unavailable:', error.message);
+      return [];
+    }
+    return ((data ?? []) as Row[]).map((t) => this.rowToTeam(t));
+  }
+
+  async restoreTeam(id: string): Promise<Team> {
+    const { supabase } = await this.ctx();
+    const row = unwrap(
+      await supabase
+        .from('teams')
+        .update({ archived: false, archived_reason: null })
+        .eq('id', id)
+        .in('archived_reason', ['plan_downgrade', 'user'])
+        .select()
+        .maybeSingle(),
+    ) as Row | null;
+    if (!row) {
+      throw new Error("This team couldn't be restored. It may already be back, or you may not have access to it.");
+    }
+    // Its schedule comes back with it — only the seasons archived along with
+    // the team, not one the coach had archived on its own.
+    unwrap(
+      await supabase
+        .from('seasons')
+        .update({ archived: false, archived_reason: null })
+        .eq('team_id', id)
+        .in('archived_reason', ['plan_downgrade', 'user'])
+        .select(),
+    );
+    return this.rowToTeam(row);
+  }
+
+  async archiveTeam(id: string): Promise<void> {
+    const { supabase } = await this.ctx();
+    // Unlike deleteTeam, the team's evaluations stay attached: the team comes
+    // back with everything it had. `archived_reason = 'user'` is what tells this
+    // apart from a delete, which leaves the reason empty and stays gone.
+    const { data, error } = await supabase
+      .from('teams')
+      .update({ archived: true, archived_reason: 'user' })
+      .eq('id', id)
+      .select()
+      .maybeSingle();
+    if (error) {
+      if (/archived_reason/.test(error.message)) {
+        throw new Error('Archiving teams needs a database update that has not been applied yet.');
+      }
+      throw new Error(error.message);
+    }
+    // Same silent-no-op trap as deleteTeam: an RLS-blocked update matches no rows.
+    if (!data) {
+      throw new Error(
+        "This team couldn't be archived. You need to be an owner, admin, or coach on the account that owns it.",
+      );
+    }
+    // Its schedule goes with it; only seasons still live are touched, so one the
+    // coach had already archived is not brought back with the team.
+    unwrap(
+      await supabase
+        .from('seasons')
+        .update({ archived: true, archived_reason: 'user' })
+        .eq('team_id', id)
+        .eq('archived', false)
+        .select(),
+    );
   }
 
   /**
@@ -3172,6 +3256,7 @@ export class SupabaseDataSource implements DataSource {
       assessors: assessorsByTryout[t.id] ?? [],
       playerCount: countByTryout[t.id] ?? 0,
       archived: !!t.archived,
+      archivedReason: t.archived_reason === 'plan_downgrade' ? 'plan_downgrade' : undefined,
     }));
   }
 
@@ -3558,8 +3643,16 @@ export class SupabaseDataSource implements DataSource {
     return this.updateTryout(id, { archived: true });
   }
 
-  restoreTryout(id: string): Promise<Tryout> {
-    return this.updateTryout(id, { archived: false });
+  async restoreTryout(id: string): Promise<Tryout> {
+    const restored = await this.updateTryout(id, { archived: false });
+    // Clear the plan-downgrade marker in a separate, best-effort write so a
+    // restore never depends on the archived_reason column existing: on an
+    // instance that hasn't run 20260924120000_archive_on_plan_downgrade.sql the
+    // write errors, nothing was ever archived by a plan change, and the restore
+    // has already succeeded.
+    const { supabase } = await this.ctx();
+    await supabase.from('tryouts').update({ archived_reason: null }).eq('id', id);
+    return restored;
   }
 
   async deleteTryout(id: string): Promise<void> {

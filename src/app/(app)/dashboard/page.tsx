@@ -329,7 +329,7 @@ export default function DashboardPage() {
               Archived
             </span>
             <span className="text-xs" style={{ color: colors.inkMuted }}>
-              Past evaluations
+              Evaluations &amp; teams
             </span>
           </Card>
         </Link>
@@ -487,19 +487,36 @@ export default function DashboardPage() {
                       {isBusy ? (
                         <Spinner size={16} color={colors.danger} />
                       ) : (
-                        <button
-                          type="button"
-                          aria-label="Evaluation actions"
-                          onClick={(e) => {
-                            // Inside a Link now, so the default has to go too.
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDeleteAssessment(item);
-                          }}
-                          className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
-                        >
-                          <Icon name="trash" size={16} color={colors.danger} />
-                        </button>
+                        <>
+                          {/* Straight to the edit dialog, as on the app's tiles —
+                              no detour through the actions sheet. */}
+                          <button
+                            type="button"
+                            aria-label={`Edit ${item.name}`}
+                            title="Edit"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditingTryout(item);
+                            }}
+                            className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                          >
+                            <Icon name="edit" size={16} color={colors.inkMuted} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Evaluation actions"
+                            onClick={(e) => {
+                              // Inside a Link now, so the default has to go too.
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDeleteAssessment(item);
+                            }}
+                            className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                          >
+                            <Icon name="trash" size={16} color={colors.danger} />
+                          </button>
+                        </>
                       )}
                     </span>
                     {selected ? <Badge label="Selected" variant="brand" /> : null}

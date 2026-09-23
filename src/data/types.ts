@@ -320,6 +320,8 @@ export interface TryoutSummary {
   /** Active roster size — soft-removed participants excluded, as elsewhere. */
   playerCount: number;
   archived: boolean;
+  /** `plan_downgrade` when a plan drop archived it rather than the coach. */
+  archivedReason?: 'plan_downgrade';
 }
 
 export const TeamSchema = z.object({
@@ -352,6 +354,12 @@ export const TeamSchema = z.object({
   updatedAt: z.number().optional(),
   tombstone: z.boolean().optional(),
   archived: z.boolean().optional(),
+  /**
+   * Why an archived team was archived: `plan_downgrade` when a plan drop retired
+   * it, `user` when the coach archived it. Both can be restored (once the plan
+   * has room). Unset for a team the user deleted, which must stay gone.
+   */
+  archivedReason: z.enum(['plan_downgrade', 'user']).optional(),
 });
 
 export type Team = z.infer<typeof TeamSchema>;

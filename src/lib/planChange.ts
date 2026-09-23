@@ -99,11 +99,10 @@ const FEATURE_LABELS: [keyof PlanDefinition['limits'], string][] = [
  *   an export format, ...). Gone outright.
  * - `limit` — a constraint that now applies: an add-on stops widening a cap,
  *   or the account is already over (or newly capped under) the lower tier's
- *   numeric limit. Worded as "you keep what you have, you just can't add
- *   more" because that is what the app actually does — every limit is
- *   checked at creation time (isAtTeamLimit and friends are called from the
- *   create paths only), so nothing existing is deleted or hidden when the
- *   tier drops.
+ *   numeric limit. When the switch actually lands, the database archives
+ *   whatever is over the new cap and keeps the oldest one(s) live — see
+ *   20260924120000_archive_on_plan_downgrade.sql. Nothing is deleted, and the
+ *   archived items can be restored once the plan has room for them.
  */
 export interface DowngradeImpactLine {
   kind: 'lost' | 'limit';
@@ -190,7 +189,7 @@ function overLimitLine(
   return [
     {
       kind: 'limit',
-      text: `You have ${count} ${noun} and ${next.name} includes ${formatLimit(limit)}. Nothing is deleted — you keep them, but you won't be able to create another ${noun.replace(/s$/, '')} until you're back under the limit.`,
+      text: `You have ${count} ${noun} and ${next.name} includes ${formatLimit(limit)}. When the change takes effect, your oldest ${limit === 1 ? noun.replace(/s$/, '') : `${limit} ${noun}`} stay${limit === 1 ? 's' : ''} active and the other ${count - limit} ${count - limit === 1 ? noun.replace(/s$/, '') : noun} are archived — nothing is deleted, and you can restore them after upgrading.`,
     },
   ];
 }

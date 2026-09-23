@@ -63,6 +63,8 @@ export const queryKeys = {
   profile: ['profile'] as const,
   teams: ['teams'] as const,
   teamCount: ['teams', 'count'] as const,
+  /** Teams a plan downgrade archived — under ['teams'] so every team write refreshes it. */
+  archivedTeams: ['teams', 'archived'] as const,
   teamRoster: (teamId: string) => ['teams', teamId, 'roster'] as const,
   /**
    * Per-team headcounts for the Teams list. Covers every team at once, so

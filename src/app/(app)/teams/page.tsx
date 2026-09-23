@@ -24,6 +24,7 @@ import {
   useSeasonSummariesQuery,
   useTeamPlayerCountsQuery,
   useTeamsQuery,
+  useArchiveTeamMutation,
   useDeleteTeamMutation,
 } from '@/features/queries';
 import { useUser } from '@/state/authStore';
@@ -45,6 +46,7 @@ export default function TeamsPage() {
   // them). See countTeamPlayers().
   const playerCountsQuery = useTeamPlayerCountsQuery((teamsQuery.data ?? []).map((t) => t.id));
   const deleteTeam = useDeleteTeamMutation();
+  const archiveTeam = useArchiveTeamMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
 
@@ -81,6 +83,23 @@ export default function TeamsPage() {
       return;
     }
     router.push('/team/new');
+  };
+
+  const handleArchiveTeam = async (id: string, name: string) => {
+    const ok = await confirm({
+      title: 'Archive Team',
+      message: `Archive "${name}"? It moves to the Archived page with its roster and schedule, and you can restore it any time your plan has room.`,
+      confirmLabel: 'Archive',
+    });
+    if (!ok) return;
+    setBusyId(id);
+    try {
+      await archiveTeam.mutateAsync(id);
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not archive this team.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const handleDeleteTeam = async (id: string, name: string) => {
@@ -168,18 +187,34 @@ export default function TeamsPage() {
                       {isBusy ? (
                         <Spinner size={16} color={colors.danger} />
                       ) : team.managed ? null : (
-                        <button
-                          type="button"
-                          aria-label="Delete team"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDeleteTeam(team.id, team.name);
-                          }}
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
-                        >
-                          <Icon name="trash" size={16} color={colors.danger} />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            aria-label="Archive team"
+                            title="Archive"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleArchiveTeam(team.id, team.name);
+                            }}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                          >
+                            <Icon name="archive" size={16} color={colors.inkMuted} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Delete team"
+                            title="Delete"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDeleteTeam(team.id, team.name);
+                            }}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                          >
+                            <Icon name="trash" size={16} color={colors.danger} />
+                          </button>
+                        </>
                       )}
                     </span>
                   </div>

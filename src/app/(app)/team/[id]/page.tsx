@@ -34,6 +34,7 @@ import {
   useTryoutsQuery,
   useTryoutSummariesQuery,
   useUpdateTeamMutation,
+  useArchiveTeamMutation,
   useDeleteTeamMutation,
   useSetTryoutTeamMutation,
   useTeamRosterPagesQuery,
@@ -150,6 +151,7 @@ export default function TeamDetailPage() {
   const [dummyPlayerCount, setDummyPlayerCount] = useState('25');
   const updateTeam = useUpdateTeamMutation();
   const deleteTeam = useDeleteTeamMutation();
+  const archiveTeam = useArchiveTeamMutation();
   const setTryoutTeam = useSetTryoutTeamMutation();
   const [attachingId, setAttachingId] = useState<string | null>(null);
   const uploadLogo = useUploadTeamLogoMutation();
@@ -946,6 +948,22 @@ export default function TeamDetailPage() {
     }
   };
 
+  const handleArchive = async () => {
+    const ok = await confirm({
+      title: 'Archive Team',
+      message:
+        'Archive this team? It moves to the Archived page with its roster and schedule, and you can restore it any time your plan has room.',
+      confirmLabel: 'Archive',
+    });
+    if (!ok) return;
+    try {
+      await archiveTeam.mutateAsync(team.id);
+      router.replace('/teams');
+    } catch (e) {
+      await alert('Error', e instanceof Error ? e.message : 'Could not archive this team.');
+    }
+  };
+
   const handleDelete = async () => {
     const ok = await confirm({
       title: 'Delete Team',
@@ -1531,9 +1549,13 @@ export default function TeamDetailPage() {
             <Card className="flex flex-col items-start gap-2">
               <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>
               <p className="text-xs" style={{ color: colors.inkMuted }}>
-                Deleting a team removes its roster, schedule, and links to evaluations.
+                Archiving hides a team and keeps everything so you can restore it later. Deleting removes its
+                roster, schedule, and links to evaluations for good.
               </p>
-              <Button label="Delete Team" variant="danger" size="sm" onClick={handleDelete} loading={deleteTeam.isPending} />
+              <div className="flex flex-wrap gap-2">
+                <Button label="Archive Team" variant="secondary" size="sm" onClick={handleArchive} loading={archiveTeam.isPending} />
+                <Button label="Delete Team" variant="danger" size="sm" onClick={handleDelete} loading={deleteTeam.isPending} />
+              </div>
             </Card>
           )}
         </div>

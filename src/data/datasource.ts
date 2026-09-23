@@ -60,6 +60,12 @@ export interface DataSource {
   countTeams(): Promise<number>;
   createTeam(name: string, season?: string): Promise<Team>;
   deleteTeam(id: string): Promise<void>;
+  /** Archived teams — ones the coach archived or a plan downgrade did. Deleted teams are not listed. */
+  listArchivedTeams(): Promise<Team[]>;
+  /** Hides a team (and its schedule) without deleting it, so it can be restored. */
+  archiveTeam(id: string): Promise<void>;
+  /** Brings an archived team back, along with the seasons archived with it. */
+  restoreTeam(id: string): Promise<Team>;
 
   // Tryouts
   listTryouts(includeArchived?: boolean): Promise<Tryout[]>;

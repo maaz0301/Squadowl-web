@@ -2585,6 +2585,46 @@ export function useUpdateTeamMutation() {
   });
 }
 
+/** Teams a plan downgrade archived, for the restore screen. */
+export function useArchivedTeamsQuery() {
+  return useQuery({
+    queryKey: queryKeys.archivedTeams,
+    queryFn: () => getDataSource().listArchivedTeams(),
+  });
+}
+
+export function useRestoreTeamMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().restoreTeam(id),
+    onSuccess: (_result, id) => {
+      qc.setQueryData<Team[]>(queryKeys.archivedTeams, (old) => old?.filter((t) => t.id !== id));
+      // Prefix match: the active list, the count the plan check reads, and the
+      // archived list all hang off ['teams'].
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+      // The team's season comes back with it.
+      void qc.invalidateQueries({ queryKey: queryKeys.seasons });
+    },
+  });
+}
+
+export function useArchiveTeamMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().archiveTeam(id),
+    onSuccess: (_result, id) => {
+      qc.setQueryData<Team[]>(queryKeys.teams, (old) => old?.filter((t) => t.id !== id));
+      qc.setQueryData<number>(queryKeys.teamCount, (n) =>
+        typeof n === 'number' ? Math.max(0, n - 1) : n,
+      );
+      // Prefix match: refreshes the active list, the count and the archived list.
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+      // Its schedule is archived with it.
+      void qc.invalidateQueries({ queryKey: queryKeys.seasons });
+    },
+  });
+}
+
 export function useDeleteTeamMutation() {
   const qc = useQueryClient();
   return useMutation({

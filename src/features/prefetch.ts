@@ -71,6 +71,7 @@ export function prefetchTeams(): void {
 
 export function prefetchArchivedAssessments(): void {
   warm(queryKeys.tryoutSummaries(true), () => getDataSource().listTryoutSummaries(true));
+  warm(queryKeys.archivedTeams, () => getDataSource().listArchivedTeams());
 }
 
 /**
