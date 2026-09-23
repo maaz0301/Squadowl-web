@@ -2920,32 +2920,27 @@ export class SupabaseDataSource implements DataSource {
       });
 
     const { data, error } = await invite();
-
-    // No account yet: nothing is created for them and no password is sent. They
-    // get an email asking them to create their own account; once they have one
-    // the club grants access again and it goes through the normal path.
-    if (error && error.message.includes('User not found')) {
-      try {
-        await this.sendEmail('team_manager_invite', email.trim(), {
-          teamName,
-          role,
-          newUser: true,
-          inviteUrl: `${actualOrigin() ?? 'https://www.tryouthq.ca'}/signup`,
-        });
-      } catch (e) {
-        console.log('Failed to send team manager invite email:', e);
+    if (error) {
+      // Only the pre-invites RPC still says this: it cannot save an invite for
+      // an address with no account. Name the real cause.
+      if (error.message.includes('User not found')) {
+        throw new Error(
+          'This address has no TryoutHQ account yet, and saved invitations need the 20260923130000_team_manager_invites migration applied first.',
+        );
       }
-      throw new Error(
-        `${email.trim()} doesn't have a TryoutHQ account yet. We've emailed them asking to create one — once they have, grant access again.`,
-      );
+      throw error;
     }
-    if (error) throw error;
 
+    // No account yet: the RPC saved the invite against this address and it is
+    // turned into access the moment they sign up with it. The email asks them
+    // to create the account; nothing is created for them and no password is sent.
+    const newUser = (data as { pending?: boolean } | null)?.pending === true;
     try {
       await this.sendEmail('team_manager_invite', email.trim(), {
         teamName,
         role,
-        inviteUrl: `${actualOrigin() ?? 'https://www.tryouthq.ca'}/login`,
+        newUser,
+        inviteUrl: `${actualOrigin() ?? 'https://www.tryouthq.ca'}/${newUser ? 'signup' : 'login'}`,
       });
     } catch (e) {
       console.log('Failed to send team manager invite email:', e);
@@ -2972,17 +2967,19 @@ export class SupabaseDataSource implements DataSource {
   private async fetchTeamManagers(teamIds: string[]): Promise<import('../types').TeamManager[]> {
     if (teamIds.length === 0) return [];
     const lists = await Promise.all(teamIds.map((id) => this.listTeamManagers(id)));
-    return lists.flat();
+    // Saved invites have no account behind them, so they are not org members yet.
+    return lists.flat().filter((m) => !m.pending);
   }
 
   private rowToTeamManager(r: Row): import('../types').TeamManager {
     return {
       id: r.id,
       teamId: r.teamId ?? r.team_id,
-      userId: r.userId ?? r.user_id,
+      userId: r.userId ?? r.user_id ?? undefined,
       email: r.email,
       name: r.name ?? undefined,
       role: (r.role ?? 'manager') as import('../types').TeamManagerRole,
+      pending: r.pending === true,
       createdAt: r.created_at ? toMs(r.created_at) : Date.now(),
     };
   }

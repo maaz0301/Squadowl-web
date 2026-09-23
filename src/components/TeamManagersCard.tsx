@@ -64,11 +64,13 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
       // get evaluation access to a delegated team, so every new delegate
       // this card grants is a 'manager'. Existing 'coach'-labeled rows from
       // before this change still display and work as before.
-      await invite.mutateAsync({ email: trimmed, role: 'manager' });
+      const result = await invite.mutateAsync({ email: trimmed, role: 'manager' });
       setEmail('');
       await alert(
-        'Access Granted',
-        `${trimmed} can now manage ${teamName}. They'll see it on their dashboard the next time they open the app.`,
+        result.pending ? 'Invitation Sent' : 'Access Granted',
+        result.pending
+          ? `We emailed ${trimmed} asking them to create an account. Access to ${teamName} is granted automatically when they sign up with that address.`
+          : `${trimmed} can now manage ${teamName}. They'll see it on their dashboard the next time they open the app.`,
       );
     } catch (e) {
       await alert('Could Not Grant Access', (e as Error)?.message || 'Something went wrong.');
@@ -135,9 +137,10 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
                     <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{m.email}</p>
                   ) : null}
                 </div>
+                {m.pending ? <Badge label="Invited" variant="warning" /> : null}
                 <Badge label={ROLE_LABEL[m.role]} variant="info" />
                 <Button
-                  label="Remove"
+                  label={m.pending ? 'Cancel invite' : 'Remove'}
                   variant="ghost"
                   size="sm"
                   loading={remove.isPending && remove.variables === m.id}
@@ -166,7 +169,7 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
           />
           <p className="text-xs" style={{ color: colors.inkMuted }}>
             They&apos;ll get an email with an Accept Invitation button. If they don&apos;t have a TryoutHQ
-            account yet, the email asks them to create one first.
+            account yet, the email asks them to create one — access is granted automatically when they do.
           </p>
         </div>
       </Card>

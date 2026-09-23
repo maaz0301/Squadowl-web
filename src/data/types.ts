@@ -972,10 +972,13 @@ export type TeamManagerRole = (typeof TEAM_MANAGER_ROLES)[number];
 export const TeamManagerSchema = z.object({
   id: z.string(),
   teamId: z.string(),
-  userId: z.string(),
+  /** Absent while the invitation is waiting for the invitee to create an account. */
+  userId: z.string().optional(),
   email: z.string().email(),
   name: z.string().optional(),
   role: z.enum(TEAM_MANAGER_ROLES),
+  /** Saved invite with no account behind it yet; access is granted at sign-up. */
+  pending: z.boolean().optional(),
   createdAt: z.number(),
 });
 

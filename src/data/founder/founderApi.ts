@@ -525,7 +525,8 @@ export async function getFounderTeam(teamId: string): Promise<FounderTeamDetail>
         addedAt: toMs(r.created_at),
       };
     }),
-    staff: managers.map((m) => ({
+    // Saved invites (pending) have no account yet, so they are not staff.
+    staff: managers.filter((m) => m.pending !== true).map((m) => ({
       id: m.id,
       name: m.name ?? m.user?.display_name ?? undefined,
       email: m.email ?? m.user?.email ?? undefined,

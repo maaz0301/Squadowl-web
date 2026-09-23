@@ -111,7 +111,7 @@ function tplTeamManagerInvite(teamName: string, role: string, inviteUrl?: string
       </p>` : '';
   const who = email ? `<strong style="color:#a78bfa;">${escapeHtml(email)}</strong>` : 'this email address';
   const next = newUser
-    ? `You don't have a TryoutHQ account yet. Create one with ${who} and choose your own password, then let the club know so they can give you access to the team.`
+    ? `You don't have a TryoutHQ account yet. Create one with ${who} and choose your own password — your access to the team is set up automatically as soon as the account exists.`
     : `Sign in with ${who} to accept the invitation and open the team.`;
   return {
     subject: `You've been invited to manage ${safeTeam} on TryoutHQ`,
