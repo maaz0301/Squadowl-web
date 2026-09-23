@@ -37,18 +37,22 @@ export function hasLiveSubscription(subscriptionStatus: string | undefined): boo
 }
 
 /**
- * The route for a switch *down* to `target` — a lower tier, or Free.
+ * The route for any plan change — upgrade or downgrade.
  *
- * Upgrades deliberately do not consult this. They always go through Checkout,
- * because they are billed in full for a fresh year rather than prorated, and
- * the portal's switch flow can only ever charge the prorated difference. The
- * superseded subscription is cancelled by stripe-webhook once that checkout
- * completes, which is what keeps "Checkout always creates a new subscription"
- * from meaning "the account now pays for two".
+ * `portal` is returned whenever there is a live subscription: for an **upgrade**
+ * this means the portal swaps the subscription item in place and charges only
+ * the prorated difference for the remaining period (previously, upgrades went
+ * through Checkout, which billed the full new-year price and forfeited whatever
+ * time was left on the old plan — that is the bug that charged CA$69.99 for a
+ * Coach → Coach+ switch). For a **downgrade**, the portal schedules the change
+ * at the end of the paid term so nothing is charged or lost today.
  *
- * A downgrade has no such constraint: it changes nothing today, so the portal
- * (where Stripe schedules it for the end of the paid term) is the right home
- * for it whenever there is a live subscription to schedule against.
+ * `checkout` is returned only when there is no live subscription to hand off to
+ * the portal (a lapsed or cancelled account whose profile still carries the old
+ * tier). There is nothing for the portal to manage there, so a fresh Checkout
+ * session for the target tier is the right path.
+ *
+ * Free has no Stripe price, so it is always reached by cancelling in the portal.
  */
 export function planChangeRoute(
   target: PlanTier,
