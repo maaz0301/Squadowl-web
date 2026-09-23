@@ -7,6 +7,7 @@ import { Card, Button } from '@/components/ui';
 import { getNextTier, sellsExtraTeams, usageFraction } from '@/data/plans';
 import type { PlanTier } from '@/data/types';
 import { useUser } from '@/state/authStore';
+import { usePlatformBlockedFeaturesQuery } from '@/features/queries';
 import {
   NUDGE_THRESHOLD,
   buildLimitReachedMessage,
@@ -36,6 +37,8 @@ export function UsageNudgeBanner({ tier, metric, count, label }: Props) {
   const router = useRouter();
   const user = useUser();
   const [dismissed, setDismissed] = useState(false);
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
 
   const extraTeamLicenses = user?.extraTeamLicenses ?? 0;
   const limit = effectiveLimit(tier, metric, extraTeamLicenses);
@@ -65,7 +68,7 @@ export function UsageNudgeBanner({ tier, metric, count, label }: Props) {
         {message}
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-3">
-        {ctaLabel ? <Button label={ctaLabel} size="sm" onClick={() => router.push('/upgrade')} /> : null}
+        {ctaLabel && !billingBlocked ? <Button label={ctaLabel} size="sm" onClick={() => router.push('/upgrade')} /> : null}
         <button
           type="button"
           onClick={() => setDismissed(true)}

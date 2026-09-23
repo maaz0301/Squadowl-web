@@ -80,6 +80,10 @@ export const queryKeys = {
   referralSummary: ['referral', 'summary'] as const,
   /** Reviewer allowlist check behind the feedback portal's nav item and route guard. */
   feedbackReviewer: ['feedback', 'reviewer'] as const,
+  /** Platform-wide feature blocks every signed-in screen gates its nav on — see AppShell.tsx. */
+  platformBlockedFeatures: ['platform', 'blockedFeatures'] as const,
+  /** Plan tiers hidden from checkout/upgrade platform-wide — see AppShell.tsx and the upgrade page. */
+  platformBlockedPlanTiers: ['platform', 'blockedPlanTiers'] as const,
   feedbackSubmissions: ['feedback', 'submissions'] as const,
   coachDirectory: ['coachDirectory'] as const,
   athleteShares: (athleteId: string) => ['athleteShares', athleteId] as const,

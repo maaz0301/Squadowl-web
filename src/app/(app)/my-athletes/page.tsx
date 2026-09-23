@@ -29,7 +29,7 @@ export default function MyAthletesPage() {
   if (guardianQuery.isError) {
     return (
       <>
-        <PageHeader title="My Athletes" showBack />
+        <PageHeader title="My Athletes" subtitle={`Hi, ${user?.displayName ?? 'there'}`} />
         <ErrorState
           message={`Could not load your athletes: ${guardianQuery.error?.message || 'Unknown error'}`}
           onRetry={() => guardianQuery.refetch()}

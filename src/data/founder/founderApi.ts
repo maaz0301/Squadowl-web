@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getDataSource } from '@/data';
 import { getSupabase } from '@/lib/supabase';
 import { deriveAccountAccess, type AccountAccessStatus } from '@/lib/accountAccess';
+import { isBlockableFeature, type BlockableFeature } from '@/lib/blockableFeatures';
 import {
   EVENT_TYPE_FROM_DB,
   TEAM_ROSTER_PAGE,
@@ -52,7 +53,8 @@ import type {
   FounderReferral,
   FounderReferralBalance,
 } from './types';
-import type { PlayerProfile, Tryout } from '@/data/types';
+import type { PlayerProfile, Tryout, PlanTier } from '@/data/types';
+import { PLAN_TIERS } from '@/data/types';
 
 const FOUNDER_AUDIT_COLUMNS = 'id, actor_email, action, account_id, account_name, reason, details, created_at';
 
@@ -139,6 +141,30 @@ export async function updateOrganizationAccess(
   });
   if (error) throw founderError(error);
   return data as AccountAccessStatus;
+}
+
+/**
+ * Platform-wide kill switch — every organization and every user, no account
+ * involved. The read side (getPlatformBlockedFeatures, what every signed-in
+ * screen uses to gate its own nav) lives on the shared DataSource instead of
+ * here, since — unlike everything else in this file — it isn't founder-only.
+ */
+export async function setPlatformBlockedFeatures(blockedFeatures: BlockableFeature[]): Promise<BlockableFeature[]> {
+  const { data, error } = await getSupabase().rpc('founder_set_platform_blocked_features', {
+    p_blocked_features: blockedFeatures,
+  });
+  if (error) throw founderError(error);
+  return ((data as string[] | null) ?? []).filter(isBlockableFeature);
+}
+
+/** Hides one plan tier from checkout/upgrade platform-wide — see founder_set_platform_blocked_plan_tiers(). */
+export async function setPlatformBlockedPlanTiers(blockedPlanTiers: PlanTier[]): Promise<PlanTier[]> {
+  const { data, error } = await getSupabase().rpc('founder_set_platform_blocked_plan_tiers', {
+    p_blocked_plan_tiers: blockedPlanTiers,
+  });
+  if (error) throw founderError(error);
+  const tiers: readonly string[] = PLAN_TIERS;
+  return ((data as string[] | null) ?? []).filter((t): t is PlanTier => tiers.includes(t));
 }
 
 export async function createFounderOrganization(

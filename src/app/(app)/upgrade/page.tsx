@@ -26,6 +26,8 @@ import { getDataSource } from '@/data';
 import {
   useApplyReferralCodeMutation,
   useAssessmentCountQuery,
+  usePlatformBlockedFeaturesQuery,
+  usePlatformBlockedPlanTiersQuery,
   useReferralSummaryQuery,
   useTeamCountQuery,
 } from '@/features/queries';
@@ -40,6 +42,9 @@ export default function UpgradePage() {
   const { alert, confirm } = useAlert();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [loadingPortal, setLoadingPortal] = useState(false);
+  const { data: blockedPlanTiers } = usePlatformBlockedPlanTiersQuery();
+  const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
+  const loyaltyBlocked = (platformBlockedFeatures ?? []).includes('loyalty');
   // The downgrade confirmation's own dialog (see confirmDowngrade below) —
   // its impact list needs real structure (grouped, bulleted) that the shared
   // string-message Alert can't give it, so it keeps the same
@@ -74,7 +79,10 @@ export default function UpgradePage() {
   const [checkingDiscount, setCheckingDiscount] = useState(false);
 
   const creditCents = referralQuery.data?.balanceCents ?? 0;
-  const hasCredit = creditCents > 0;
+  // Loyalty program is a platform-wide block: while it's off, existing credit
+  // is neither shown nor spendable — the founder turning it off means turning
+  // it off everywhere, not just hiding the referral/redeem screens.
+  const hasCredit = creditCents > 0 && !loyaltyBlocked;
   // The discount is sized server-side against the real line total; this is
   // only whether to ask for it at all.
   // Checkout takes one discount, so an applied code holds the credit back.
@@ -306,7 +314,10 @@ export default function UpgradePage() {
 
       {/* Referral code entry — only meaningful before the first paid plan, and
           only once, so it disappears as soon as one has been attached. */}
-      {referralQuery.data && !referralQuery.data.redeemedByCode && !hasLiveSubscription(user?.subscriptionStatus) ? (
+      {!loyaltyBlocked &&
+      referralQuery.data &&
+      !referralQuery.data.redeemedByCode &&
+      !hasLiveSubscription(user?.subscriptionStatus) ? (
         <Card className="mb-6 flex flex-col gap-2">
           <h3 className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Have a referral code?
@@ -460,6 +471,7 @@ export default function UpgradePage() {
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {PLAN_DEFINITIONS.map((item) => {
           const isCurrent = user?.planTier === item.tier;
+          const isTierBlocked = !isCurrent && (blockedPlanTiers ?? []).includes(item.tier);
           const targetRank = getTierRank(item.tier);
           const yearly = formatPlanPrice(item, billingInterval);
           const isUpgrade = !isCurrent && targetRank > currentRank;
@@ -575,6 +587,13 @@ export default function UpgradePage() {
                       backgroundColor: 'rgba(255,107,43,0.10)',
                     }}
                   />
+                </div>
+              ) : isTierBlocked ? (
+                <div className="pt-4 mt-auto flex flex-col gap-2">
+                  <Button label="Currently unavailable" variant="secondary" disabled />
+                  <p className="text-[11px] text-center leading-snug" style={{ color: colors.inkFaint }}>
+                    Not open for new signups or upgrades right now.
+                  </p>
                 </div>
               ) : (
                 <div className="pt-4 mt-auto flex flex-col gap-2">
