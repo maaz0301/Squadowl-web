@@ -819,7 +819,10 @@ export default function TeamDetailPage() {
   const hasHiddenEvents = scheduleEvents.length > 3;
   const evaluatorCount = new Set(
     linkedTryouts.flatMap((t) =>
-      (t.assessors ?? []).map((a) => (a.userId ?? a.email ?? '').toLowerCase()).filter(Boolean),
+      (t.assessors ?? [])
+        .filter((a) => a.status !== 'declined')
+        .map((a) => (a.userId ?? a.email ?? '').toLowerCase())
+        .filter(Boolean),
     ),
   ).size;
 

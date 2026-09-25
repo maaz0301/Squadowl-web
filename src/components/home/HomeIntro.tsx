@@ -8,7 +8,9 @@ import { HomeHero } from '@/components/home/HomeHero';
 import { HomeSectionLabel } from '@/components/home/HomeSectionLabel';
 import { QuickAccessGrid, type QuickAccessItem } from '@/components/home/QuickAccessGrid';
 import { canUseFeature } from '@/data/plans';
+import { prefetchReports } from '@/features/prefetch';
 import { useUser } from '@/state/authStore';
+import { usePlatformBlockedFeaturesQuery } from '@/features/queries';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
 interface HomeIntroProps {
@@ -16,12 +18,10 @@ interface HomeIntroProps {
   active: 'evaluations' | 'teams';
   /**
    * What the card does when its own section is the page. On the other page the
-   * card links there instead. Reports has no page of its own: it always lands
-   * on the evaluations list with Combine Mode on.
+   * card links there instead.
    */
   onEvaluations?: () => void;
   onTeams?: () => void;
-  onReports?: () => void;
 }
 
 /**
@@ -29,12 +29,16 @@ interface HomeIntroProps {
  * (only on plans that include it) and Quick Access. Shared by the Evaluations
  * and Teams pages so the two read as one screen with two lists.
  */
-export function HomeIntro({ active, onEvaluations, onTeams, onReports }: HomeIntroProps) {
+export function HomeIntro({ active, onEvaluations, onTeams }: HomeIntroProps) {
   const colors = useThemeColors();
   const user = useUser();
   const planTier = user?.planTier ?? 'free';
+  // Sections the founder has turned off platform-wide (the sidebar hides them
+  // too). "View as" is exempt, same as the shell.
+  const { data: platformBlocked } = usePlatformBlockedFeaturesQuery();
+  const blocked = new Set(user?.impersonating ? [] : (platformBlocked ?? []));
 
-  const items: QuickAccessItem[] = [
+  const allItems: QuickAccessItem[] = [
     {
       key: 'evaluations',
       label: 'Evaluations',
@@ -51,14 +55,13 @@ export function HomeIntro({ active, onEvaluations, onTeams, onReports }: HomeInt
       active: active === 'teams',
       ...(onTeams ? { onClick: onTeams } : { href: '/teams' }),
     },
-    // Comparisons live in Combine Mode, so this opens the evaluations list with
-    // it switched on — pick two or more, then "View Combined".
     {
       key: 'reports',
       label: 'Reports',
       caption: 'View comparisons, analytics and export results',
       icon: 'barChart',
-      ...(onReports ? { onClick: onReports } : { href: '/dashboard?combine=1' }),
+      href: '/reports',
+      onWarm: prefetchReports,
     },
     {
       key: 'athletes',
@@ -69,6 +72,8 @@ export function HomeIntro({ active, onEvaluations, onTeams, onReports }: HomeInt
     },
   ];
 
+  const items = allItems.filter((i) => !(i.key === 'evaluations' || i.key === 'reports' ? blocked.has('evaluations') : i.key === 'teams' && blocked.has('teams')));
+
   return (
     <>
       {/* Compact brand banner — a strip, not a splash, so the sections below
@@ -77,7 +82,7 @@ export function HomeIntro({ active, onEvaluations, onTeams, onReports }: HomeInt
         <HomeHero />
       </div>
 
-      {canUseFeature(planTier, 'enterprise') ? (
+      {canUseFeature(planTier, 'enterprise') && !blocked.has('dashboard') ? (
         <Link href="/enterprise" className="mb-6 block">
           <Card interactive className="flex items-center gap-3">
             <span
@@ -100,10 +105,12 @@ export function HomeIntro({ active, onEvaluations, onTeams, onReports }: HomeInt
       ) : null}
 
       {/* Quick Access — the hub's shortcuts, all in one card style. */}
-      <div className="mb-6">
-        <HomeSectionLabel>Quick Access</HomeSectionLabel>
-        <QuickAccessGrid items={items} />
-      </div>
+      {items.length > 0 ? (
+        <div className="mb-6">
+          <HomeSectionLabel>Quick Access</HomeSectionLabel>
+          <QuickAccessGrid items={items} />
+        </div>
+      ) : null}
     </>
   );
 }

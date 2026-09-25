@@ -62,7 +62,10 @@ export default function ComparePage() {
           })}
         </div>
 
-        <div className="lg:sticky lg:top-4">
+        {/* First when the layout stacks, so the comparison sits above the roster
+            instead of after a long list; on wide screens it is the sticky right
+            column, as before. */}
+        <div className="order-first lg:order-none lg:sticky lg:top-4">
           {heuristic ? (
             <PlanGate feature="aiSummaries" title="AI Compare">
               <Card accent className="flex flex-col gap-2">

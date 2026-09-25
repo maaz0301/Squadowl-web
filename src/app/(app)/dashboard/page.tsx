@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import {
@@ -57,9 +57,7 @@ export default function DashboardPage() {
   const combineIds = useSessionStore((s) => s.combineTryoutIds);
   const toggleCombineTryout = useSessionStore((s) => s.toggleCombineTryout);
 
-  // The Reports card on the Teams page lands here with ?combine=1.
-  const searchParams = useSearchParams();
-  const [combineMode, setCombineMode] = useState(searchParams.get('combine') === '1');
+  const [combineMode, setCombineMode] = useState(false);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [assignedExpanded, setAssignedExpanded] = useState(true);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
@@ -270,10 +268,6 @@ export default function DashboardPage() {
       <HomeIntro
         active="evaluations"
         onEvaluations={() => evaluationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-        onReports={() => {
-          setCombineMode(true);
-          evaluationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }}
       />
 
       {/* A coach who is also a guardian on some athlete. */}

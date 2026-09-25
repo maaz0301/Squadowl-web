@@ -16,6 +16,8 @@ export interface QuickAccessItem {
   onClick?: () => void;
   /** The section this card jumps to is the one currently showing. */
   active?: boolean;
+  /** Hover/focus/touch: a beat of warning before the click, to start the page's reads. */
+  onWarm?: () => void;
 }
 
 /**
@@ -54,7 +56,14 @@ export function QuickAccessGrid({ items }: { items: QuickAccessItem[] }) {
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {items.map((item) =>
         item.href ? (
-          <Link key={item.key} href={item.href} className="block h-full">
+          <Link
+            key={item.key}
+            href={item.href}
+            className="block h-full"
+            onMouseEnter={item.onWarm}
+            onFocus={item.onWarm}
+            onTouchStart={item.onWarm}
+          >
             {body(item)}
           </Link>
         ) : (

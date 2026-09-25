@@ -175,10 +175,21 @@ export function prefetchGuardianDashboard({ userId }: PrefetchContext = {}): voi
 }
 
 /** Route prefix → the data that route opens with. Unlisted routes are cheap. */
+/**
+ * Reports: the light list it paints from, plus the full evaluations its
+ * numbers are computed from — the heaviest read in the app, so starting it on
+ * hover is most of the saving.
+ */
+export function prefetchReports(): void {
+  warm(queryKeys.tryoutSummaries(false), () => getDataSource().listTryoutSummaries(false));
+  warm(queryKeys.tryouts(false), () => getDataSource().listTryouts(false));
+}
+
 const BY_ROUTE: Record<string, (ctx: PrefetchContext) => void> = {
   // Same href, two entirely different screens — see prefetchGuardianDashboard.
   '/dashboard': (ctx) => (ctx.isGuardian ? prefetchGuardianDashboard(ctx) : prefetchDashboard()),
   '/teams': prefetchTeams,
+  '/reports': prefetchReports,
   '/search': prefetchSearch,
   '/archived-assessments': prefetchArchivedAssessments,
   '/shared-athletes': prefetchSharedAthletes,
