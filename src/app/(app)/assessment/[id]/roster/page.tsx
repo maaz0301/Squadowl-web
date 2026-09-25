@@ -23,7 +23,8 @@ import {
   Spinner,
   useAlert,
 } from '@/components/ui';
-import { canUseFeature, isAtPlayerLimit } from '@/data/plans';
+import { isAtPlayerLimit, playerRoom } from '@/data/plans';
+import { useCanUseDummyData } from '@/features/useCanUseDummyData';
 import { isInPositionGroup, rosterPositionGroups } from '@/data/positions';
 import { playerDisplayName } from '@/data/rubrics';
 import { getDataSource } from '@/data';
@@ -43,6 +44,7 @@ import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/feature
 import { useCompleteAssessing } from '@/features/useCompleteAssessing';
 import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { tryoutBulkWriteKey } from '@/lib/queryClient';
+import { capImportRows, dropExistingPlayers, withSkippedRows } from '@/data/bulkTeamImport';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -99,7 +101,10 @@ export default function RosterPage() {
   // batch looks exactly like an assessment nobody has added anyone to.
   const bulkWriting = useIsMutating({ mutationKey: tryoutBulkWriteKey(id ?? '') }) > 0;
 
-  const isAssociation = canUseFeature(effectiveTier, 'enterprise');
+  // An invited assessor scores; they don't seed data into the owner's evaluation.
+  // Their own plan tier says nothing about that, so the tier alone must not
+  // decide it now that the tools are no longer Association-only.
+  const showDummyTools = useCanUseDummyData(effectiveTier) && !isAssessorOnly;
 
   useEffect(() => {
     if (tryoutQuery.data && user && !activeAssessor) {
@@ -304,7 +309,7 @@ export default function RosterPage() {
       desc: 'Create and send offer or roster decision letters, with a copy attached to each player.',
       go: () => router.push(href('letters')),
     },
-    ...(isAssociation
+    ...(showDummyTools
       ? [
           {
             label: 'Dummy Data Generator',
@@ -576,8 +581,28 @@ export default function RosterPage() {
         visible={showImport}
         onClose={() => setShowImport(false)}
         target={tryout.name}
+        atLimit={isAtPlayerLimit(effectiveTier, tryout.roster.length)}
+        onLimitReached={() => setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'))}
         onImport={async (rows, onProgress) => {
-          const result = await importPlayers.mutateAsync({ rows, onProgress });
+          // A spreadsheet is a faster way onto the roster, not a way around the
+          // plan's player cap: players already here are set aside first (they add
+          // nobody, so they shouldn't spend the cap), then what fits goes in and
+          // the rest is listed as not added.
+          const { fresh, duplicates } = dropExistingPlayers(rows, tryout.roster);
+          const capped = capImportRows(fresh, playerRoom(effectiveTier, tryout.roster.length));
+          const allowed = capped.allowed;
+          const skipped = [...duplicates, ...capped.skipped];
+          if (allowed.length === 0) {
+            return withSkippedRows({ added: 0, failed: [], athleteIds: [], participantIds: [] }, skipped);
+          }
+          const result = withSkippedRows(await importPlayers.mutateAsync({ rows: allowed, onProgress }), skipped);
+          // The mutation only marks the roster stale; on a capped plan, wait for
+          // the fresh count so the "Import more" check that follows never runs
+          // against the old one. Unlimited plans have no such check, so they
+          // don't wait on a full roster re-read (a thousand players is seconds).
+          if (Number.isFinite(playerRoom(effectiveTier, 0))) {
+            await tryoutQuery.refetch({ cancelRefetch: false });
+          }
           // Same rule as adding one by hand above, and as the team import: the
           // import is what earns the portal invite, so a spreadsheet of players
           // with guardian emails links them all without anyone opening thirty
@@ -644,6 +669,7 @@ export default function RosterPage() {
 
       <DummyDataModal
         variant="assessment"
+        maxPlayers={playerRoom(effectiveTier, tryout.roster.length)}
         visible={showTestGen}
         loading={genTest.isPending}
         progress={dummyProgress ?? undefined}

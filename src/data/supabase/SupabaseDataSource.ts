@@ -4,7 +4,7 @@ import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
 import { PLAN_TIERS } from '../types';
-import { bulkImportPlayers } from '../bulkTeamImport';
+import { bulkImportPlayers, IMPORT_CREATE_CHUNK } from '../bulkTeamImport';
 import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
 import { deriveAccountAccess, isExpiredTrial } from '@/lib/accountAccess';
 import { isBlockableFeature } from '@/lib/blockableFeatures';
@@ -2696,7 +2696,76 @@ export class SupabaseDataSource implements DataSource {
     rows: { line: number; form: AddPlayerForm }[],
     onProgress?: (done: number) => void,
   ): Promise<PlayerImportResult> {
-    return this.importPlayers(rows, (form) => this.addPlayer(tryoutId, form), onProgress);
+    const oneAtATime = () =>
+      this.importPlayers(rows, (form) => this.addPlayer(tryoutId, form), onProgress);
+
+    // Same gate as the team import below: the batched path files every athlete
+    // under the caller's own account, which is right only when that account
+    // owns the evaluation. An invited assessor or delegated manager keeps the
+    // per-row path (its owner-side RPC has no batch form), as does a row naming
+    // an existing athlete.
+    const ownerAccountId = await this.ownerAccountId('tryouts', tryoutId);
+    const callerAccountId = await this.writableAccountIdOrNull();
+    const writesAsOwner =
+      callerAccountId !== null && (ownerAccountId === null || callerAccountId === ownerAccountId);
+    if (!writesAsOwner || rows.some((r) => r.form.athleteId)) return oneAtATime();
+
+    const supabase = getSupabase();
+    const result = await bulkImportPlayers(
+      rows,
+      {
+        resolveGuardians: (forms) =>
+          this.resolveGuardiansForRegistrations(
+            supabase,
+            forms.map((f) => ({ guardian_email: f.guardianEmail, guardian_name: f.guardianName })),
+          ),
+        createAthletes: async (payloads) => {
+          const { data, error } = await supabase.rpc('create_athletes_for_caller', {
+            account_hint: callerAccountId,
+            players: payloads,
+          });
+          if (error) throw new Error(error.message);
+          return (data ?? []) as string[];
+        },
+        // An upsert on the (tryout_id, athlete_id) key, so bulkImportPlayers
+        // retrying a batch row-by-row after a failure can't trip over the
+        // participants an earlier chunk already wrote.
+        addToRoster: async (entries) => {
+          const byAthlete = new Map<string, string>();
+          for (let i = 0; i < entries.length; i += IMPORT_CREATE_CHUNK) {
+            const chunk = entries.slice(i, i + IMPORT_CREATE_CHUNK).map(({ athleteId, form }) => ({
+              tryout_id: tryoutId,
+              athlete_id: athleteId,
+              jersey: form.jersey || null,
+              position: form.pos || null,
+              shoots: form.shoots || null,
+              position_trying_out_for: form.positionTryingOutFor || null,
+              current_team: form.currentTeam || null,
+              current_level: form.currentLevel || null,
+              registration_source: 'manual',
+              friend1_name: form.friend1Name || null,
+              friend2_name: form.friend2Name || null,
+            }));
+            const inserted = unwrap(
+              await supabase
+                .from('tryout_participants')
+                .upsert(chunk, { onConflict: 'tryout_id,athlete_id' })
+                .select('id, athlete_id'),
+            ) as Row[];
+            for (const r of inserted) byAthlete.set(r.athlete_id, r.id);
+          }
+          return byAthlete;
+        },
+        addOne: async (form) => {
+          const player = await this.addPlayer(tryoutId, form);
+          return { athleteId: player.athleteId ?? '', participantId: player.id };
+        },
+      },
+      onProgress,
+    );
+    // addPlayer() flags this per player; the batched path does it once.
+    if (result.added > 0) await this.markOnboarding({ addPlayers: true });
+    return result;
   }
 
   async importTeamRosterPlayers(
@@ -7665,7 +7734,12 @@ export class SupabaseDataSource implements DataSource {
     playerId: string,
     response: 'yes' | 'maybe' | 'no',
   ): Promise<void> {
-    const { supabase } = await this.ctx();
+    // userCtx(), not ctx(): a guardian answers RSVPs for their own athlete
+    // and, by design, has no accounts/memberships row (see 0011_user_account_types).
+    // ctx() insists on one and threw 'No account for user' before the request
+    // reached the database. Authorization is availability_write's guardian
+    // branch (roster -> athletes.guardian_user_id), not the caller's account.
+    const { supabase } = await this.userCtx();
     const rosterRow = unwrap(
       await supabase
         .from('season_roster')
@@ -7675,9 +7749,11 @@ export class SupabaseDataSource implements DataSource {
         .maybeSingle()
     ) as Row | null;
 
+    // Throw rather than return: the caller has already shown the answer as
+    // saved, and a silent return leaves it looking recorded when nothing was
+    // written. The mutation rolls the button back and the screen shows this.
     if (!rosterRow) {
-      console.warn('Cannot set availability: player is not in roster');
-      return;
+      throw new Error("This player isn't on this season's roster, so the response couldn't be saved.");
     }
 
     unwrap(
@@ -8197,6 +8273,19 @@ export class SupabaseDataSource implements DataSource {
     const { data, error } = await supabase.rpc('platform_blocked_plan_tiers');
     if (error) {
       console.warn('Could not check platform plan-tier blocks:', error.message);
+      return [];
+    }
+    const tiers: readonly string[] = PLAN_TIERS;
+    return ((data as string[] | null) ?? []).filter((t): t is PlanTier => tiers.includes(t));
+  }
+
+  async getDummyDataBlockedPlanTiers(): Promise<PlanTier[]> {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc('platform_dummy_data_blocked_plan_tiers');
+    // A missing function (the migration not yet applied) reads as "nothing
+    // blocked": the tools stay available rather than vanishing for everyone.
+    if (error) {
+      console.warn('Could not check dummy-data blocks:', error.message);
       return [];
     }
     const tiers: readonly string[] = PLAN_TIERS;

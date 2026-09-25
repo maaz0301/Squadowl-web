@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { useThemeColors, useTheme } from '@/theme/ThemeProvider';
-import { Avatar, Badge, Button, Card, Input, PageHeader, SectionLabel, Switch, useAlert } from '@/components/ui';
+import { Avatar, Badge, Button, Card, Input, Modal, ModalFooter, PageHeader, SectionLabel, Switch, useAlert } from '@/components/ui';
 import { useThemeStore } from '@/state/themeStore';
 import { useUser, useAuthStore, usePermissions } from '@/state/authStore';
 import { canUseFeature, formatLimit, getPlanDefinition, getTeamAllowance } from '@/data/plans';
@@ -34,7 +34,7 @@ export default function ProfilePage() {
   const colors = useThemeColors();
   const { isDark } = useTheme();
   const router = useRouter();
-  const { alert, confirm } = useAlert();
+  const { alert } = useAlert();
   const user = useUser();
   const logout = useAuthStore((s) => s.logout);
   const deleteAccount = useAuthStore((s) => s.deleteAccount);
@@ -66,6 +66,9 @@ export default function ProfilePage() {
   const [loadingPortal, setLoadingPortal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteText, setDeleteText] = useState('');
+  const deleteConfirmed = deleteText.trim().toLowerCase() === 'delete';
 
   const plan = getPlanDefinition(user?.planTier ?? 'coach');
 
@@ -115,19 +118,23 @@ export default function ProfilePage() {
     }
   };
 
+  const closeDeleteModal = () => {
+    if (deletingAccount) return;
+    setDeleteOpen(false);
+    setDeleteText('');
+  };
+
+  // Typing "delete" is the confirmation — a bare OK/Cancel dialog is too easy to
+  // click through for something that cannot be undone.
   const handleDeleteAccount = async () => {
-    const ok = await confirm({
-      title: 'Delete Account',
-      message: 'Are you sure you want to permanently delete your account? This cannot be undone.',
-      confirmLabel: 'Delete',
-      destructive: true,
-    });
-    if (!ok) return;
+    if (!deleteConfirmed || deletingAccount) return;
     setDeletingAccount(true);
     try {
       await deleteAccount();
       router.push('/login');
     } catch (e) {
+      setDeleteOpen(false);
+      setDeleteText('');
       await alert('Error', e instanceof Error ? e.message : 'Could not delete your account.');
     } finally {
       setDeletingAccount(false);
@@ -316,8 +323,7 @@ export default function ProfilePage() {
               label="Delete Account"
               variant="danger"
               size="sm"
-              onClick={handleDeleteAccount}
-              loading={deletingAccount}
+              onClick={() => setDeleteOpen(true)}
             />
           </Card>
         ) : null}
@@ -337,6 +343,49 @@ export default function ProfilePage() {
           }}
         />
       </div>
+
+      <Modal
+        visible={deleteOpen}
+        title="Delete Account"
+        size="sm"
+        onClose={closeDeleteModal}
+        footer={
+          <ModalFooter>
+            <Button label="Cancel" variant="secondary" disabled={deletingAccount} onClick={closeDeleteModal} />
+            <Button
+              label="Delete Account"
+              variant="danger"
+              disabled={!deleteConfirmed}
+              loading={deletingAccount}
+              onClick={handleDeleteAccount}
+            />
+          </ModalFooter>
+        }
+      >
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleDeleteAccount();
+          }}
+        >
+          <p className="text-sm" style={{ color: colors.inkMuted }}>
+            This permanently deletes your account, login and profile. This cannot be undone.
+          </p>
+          <Input
+            label="Type delete to confirm"
+            value={deleteText}
+            onChange={(e) => setDeleteText(e.target.value)}
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="delete"
+            disabled={deletingAccount}
+            autoFocus
+          />
+        </form>
+      </Modal>
     </div>
   );
 }

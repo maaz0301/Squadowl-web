@@ -280,6 +280,37 @@ export function isAtTeamLimit(tier: PlanTier, count: number, extraTeamLicenses =
   return count >= limit;
 }
 
+/**
+ * The dummy-data testing tools are offered on every plan, and only the founder
+ * can switch them off — for all plans or for individual ones — from the founder
+ * console (`platform_settings.dummy_data_blocked_plan_tiers`). Callers pass the
+ * tiers the platform reports as blocked; nothing reported, including the setting
+ * being unreachable, means available. Whatever is on, generation still stops at
+ * the plan's own limits (see the *Room helpers below).
+ */
+export function canUseDummyData(tier: PlanTier, blockedTiers: readonly PlanTier[] = []): boolean {
+  return !blockedTiers.includes(tier);
+}
+
+function roomUnder(limit: number | 'unlimited', used: number): number {
+  return limit === 'unlimited' ? Number.POSITIVE_INFINITY : Math.max(0, limit - used);
+}
+
+/** How many more players one roster (an evaluation's, or a team's) can take on this plan. */
+export function playerRoom(tier: PlanTier, currentPlayers: number): number {
+  return roomUnder(getPlanDefinition(tier).limits.players, currentPlayers);
+}
+
+/** How many more evaluations this plan allows. */
+export function assessmentRoom(tier: PlanTier, currentAssessments: number): number {
+  return roomUnder(getPlanDefinition(tier).limits.assessments, currentAssessments);
+}
+
+/** How many more teams this plan allows, counting purchased team licenses. */
+export function teamRoom(tier: PlanTier, currentTeams: number, extraTeamLicenses = 0): number {
+  return roomUnder(getTeamAllowance(tier, extraTeamLicenses), currentTeams);
+}
+
 export function formatLimit(limit: number | 'unlimited'): string {
   return limit === 'unlimited' ? 'Unlimited' : String(limit);
 }

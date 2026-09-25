@@ -167,6 +167,21 @@ export async function setPlatformBlockedPlanTiers(blockedPlanTiers: PlanTier[]):
   return ((data as string[] | null) ?? []).filter((t): t is PlanTier => tiers.includes(t));
 }
 
+/**
+ * Switches the dummy-data testing tools off for the given plan tiers (all four
+ * turns them off everywhere) — see founder_set_dummy_data_blocked_plan_tiers().
+ * The read side (getDummyDataBlockedPlanTiers) is on the shared DataSource, since
+ * every screen that offers the tools needs it, not just the founder.
+ */
+export async function setDummyDataBlockedPlanTiers(blockedPlanTiers: PlanTier[]): Promise<PlanTier[]> {
+  const { data, error } = await getSupabase().rpc('founder_set_dummy_data_blocked_plan_tiers', {
+    p_blocked_plan_tiers: blockedPlanTiers,
+  });
+  if (error) throw founderError(error);
+  const tiers: readonly string[] = PLAN_TIERS;
+  return ((data as string[] | null) ?? []).filter((t): t is PlanTier => tiers.includes(t));
+}
+
 export async function createFounderOrganization(
   input: FounderCreateOrganizationInput,
 ): Promise<FounderCreateOrganizationResult> {

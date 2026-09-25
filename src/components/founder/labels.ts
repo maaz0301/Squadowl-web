@@ -82,6 +82,7 @@ export const AUDIT_ACTION_LABEL: Record<FounderAuditAction, string> = {
   delete_evaluation: 'Deleted an evaluation record in',
   update_platform_blocked_features: 'Changed platform-wide blocked sections for',
   update_platform_blocked_plan_tiers: 'Changed platform-wide blocked plan tiers for',
+  update_dummy_data_blocked_plan_tiers: 'Changed which plans have dummy-data tools for',
 };
 
 export const AUDIT_CATEGORIES: { value: string; label: string; actions: FounderAuditAction[] }[] = [
@@ -96,6 +97,7 @@ export const AUDIT_CATEGORIES: { value: string; label: string; actions: FounderA
       'update_access',
       'update_platform_blocked_features',
       'update_platform_blocked_plan_tiers',
+      'update_dummy_data_blocked_plan_tiers',
     ],
   },
   { value: 'view_as', label: 'View-as sessions', actions: ['impersonate_start', 'impersonate_end'] },

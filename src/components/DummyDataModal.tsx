@@ -42,6 +42,12 @@ interface AssessmentProps {
   /** How many of the requested records have been created so far — counted
    * across generation and insertion, whatever the target. */
   progress?: { done: number; total: number };
+  /**
+   * How many more players this evaluation's plan lets its roster take. The
+   * dialog will not offer to create more than this — registrations count too,
+   * since each becomes a player once approved. Infinity when unlimited.
+   */
+  maxPlayers: number;
   /** Blocks the scoring options and explains why — no rubrics defined yet. */
   hasRubrics: boolean;
   onAddRubrics: () => void;
@@ -54,6 +60,16 @@ interface TeamProps {
   visible: boolean;
   loading?: boolean;
   progress?: { done: number; total: number };
+  /**
+   * How many more teams can be created — the smaller of the team allowance and
+   * the evaluation allowance, since every dummy team gets a linked evaluation.
+   * Infinity when unlimited.
+   */
+  maxTeams: number;
+  /** Which allowance is the one at zero, so the dialog can say so instead of guessing. */
+  teamsBlockedBy?: 'teams' | 'evaluations' | 'loading';
+  /** How many players one team's roster can hold on this plan. Infinity when unlimited. */
+  maxPlayersPerTeam: number;
   onClose: () => void;
   onSubmit: (options: DummyTeamOptions) => void;
 }
@@ -77,8 +93,16 @@ export function DummyDataModal(props: DummyDataModalProps) {
   const canScore = producesRoster && hasRubrics;
   const scoring = canScore && withScores;
 
-  const countN = clampOption(count, isTeam ? DUMMY_LIMITS.playersPerTeam : DUMMY_LIMITS.count, 25);
-  const teamsN = clampOption(teams, DUMMY_LIMITS.teams, 2);
+  // Never more than the plan allows. "Both" makes two records per player asked
+  // for, so its ceiling is half the room.
+  const playerRoom =
+    props.variant === 'team' ? props.maxPlayersPerTeam : target === 'both' ? Math.floor(props.maxPlayers / 2) : props.maxPlayers;
+  const teamRoom = props.variant === 'team' ? props.maxTeams : Number.POSITIVE_INFINITY;
+  const countMax = Math.min(isTeam ? DUMMY_LIMITS.playersPerTeam.max : DUMMY_LIMITS.count.max, playerRoom);
+  const teamsMax = Math.min(DUMMY_LIMITS.teams.max, teamRoom);
+  const noRoom = countMax < 1 || (isTeam && teamsMax < 1);
+  const countN = clampOption(count, { min: 1, max: Math.max(1, countMax) }, 25);
+  const teamsN = clampOption(teams, { min: 1, max: Math.max(1, teamsMax) }, 2);
   const sessionsN = clampOption(sessions, DUMMY_LIMITS.sessionsPerPlayer, 1);
 
   // `props.loading` only turns true once the mutation's pending state has
@@ -96,6 +120,7 @@ export function DummyDataModal(props: DummyDataModalProps) {
   const loading = props.loading || justClicked;
 
   const submit = () => {
+    if (noRoom) return;
     setJustClicked(true);
     if (props.variant === 'team') {
       props.onSubmit({
@@ -145,7 +170,7 @@ export function DummyDataModal(props: DummyDataModalProps) {
               </p>
             </div>
           ) : null}
-          <Button label={submitLabel} loading={loading} onClick={submit} />
+          <Button label={submitLabel} loading={loading} disabled={noRoom} onClick={submit} />
         </ModalFooter>
       }
     >
@@ -173,7 +198,15 @@ export function DummyDataModal(props: DummyDataModalProps) {
 
         {isTeam ? (
           <Input
-            label={`How many teams (${DUMMY_LIMITS.teams.min}–${DUMMY_LIMITS.teams.max})`}
+            label={
+              teamsMax >= 1
+                ? `How many teams (1–${teamsMax})`
+                : props.variant === 'team' && props.teamsBlockedBy === 'evaluations'
+                  ? 'How many teams (no free evaluation slot)'
+                  : props.variant === 'team' && props.teamsBlockedBy === 'teams'
+                    ? 'How many teams (team limit reached)'
+                    : 'How many teams (checking your plan…)'
+            }
             value={teams}
             onChange={(e) => setTeams(e.target.value)}
             inputMode="numeric"
@@ -184,14 +217,38 @@ export function DummyDataModal(props: DummyDataModalProps) {
         <Input
           label={
             isTeam
-              ? `Players per team (${DUMMY_LIMITS.playersPerTeam.min}–${DUMMY_LIMITS.playersPerTeam.max})`
-              : `How many players (${DUMMY_LIMITS.count.min}–${DUMMY_LIMITS.count.max})`
+              ? countMax < 1
+                ? 'Players per team (none available)'
+                : `Players per team (1–${countMax})`
+              : countMax < 1
+                ? 'How many players (none available)'
+                : `How many players (1–${countMax})`
           }
           value={count}
           onChange={(e) => setCount(e.target.value)}
           inputMode="numeric"
           placeholder="25"
         />
+
+        {noRoom ? (
+          <p className="text-sm" style={{ color: colors.danger }}>
+            {isTeam && teamsMax < 1
+              ? props.variant === 'team' && props.teamsBlockedBy === 'loading'
+                ? 'Checking how much of your plan is already used…'
+                : props.variant === 'team' && props.teamsBlockedBy === 'evaluations'
+                  ? "Every dummy team comes with its own new evaluation, and your plan's evaluation limit is already used up — an evaluation you created yourself counts. Archive or delete one to make room."
+                  : "Your plan's team limit is already used up, so no more dummy teams can be created."
+              : !isTeam && target === 'both' && props.variant === 'assessment' && props.maxPlayers >= 1
+                ? '"Both" needs room for at least 2 players (one pending, one on the roster). Pick Registrations or Roster players instead.'
+                : "This roster is already at your plan's player limit, so no more dummy players can be created."}
+          </p>
+        ) : Number.isFinite(playerRoom) || teamsMax < DUMMY_LIMITS.teams.max ? (
+          <p className="text-xs" style={{ color: colors.inkMuted }}>
+            Dummy data stays within your plan: up to {isTeam ? `${teamsMax} team${teamsMax === 1 ? '' : 's'} and ` : ''}
+            {countMax} player{countMax === 1 ? '' : 's'}
+            {isTeam ? ' per team' : ''} can be created here.
+          </p>
+        ) : null}
 
         {rubricNotice && props.variant === 'assessment' ? (
           <div className="flex flex-col items-start gap-2">

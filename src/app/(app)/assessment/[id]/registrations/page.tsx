@@ -25,7 +25,8 @@ import {
   Tabs,
   useAlert,
 } from '@/components/ui';
-import { canUseFeature, isAtPlayerLimit } from '@/data/plans';
+import { isAtPlayerLimit, playerRoom } from '@/data/plans';
+import { useCanUseDummyData } from '@/features/useCanUseDummyData';
 import type { DummyDataOptions } from '@/data/testDataGenerator';
 import {
   useClearTestDataMutation,
@@ -77,7 +78,7 @@ export default function RegistrationsPage() {
   // Registration whose submitted profile is open. Non-null == profile open.
   const [viewingId, setViewingId] = useState<string | null>(null);
 
-  const isAssociation = canUseFeature(effectiveTier, 'enterprise');
+  const showDummyTools = useCanUseDummyData(effectiveTier);
 
   const cloudId = tryoutQuery.data?.cloud?.id;
   useEffect(() => {
@@ -284,7 +285,7 @@ export default function RegistrationsPage() {
         </span>
       </div>
 
-      {isAssociation ? (
+      {showDummyTools ? (
         <Card className="mb-4 flex flex-col gap-2">
           <SectionLabel>Testing Tools</SectionLabel>
           <p className="text-xs" style={{ color: colors.inkMuted }}>
@@ -457,6 +458,7 @@ export default function RegistrationsPage() {
 
       <DummyDataModal
         variant="assessment"
+        maxPlayers={playerRoom(effectiveTier, tryout.roster.length)}
         visible={showTestGen}
         loading={genTest.isPending}
         progress={dummyProgress ?? undefined}

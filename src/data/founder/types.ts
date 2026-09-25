@@ -247,7 +247,8 @@ export type FounderAuditAction =
   | 'update_evaluation'
   | 'delete_evaluation'
   | 'update_platform_blocked_features'
-  | 'update_platform_blocked_plan_tiers';
+  | 'update_platform_blocked_plan_tiers'
+  | 'update_dummy_data_blocked_plan_tiers';
 
 // ─── Support & Content ───────────────────────────────────────────────────────
 

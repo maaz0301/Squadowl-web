@@ -11,7 +11,8 @@ import { DummyDataModal } from '@/components/DummyDataModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { Avatar, Badge, Button, Card, Chip, ErrorState, FormLock, Input, PageHeader, SectionLabel, useAlert } from '@/components/ui';
-import { canUseFeature, isAtTeamLimit } from '@/data/plans';
+import { canUseFeature, isAtTeamLimit, playerRoom, teamRoom, assessmentRoom } from '@/data/plans';
+import { useCanUseDummyData } from '@/features/useCanUseDummyData';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { getDataSource } from '@/data';
 import { queryKeys } from '@/lib/queryClient';
@@ -24,6 +25,7 @@ import {
   useUpdateTeamMutation,
   useGenerateDummyTeamsMutation,
   useTeamCountQuery,
+  useTryoutSummariesQuery,
   useUploadTeamLogoMutation,
 } from '@/features/queries';
 import { useConnectStatus } from '@/features/useConnectStatus';
@@ -81,7 +83,23 @@ export default function NewTeamPage() {
     setLogo({ uri: URL.createObjectURL(file), type: file.type || 'image/jpeg' });
   };
 
-  const isAssociation = canUseFeature(user?.planTier ?? 'free', 'enterprise');
+  const showDummyTools = useCanUseDummyData(user?.planTier ?? 'free');
+  // Every dummy team also gets a linked evaluation, so the batch is capped by
+  // whichever of the two allowances runs out first. Until the counts have
+  // loaded nothing is offered, rather than guessing a count of zero.
+  const tryoutSummaries = useTryoutSummariesQuery(false);
+  const dummyTier = user?.planTier ?? 'free';
+  const dummyTeamRoom = teamCount.data !== undefined ? teamRoom(dummyTier, teamCount.data, user?.extraTeamLicenses ?? 0) : 0;
+  const dummyEvaluationRoom = tryoutSummaries.data ? assessmentRoom(dummyTier, tryoutSummaries.data.length) : 0;
+  const dummyMaxTeams = Math.min(dummyTeamRoom, dummyEvaluationRoom);
+  const dummyBlockedBy: 'teams' | 'evaluations' | 'loading' | undefined =
+    !tryoutSummaries.data || teamCount.data === undefined
+      ? 'loading'
+      : dummyEvaluationRoom < 1
+        ? 'evaluations'
+        : dummyTeamRoom < 1
+          ? 'teams'
+          : undefined;
   const canCollectFees = canUseFeature(user?.planTier ?? 'free', 'payments');
   const canManageTeamCoaches = canUseFeature(user?.planTier ?? 'free', 'teamManagers');
 
@@ -204,6 +222,11 @@ export default function NewTeamPage() {
     if (isAtTeamLimit(user?.planTier ?? 'free', existing + options.teams - 1, user?.extraTeamLicenses ?? 0)) {
       setShowDummy(false);
       setLimitMsg(buildLimitReachedMessage(user?.planTier ?? 'free', 'teams', 'teams', user?.extraTeamLicenses ?? 0));
+      return;
+    }
+    if (options.teams > dummyMaxTeams) {
+      setShowDummy(false);
+      setLimitMsg(buildLimitReachedMessage(dummyTier, 'assessments', 'evaluations'));
       return;
     }
     setDummyProgress(null);
@@ -363,7 +386,7 @@ export default function NewTeamPage() {
         </form>
       </Card>
 
-      {isAssociation ? (
+      {showDummyTools ? (
         <Card className="mt-6 flex flex-col gap-2">
           <SectionLabel>Testing Tools</SectionLabel>
           <p className="text-xs" style={{ color: colors.inkMuted }}>
@@ -385,6 +408,9 @@ export default function NewTeamPage() {
 
       <DummyDataModal
         variant="team"
+        maxTeams={dummyMaxTeams}
+        teamsBlockedBy={dummyBlockedBy}
+        maxPlayersPerTeam={playerRoom(dummyTier, 0)}
         visible={showDummy}
         loading={genDummy.isPending}
         progress={dummyProgress ?? undefined}

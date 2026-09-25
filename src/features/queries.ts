@@ -2518,6 +2518,20 @@ export function usePlatformBlockedPlanTiersQuery(enabled = true) {
   });
 }
 
+/**
+ * Which plan tiers the founder has switched the dummy-data tools off for. Read
+ * by every screen that offers them, so — like the feature blocks above — it only
+ * changes when the founder flips a switch and a stale copy is harmless.
+ */
+export function useDummyDataBlockedPlanTiersQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.dummyDataBlockedPlanTiers,
+    queryFn: () => getDataSource().getDummyDataBlockedPlanTiers(),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
 export function useFeedbackSubmissionsQuery(enabled = true) {
   return useQuery({
     queryKey: queryKeys.feedbackSubmissions,

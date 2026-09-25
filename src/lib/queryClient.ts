@@ -86,6 +86,8 @@ export const queryKeys = {
   platformBlockedFeatures: ['platform', 'blockedFeatures'] as const,
   /** Plan tiers hidden from checkout/upgrade platform-wide — see AppShell.tsx and the upgrade page. */
   platformBlockedPlanTiers: ['platform', 'blockedPlanTiers'] as const,
+  /** Plan tiers the founder switched the dummy-data tools off for — see useCanUseDummyData. */
+  dummyDataBlockedPlanTiers: ['platform', 'dummyDataBlockedPlanTiers'] as const,
   feedbackSubmissions: ['feedback', 'submissions'] as const,
   coachDirectory: ['coachDirectory'] as const,
   athleteShares: (athleteId: string) => ['athleteShares', athleteId] as const,

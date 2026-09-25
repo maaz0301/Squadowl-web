@@ -356,6 +356,12 @@ export interface DataSource {
    * anyone already subscribed to a blocked tier.
    */
   getPlatformBlockedPlanTiers(): Promise<import('./types').PlanTier[]>;
+  /**
+   * Plan tiers the founder has switched the dummy-data testing tools off for —
+   * see `platform_settings.dummy_data_blocked_plan_tiers`. Empty means
+   * available on every plan; a failed read also reads as empty.
+   */
+  getDummyDataBlockedPlanTiers(): Promise<import('./types').PlanTier[]>;
   /** Every submission, newest first. RLS narrows this to the caller's own unless they are a reviewer. */
   listFeedbackSubmissions(): Promise<import('./extras').FeedbackReport[]>;
   /** A short-lived signed URL for one attachment in the private bucket. */

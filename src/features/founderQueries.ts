@@ -182,6 +182,17 @@ export function useSetPlatformBlockedPlanTiersMutation() {
   });
 }
 
+export function useSetDummyDataBlockedPlanTiersMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (blockedPlanTiers: PlanTier[]) => founderApi.setDummyDataBlockedPlanTiers(blockedPlanTiers),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.dummyDataBlockedPlanTiers });
+      void qc.invalidateQueries({ queryKey: founderKeys.auditLog });
+    },
+  });
+}
+
 export function useCreateFounderOrganizationMutation() {
   const qc = useQueryClient();
   return useMutation({

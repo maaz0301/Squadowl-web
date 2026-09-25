@@ -1,8 +1,8 @@
 import type { AddPlayerForm, PlayerImportResult } from './types';
 
 /**
- * Importing a spreadsheet onto a team roster in a handful of requests instead of
- * a dozen per player.
+ * Importing a spreadsheet onto a team roster or an evaluation in a handful of
+ * requests instead of a dozen per player.
  *
  * Kept free of any data-source code — everything it touches arrives as `deps` —
  * so the part that is easy to get subtly wrong (batching, and what happens to a
@@ -24,10 +24,18 @@ export interface BulkImportDeps {
   resolveGuardians(forms: AddPlayerForm[]): Promise<Map<string, string>>;
   /** Create athletes in one request. Must answer with one id per payload, in order. */
   createAthletes(payloads: Record<string, unknown>[]): Promise<string[]>;
-  /** Put already-created athletes on the roster in one request. */
-  addToRoster(entries: { athleteId: string; jersey?: string; pos?: string }[]): Promise<void>;
+  /**
+   * Put already-created athletes on the roster in one request. `form` is the
+   * row they came from, for rosters that carry more than a jersey and position
+   * (an evaluation's shoots / current team / friends). A roster keyed by its own
+   * row id — an evaluation invites by `tryout_participants.id` — answers with
+   * athleteId -> that id, so the caller can invite exactly what landed.
+   */
+  addToRoster(
+    entries: { athleteId: string; jersey?: string; pos?: string; form: AddPlayerForm }[],
+  ): Promise<void | Map<string, string>>;
   /** The one-player path (create + roster), used to isolate a failure. */
-  addOne(form: AddPlayerForm): Promise<{ athleteId: string }>;
+  addOne(form: AddPlayerForm): Promise<{ athleteId: string; participantId?: string }>;
   chunkSize?: number;
 }
 
@@ -64,9 +72,10 @@ export async function bulkImportPlayers(
   if (rows.length === 0) return result;
   const size = Math.max(1, deps.chunkSize ?? IMPORT_CREATE_CHUNK);
 
-  const landed = (athleteId: string | undefined) => {
+  const landed = (athleteId: string | undefined, participantId?: string) => {
     result.added++;
     if (athleteId) result.athleteIds!.push(athleteId);
+    if (participantId) result.participantIds!.push(participantId);
   };
   const failed = (line: number, form: AddPlayerForm, e: unknown) =>
     result.failed.push({ line, name: nameOf(form), message: messageOf(e, 'Could not add this player.') });
@@ -95,7 +104,8 @@ export async function bulkImportPlayers(
       // Find out which rows are the problem by adding them one at a time.
       for (const { line, form } of chunk) {
         try {
-          landed((await deps.addOne(form)).athleteId);
+          const one = await deps.addOne(form);
+          landed(one.athleteId, one.participantId);
         } catch (e) {
           failed(line, form, e);
         }
@@ -106,16 +116,21 @@ export async function bulkImportPlayers(
   }
 
   if (created.length > 0) {
-    const entry = (c: (typeof created)[number]) => ({ athleteId: c.athleteId, jersey: c.form.jersey, pos: c.form.pos });
+    const entry = (c: (typeof created)[number]) => ({
+      athleteId: c.athleteId,
+      jersey: c.form.jersey,
+      pos: c.form.pos,
+      form: c.form,
+    });
     try {
-      await deps.addToRoster(created.map(entry));
-      for (const c of created) landed(c.athleteId);
+      const ids = await deps.addToRoster(created.map(entry));
+      for (const c of created) landed(c.athleteId, ids?.get(c.athleteId));
     } catch {
       // The upsert is idempotent, so retrying players that did make it is harmless.
       for (const c of created) {
         try {
-          await deps.addToRoster([entry(c)]);
-          landed(c.athleteId);
+          const ids = await deps.addToRoster([entry(c)]);
+          landed(c.athleteId, ids?.get(c.athleteId));
         } catch (e) {
           failed(c.line, c.form, e);
         }
@@ -125,4 +140,89 @@ export async function bulkImportPlayers(
 
   result.failed.sort((a, b) => a.line - b.line);
   return result;
+}
+
+/**
+ * Plan player cap for a spreadsheet import. A spreadsheet is a faster way onto a
+ * roster, not a way around the cap, so only the first `room` rows go through and
+ * the rest come back as "not added" for the import summary to list — the same
+ * shape a row the server rejected has.
+ */
+export function capImportRows<T extends { line: number; form: AddPlayerForm }>(
+  rows: T[],
+  room: number,
+): { allowed: T[]; skipped: PlayerImportResult['failed'] } {
+  if (!(room < rows.length)) return { allowed: rows, skipped: [] };
+  const keep = Math.max(0, Math.floor(room));
+  return {
+    allowed: rows.slice(0, keep),
+    skipped: rows.slice(keep).map(({ line, form }) => ({
+      line,
+      name: nameOf(form),
+      message: "Not added: your plan's player limit was reached.",
+    })),
+  };
+}
+
+/** Folds the rows capImportRows held back into an import's own result. */
+export function withSkippedRows(
+  result: PlayerImportResult,
+  skipped: PlayerImportResult['failed'],
+): PlayerImportResult {
+  if (skipped.length === 0) return result;
+  return { ...result, failed: [...result.failed, ...skipped].sort((a, b) => a.line - b.line) };
+}
+
+/** The bits of a player already on a roster that decide whether an import row is the same person. */
+export interface ExistingPlayer {
+  first: string;
+  last: string;
+  yearOfBirth?: string | number;
+  guardianEmail?: string;
+}
+
+const norm = (v: string | number | null | undefined) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** Same name, and birth year / guardian email agree wherever both sides have one. */
+function isSamePlayer(form: AddPlayerForm, p: ExistingPlayer): boolean {
+  if (norm(form.first) !== norm(p.first) || norm(form.last) !== norm(p.last)) return false;
+  const yobA = norm(form.yearOfBirth);
+  const yobB = norm(p.yearOfBirth);
+  if (yobA && yobB && yobA !== yobB) return false;
+  const gA = norm(form.guardianEmail);
+  const gB = norm(p.guardianEmail);
+  if (gA && gB && gA !== gB) return false;
+  return true;
+}
+
+/**
+ * Sets aside the import rows that are already on the roster, so a re-import
+ * neither files a second copy of them nor spends the plan's player cap on people
+ * who wouldn't add anyone. Only what is on screen can be compared, so a roster
+ * that has not fully loaded lets a few through rather than dropping a real new
+ * player.
+ */
+export function dropExistingPlayers<T extends { line: number; form: AddPlayerForm }>(
+  rows: T[],
+  existing: ExistingPlayer[],
+): { fresh: T[]; duplicates: PlayerImportResult['failed'] } {
+  if (existing.length === 0) return { fresh: rows, duplicates: [] };
+  const byName = new Map<string, ExistingPlayer[]>();
+  for (const p of existing) {
+    const key = `${norm(p.first)}|${norm(p.last)}`;
+    const list = byName.get(key);
+    if (list) list.push(p);
+    else byName.set(key, [p]);
+  }
+  const fresh: T[] = [];
+  const duplicates: PlayerImportResult['failed'] = [];
+  for (const row of rows) {
+    const candidates = byName.get(`${norm(row.form.first)}|${norm(row.form.last)}`) ?? [];
+    if (candidates.some((c) => isSamePlayer(row.form, c))) {
+      duplicates.push({ line: row.line, name: nameOf(row.form), message: 'Already on this roster.' });
+    } else {
+      fresh.push(row);
+    }
+  }
+  return { fresh, duplicates };
 }

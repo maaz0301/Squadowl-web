@@ -65,8 +65,10 @@ import { prefetchNewAssessment } from '@/features/prefetch';
 import { useDebouncedValue } from '@/lib/hooks';
 import { exportTeamRosterData } from '@/lib/teamRosterExport';
 import { useUser, usePermissions } from '@/state/authStore';
-import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit } from '@/data/plans';
+import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit, canUseDummyData, playerRoom, assessmentRoom } from '@/data/plans';
+import { useDummyDataBlockedTiers } from '@/features/useCanUseDummyData';
 import { DUMMY_LIMITS, clampOption } from '@/data/testDataGenerator';
+import { capImportRows, dropExistingPlayers, withSkippedRows } from '@/data/bulkTeamImport';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { CreateEventFormSchema, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent, type TeamInviteResult } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
@@ -137,6 +139,7 @@ export default function TeamDetailPage() {
   const { alert, confirm } = useAlert();
   const teamsQuery = useTeamsQuery();
   const tryoutSummariesQuery = useTryoutSummariesQuery(false);
+  const dummyBlockedTiers = useDummyDataBlockedTiers();
   // Dummy data generation writes onto a linked evaluation, so it targets this
   // team's first one — auto-created on demand below if there isn't one yet.
   // Computed off the route id (not `team.id`, which isn't resolved yet) so
@@ -400,7 +403,7 @@ export default function TeamDetailPage() {
   const linkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => t.teamId === team.id);
   const unlinkedTryouts = (tryoutSummariesQuery.data ?? []).filter((t) => !t.teamId);
   const canCollectFees = canUseFeature(effectiveTier, 'payments');
-  const isAssociation = canUseFeature(effectiveTier, 'enterprise');
+  const showDummyTools = canUseDummyData(effectiveTier, dummyBlockedTiers);
 
   /**
    * Dummy roster players write onto a linked evaluation even though this flow
@@ -563,6 +566,33 @@ export default function TeamDetailPage() {
     );
   const availableCount = filteredCandidates.filter((c) => !c.alreadyOnTeam).length;
   const isAddingPlayers = addRosterPlayers.isPending || enrollingAssessments;
+
+  // Dummy players land on both this team's roster and its linked evaluation's,
+  // so they stop at whichever is closer to the plan's player cap. A team with
+  // no evaluation yet gets one made on the fly, which must fit the evaluation
+  // allowance too (a delegated team only counts its own).
+  const summaries = tryoutSummariesQuery.data ?? [];
+  const linkedSummary = summaries.find((t) => t.teamId === team.id);
+  const dummyAssessmentCount = team.managed ? summaries.filter((t) => t.teamId === team.id).length : summaries.length;
+  const dummyRoom = Math.min(
+    playerRoom(effectiveTier, playerCount),
+    linkedSummary ? playerRoom(effectiveTier, linkedSummary.playerCount ?? 0) : Number.POSITIVE_INFINITY,
+  );
+  const dummyBlocked = !linkedSummary && assessmentRoom(effectiveTier, dummyAssessmentCount) < 1;
+  const dummyMax = Math.min(DUMMY_LIMITS.count.max, dummyRoom);
+  const dummyCount = clampOption(dummyPlayerCount, { min: 1, max: Math.max(1, dummyMax) }, 25);
+  const dummyNoRoom = dummyMax < 1 || dummyBlocked;
+
+  // Same plan gate as adding a player by hand — a spreadsheet is a faster way
+  // onto the roster, not a way around the cap. The roster's cap is the owning
+  // club's for a delegated team (effectiveTier), as for every other add path.
+  const openImportPlayers = () => {
+    if (isAtPlayerLimit(effectiveTier, playerCount)) {
+      setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
+      return;
+    }
+    setShowImportPlayers(true);
+  };
 
   const addPickedPlayers = async () => {
     const picked = candidates.filter((c) => pickedAthletes.has(c.athleteId));
@@ -1243,7 +1273,7 @@ export default function TeamDetailPage() {
               label="Import from File"
               size="sm"
               variant="secondary"
-              onClick={() => setShowImportPlayers(true)}
+              onClick={() => openImportPlayers()}
             />
             {playerCount > 0 ? (
               <Button label="Select" size="sm" variant="secondary" onClick={() => setRosterSelectMode(true)} />
@@ -1499,7 +1529,7 @@ export default function TeamDetailPage() {
             </Card>
           ) : null}
 
-          {isAssociation ? (
+          {showDummyTools ? (
             <Card className="flex flex-col items-start gap-2">
               <SectionLabel>Dummy Data</SectionLabel>
               <p className="text-xs" style={{ color: colors.inkMuted }}>
@@ -1816,8 +1846,28 @@ export default function TeamDetailPage() {
         visible={showImportPlayers}
         onClose={() => setShowImportPlayers(false)}
         target={team.name}
+        atLimit={isAtPlayerLimit(effectiveTier, playerCount)}
+        onLimitReached={() => setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'))}
         onImport={async (rows, onProgress) => {
-          const result = await importPlayers.mutateAsync({ rows, onProgress });
+          // A spreadsheet is a faster way onto the roster, not a way around the
+          // plan's player cap: players already here are set aside first (they add
+          // nobody, so they shouldn't spend the cap), then what fits goes in and
+          // the rest is listed as not added.
+          const { fresh, duplicates } = dropExistingPlayers(rows, listedPlayers);
+          const capped = capImportRows(fresh, playerRoom(effectiveTier, playerCount));
+          const allowed = capped.allowed;
+          const skipped = [...duplicates, ...capped.skipped];
+          if (allowed.length === 0) {
+            return withSkippedRows({ added: 0, failed: [], athleteIds: [], participantIds: [] }, skipped);
+          }
+          const result = withSkippedRows(await importPlayers.mutateAsync({ rows: allowed, onProgress }), skipped);
+          // The mutation only marks the roster stale; on a capped plan, wait for
+          // the fresh count so the "Import more" check that follows never runs
+          // against the old one. Unlimited plans have no such check, so they
+          // don't wait on a full roster re-read (a thousand players is seconds).
+          if (Number.isFinite(playerRoom(effectiveTier, 0))) {
+            await rosterAthleteIdsQuery.refetch({ cancelRefetch: false });
+          }
           // Same rule as every other way onto this roster: the import is what
           // earns the portal invite. Scoped to the athletes the import actually
           // landed, so a re-import doesn't re-mail the players already there.
@@ -1993,15 +2043,17 @@ export default function TeamDetailPage() {
               </div>
             ) : null}
             <Button
-              label={`Add ${clampOption(dummyPlayerCount, DUMMY_LIMITS.count, 25)} Players`}
+              label={`Add ${dummyCount} Players`}
               loading={genTest.isPending || addRosterPlayers.isPending}
+              disabled={dummyNoRoom}
               onClick={async () => {
                 setDummyProgress(null);
                 try {
+                  if (dummyNoRoom) return;
                   const tryoutIdForRoster = await ensureDummyTryoutId();
                   const res = await genTest.mutateAsync({
                     target: 'roster',
-                    count: clampOption(dummyPlayerCount, DUMMY_LIMITS.count, 25),
+                    count: dummyCount,
                     withScores: false,
                     sessionsPerPlayer: 1,
                   });
@@ -2026,12 +2078,21 @@ export default function TeamDetailPage() {
         }
       >
         <Input
-          label={`How many players (${DUMMY_LIMITS.count.min}–${DUMMY_LIMITS.count.max})`}
+          label={`How many players (1–${Math.max(1, dummyMax)})`}
           value={dummyPlayerCount}
           onChange={(e) => setDummyPlayerCount(e.target.value)}
           inputMode="numeric"
           placeholder="25"
         />
+        <p className="mt-3 text-xs" style={{ color: dummyNoRoom ? colors.danger : colors.inkMuted }}>
+          {dummyBlocked
+            ? "Your plan's evaluation limit is reached, so this team can't get the evaluation dummy players are added through."
+            : dummyMax < 1
+              ? "This team is already at your plan's player limit, so no more dummy players can be added."
+              : Number.isFinite(dummyRoom)
+                ? `Dummy players stay within your plan: up to ${dummyMax} can be added here.`
+                : ''}
+        </p>
       </Modal>
 
       <LimitReachedModal visible={!!limitMsg} onClose={() => setLimitMsg(null)} message={limitMsg ?? ''} />
