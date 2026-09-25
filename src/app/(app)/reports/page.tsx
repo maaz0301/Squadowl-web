@@ -262,7 +262,7 @@ export default function ReportsPage() {
                 <p className="text-sm" style={{ color: colors.inkMuted }}>
                   {row.sport} · {row.eventType}
                   {row.date ? ` · ${row.date}` : ''}
-                  {item ? '' : ` · ${row.players} players`}
+                  {item ? '' : ` · ${row.players} ${row.players === 1 ? 'player' : 'players'}`}
                 </p>
               </div>
               {item ? (
@@ -284,7 +284,7 @@ export default function ReportsPage() {
               </div>
               <div className="flex justify-between text-xs" style={{ color: colors.inkMuted }}>
                 <span>
-                  {item.scoredPlayers} of {item.players} players scored · {pct(item.completion)}
+                  {item.scoredPlayers} of {item.players} {item.players === 1 ? 'player' : 'players'} scored · {pct(item.completion)}
                 </span>
                 {item.unscored > 0 ? (
                   <span className="font-bold" style={{ color: colors.warning }}>

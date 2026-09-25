@@ -1094,7 +1094,7 @@ export default function TeamDetailPage() {
               Loading events...
             </p>
           ) : (
-            <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
               <div>
                 <HubSectionLabel
                   icon="calendar"
@@ -1491,11 +1491,17 @@ export default function TeamDetailPage() {
                 <Card
                   key={t.id}
                   interactive
-                  className="flex items-center justify-between gap-3"
+                  className="flex items-center gap-3"
                   onClick={() => router.push(`/assessment/${t.id}/roster`)}
                 >
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                    style={{ backgroundColor: 'rgba(255,107,43,0.12)' }}
+                  >
+                    <Icon name="assessments" size={20} color={colors.primary} />
+                  </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-bold" style={{ color: colors.ink }}>
+                    <span className="block truncate text-base font-bold" style={{ color: colors.ink }}>
                       {t.name}
                     </span>
                     <span className="mt-0.5 block text-xs" style={{ color: colors.inkMuted }}>

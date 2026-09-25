@@ -28,7 +28,8 @@ export function TeamHubTabs({
   const s = useHubSurfaces();
 
   return (
-    <div role="tablist" className="mb-6 flex gap-2">
+    // Two by two on a phone so four labels never get clipped; one row from sm up.
+    <div role="tablist" className="mb-6 grid grid-cols-2 gap-2 sm:flex">
       {tabs.map((tab) => {
         const active = tab.key === activeKey;
         const ink = active ? '#ffffff' : colors.inkMuted;
@@ -39,14 +40,16 @@ export function TeamHubTabs({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(tab.key)}
-            className="flex h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border px-2 text-xs font-bold transition-colors active:scale-[0.98] sm:text-sm"
+            className="flex h-11 min-w-0 items-center sm:flex-1 justify-center gap-1.5 rounded-xl border px-2 text-xs font-bold transition-colors active:scale-[0.98] sm:text-sm"
             style={{
               backgroundColor: active ? colors.primary : s.panelBg,
               borderColor: active ? colors.primary : s.panelBorder,
               color: ink,
             }}
           >
-            <Icon name={tab.icon} size={15} color={ink} />
+            <span className="shrink-0">
+              <Icon name={tab.icon} size={15} color={ink} />
+            </span>
             <span className="truncate">{tab.label}</span>
             {tab.badge != null && tab.badge > 0 ? (
               <span

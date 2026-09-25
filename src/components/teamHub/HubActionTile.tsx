@@ -31,7 +31,7 @@ export function HubActionTile({
       ref={buttonRef}
       type="button"
       disabled={loading || props.disabled}
-      className="flex h-14 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-[11px] font-bold transition-[filter] hover:brightness-110 disabled:pointer-events-none disabled:opacity-60 sm:text-xs"
+      className="flex min-h-14 min-w-0 flex-1 flex-col py-1.5 items-center justify-center gap-1 rounded-xl border px-1 text-[11px] font-bold transition-[filter] hover:brightness-110 disabled:pointer-events-none disabled:opacity-60 sm:text-xs"
       style={{
         backgroundColor: danger ? 'rgba(248,113,113,0.10)' : s.blueBg,
         borderColor: danger ? 'rgba(248,113,113,0.5)' : s.blueBorder,
@@ -40,7 +40,7 @@ export function HubActionTile({
       {...props}
     >
       {loading ? <Spinner size={15} color={tint} /> : <Icon name={icon} size={16} color={tint} />}
-      <span className="max-w-full truncate">{label}</span>
+      <span className="max-w-full text-center leading-tight">{label}</span>
     </button>
   );
 }

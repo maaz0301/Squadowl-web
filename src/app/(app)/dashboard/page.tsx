@@ -22,7 +22,6 @@ import { Icon } from '@/components/Icons';
 import { HomeIntro } from '@/components/home/HomeIntro';
 import { HomeEmptyCard } from '@/components/home/HomeEmptyCard';
 import { HomePanel, PanelRow } from '@/components/home/HomePanel';
-import { HomeSectionLabel } from '@/components/home/HomeSectionLabel';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -322,9 +321,17 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => setAssignedExpanded((v) => !v)}
+            aria-expanded={assignedExpanded}
             className="mb-3 flex w-full items-center justify-between py-1"
           >
-            <HomeSectionLabel>Assigned to me</HomeSectionLabel>
+            {/* Not HomeSectionLabel: that is a heading block with its own bottom
+                margin, which doesn't belong inside a button. */}
+            <span className="flex items-center gap-2">
+              <span className="block h-3 w-[3px] rounded-sm" style={{ backgroundColor: colors.primary }} />
+              <span className="text-xs font-bold tracking-wider uppercase" style={{ color: colors.inkMuted }}>
+                Assigned to me
+              </span>
+            </span>
             <Icon name={assignedExpanded ? 'chevronDown' : 'chevronRight'} size={16} color={colors.inkMuted} />
           </button>
           {assignedExpanded
@@ -464,6 +471,12 @@ export default function DashboardPage() {
                       className="flex h-full items-start justify-between gap-3"
                       style={isBusy ? { opacity: 0.5 } : undefined}
                     >
+                      <span
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                        style={{ backgroundColor: 'rgba(255,107,43,0.12)' }}
+                      >
+                        <Icon name="assessments" size={20} color={colors.primary} />
+                      </span>
                       <span className="min-w-0 flex-1">
                         <span
                           className="block truncate text-lg font-bold"
@@ -479,10 +492,16 @@ export default function DashboardPage() {
                             {item.tryoutDate} {item.startTime ? `· ${item.startTime}` : ''}
                           </span>
                         ) : null}
+                        {/* Under the text on a phone, where the right-hand column has no room for it. */}
+                        <span className="mt-1.5 block sm:hidden">
+                          <Badge label={`${item.playerCount} ${item.playerCount === 1 ? 'player' : 'players'}`} />
+                        </span>
                       </span>
                       <span className="flex flex-col items-end gap-2">
                         <span className="flex items-center gap-2">
-                          <Badge label={`${item.playerCount} players`} />
+                          <span className="hidden sm:inline-flex">
+                            <Badge label={`${item.playerCount} ${item.playerCount === 1 ? 'player' : 'players'}`} />
+                          </span>
                           <NavPending />
                           {isBusy ? (
                             <Spinner size={16} color={colors.danger} />
