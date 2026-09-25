@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { Icon } from '@/components/Icons';
+import { HubActionTile } from '@/components/teamHub/HubActionTile';
 import {
   appleDirectionsUrl,
   googleMapsUrl,
@@ -60,9 +61,9 @@ export function MapLink({
   /**
    * `chip` is the standalone button used beside "Add to calendar"; `inline`
    * turns the location text itself into the trigger, for rows too tight for
-   * another button.
+   * another button. `tile` is the Team Hub's own action button.
    */
-  variant?: 'chip' | 'inline';
+  variant?: 'chip' | 'inline' | 'tile';
 }) {
   const colors = useThemeColors();
   const [open, setOpen] = useState(false);
@@ -169,6 +170,23 @@ export function MapLink({
       ))}
     </div>
   ) : null;
+
+  if (variant === 'tile') {
+    return (
+      <>
+        <HubActionTile
+          buttonRef={btnRef}
+          icon="mapPin"
+          label="Directions"
+          title={title}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        />
+        {menu}
+      </>
+    );
+  }
 
   if (variant === 'inline') {
     return (

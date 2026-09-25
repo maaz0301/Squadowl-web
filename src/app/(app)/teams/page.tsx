@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -11,13 +11,14 @@ import {
   Button,
   Card,
   CardGridSkeleton,
-  EmptyState,
   ErrorState,
-  PageHeader,
   Spinner,
   useAlert,
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
+import { HomeIntro } from '@/components/home/HomeIntro';
+import { HomePanel } from '@/components/home/HomePanel';
+import { HomeEmptyCard } from '@/components/home/HomeEmptyCard';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import {
@@ -49,12 +50,18 @@ export default function TeamsPage() {
   const archiveTeam = useArchiveTeamMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
+  // The Teams panel, so its Quick Access card can bring it into view.
+  const teamsRef = useRef<HTMLDivElement>(null);
+  const scrollToTeams = () => teamsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   if (teamsQuery.isLoading) {
     return (
       <>
-        <PageHeader title="Teams" subtitle="Rosters, schedules and season events" />
-        <CardGridSkeleton count={3} lines={2} />
+        <h1 className="sr-only">Teams</h1>
+        <HomeIntro active="teams" />
+        <HomePanel icon="teams" label="Teams">
+          <CardGridSkeleton count={3} lines={2} />
+        </HomePanel>
       </>
     );
   }
@@ -122,19 +129,7 @@ export default function TeamsPage() {
 
   return (
     <>
-      <PageHeader
-        title="Teams"
-        subtitle="Rosters, schedules and season events"
-        right={
-          <Button
-            label="+ New Team"
-            onClick={newTeam}
-            onMouseEnter={warmNewTeam}
-            onFocus={warmNewTeam}
-            onTouchStart={warmNewTeam}
-          />
-        }
-      />
+      <h1 className="sr-only">Teams</h1>
 
       <UsageNudgeBanner
         tier={user?.planTier ?? 'free'}
@@ -143,99 +138,120 @@ export default function TeamsPage() {
         label="teams"
       />
 
-      {teams.length === 0 ? (
-        <EmptyState
-          title="No teams created"
-          message="Create a team to group rosters, schedule practices and games, and manage evaluations."
-        />
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {teams.map((team) => {
-            const season = seasons.find((s) => s.teamId === team.id);
-            const isBusy = busyId === team.id;
-            return (
-              <Link
-                key={team.id}
-                href={`/team/${team.id}`}
-                onMouseEnter={() => prefetchTeamDetail(team.id)}
-                onTouchStart={() => prefetchTeamDetail(team.id)}
-                onClick={(e) => {
-                  if (isBusy) e.preventDefault();
-                }}
-              >
-                <Card
-                  interactive={!isBusy}
-                  className="flex h-full flex-col gap-1"
-                  style={{
-                    ...(team.brandColor ? { borderLeftWidth: 3, borderLeftColor: team.brandColor } : undefined),
-                    ...(isBusy ? { opacity: 0.5 } : undefined),
-                  }}
-                >
-                  <div className="mb-1 flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Avatar first={team.name} last="" uri={team.logoUrl} size={40} ringColor={team.brandColor} />
-                      <span
-                        className="truncate text-lg font-bold"
-                        style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-                      >
-                        {team.name}
-                      </span>
-                      {team.managed ? <Badge label="Managed" variant="info" /> : null}
-                    </div>
-                    <span className="flex shrink-0 items-center gap-2">
-                      <NavPending />
-                      {isBusy ? (
-                        <Spinner size={16} color={colors.danger} />
-                      ) : team.managed ? null : (
-                        <>
-                          <button
-                            type="button"
-                            aria-label="Archive team"
-                            title="Archive"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleArchiveTeam(team.id, team.name);
-                            }}
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
+      <HomeIntro active="teams" onTeams={scrollToTeams} />
+
+      {/* Header, the empty state and the team cards all live inside one panel. */}
+      <div ref={teamsRef} className="scroll-mt-4">
+        <HomePanel
+          icon="teams"
+          label="Teams"
+          right={
+            <Button
+              label="+ New Team"
+              size="sm"
+              onClick={newTeam}
+              onMouseEnter={warmNewTeam}
+              onFocus={warmNewTeam}
+              onTouchStart={warmNewTeam}
+            />
+          }
+        >
+          {teams.length === 0 ? (
+            <HomeEmptyCard
+              icon="teams"
+              title="No teams created"
+              message="Create a team to group rosters, schedule practices and games, and manage evaluations."
+            />
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {teams.map((team) => {
+                const season = seasons.find((s) => s.teamId === team.id);
+                const isBusy = busyId === team.id;
+                return (
+                  <Link
+                    key={team.id}
+                    href={`/team/${team.id}`}
+                    onMouseEnter={() => prefetchTeamDetail(team.id)}
+                    onTouchStart={() => prefetchTeamDetail(team.id)}
+                    onClick={(e) => {
+                      if (isBusy) e.preventDefault();
+                    }}
+                  >
+                    <Card
+                      interactive={!isBusy}
+                      className="flex h-full flex-col gap-1"
+                      style={{
+                        ...(team.brandColor ? { borderLeftWidth: 3, borderLeftColor: team.brandColor } : undefined),
+                        ...(isBusy ? { opacity: 0.5 } : undefined),
+                      }}
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar first={team.name} last="" uri={team.logoUrl} size={40} ringColor={team.brandColor} />
+                          <span
+                            className="truncate text-lg font-bold"
+                            style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
                           >
-                            <Icon name="archive" size={16} color={colors.inkMuted} />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label="Delete team"
-                            title="Delete"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleDeleteTeam(team.id, team.name);
-                            }}
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
-                          >
-                            <Icon name="trash" size={16} color={colors.danger} />
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  {team.season ? (
-                    <span className="text-sm" style={{ color: colors.inkMuted }}>
-                      {team.season}
-                    </span>
-                  ) : null}
-                  {playerCounts && seasonsQuery.isSuccess ? (
-                    <span className="mt-2">
-                      <Badge
-                        label={`${playerCounts[team.id] ?? 0} players · ${season?.eventCount ?? 0} events`}
-                      />
-                    </span>
-                  ) : null}
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+                            {team.name}
+                          </span>
+                          {team.managed ? <Badge label="Managed" variant="info" /> : null}
+                        </div>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <NavPending />
+                          {isBusy ? (
+                            <Spinner size={16} color={colors.danger} />
+                          ) : team.managed ? null : (
+                            <>
+                              <button
+                                type="button"
+                                aria-label="Archive team"
+                                title="Archive"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleArchiveTeam(team.id, team.name);
+                                }}
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                              >
+                                <Icon name="archive" size={16} color={colors.inkMuted} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Delete team"
+                                title="Delete"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDeleteTeam(team.id, team.name);
+                                }}
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                              >
+                                <Icon name="trash" size={16} color={colors.danger} />
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      {team.season ? (
+                        <span className="text-sm" style={{ color: colors.inkMuted }}>
+                          {team.season}
+                        </span>
+                      ) : null}
+                      {playerCounts && seasonsQuery.isSuccess ? (
+                        <span className="mt-2">
+                          <Badge
+                            label={`${playerCounts[team.id] ?? 0} players · ${season?.eventCount ?? 0} events`}
+                          />
+                        </span>
+                      ) : null}
+                    </Card>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </HomePanel>
+      </div>
 
       <LimitReachedModal visible={!!limitMsg} message={limitMsg || ''} onClose={() => setLimitMsg(null)} />
     </>

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import {
@@ -13,12 +13,16 @@ import {
   CardGridSkeleton,
   ErrorState,
   Modal,
+  Avatar,
   PageHeader,
-  SectionLabel,
   Spinner,
   useAlert,
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
+import { HomeIntro } from '@/components/home/HomeIntro';
+import { HomeEmptyCard } from '@/components/home/HomeEmptyCard';
+import { HomePanel, PanelRow } from '@/components/home/HomePanel';
+import { HomeSectionLabel } from '@/components/home/HomeSectionLabel';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -36,7 +40,7 @@ import {
   useArchiveTryoutMutation,
   useDeleteTryoutMutation,
 } from '@/features/queries';
-import { canUseFeature, isAtAssessmentLimit } from '@/data/plans';
+import { isAtAssessmentLimit } from '@/data/plans';
 import { prefetchNewAssessment, prefetchTryout } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 import { GuardianAthleteCard } from '@/components/GuardianAthleteCard';
@@ -53,7 +57,9 @@ export default function DashboardPage() {
   const combineIds = useSessionStore((s) => s.combineTryoutIds);
   const toggleCombineTryout = useSessionStore((s) => s.toggleCombineTryout);
 
-  const [combineMode, setCombineMode] = useState(false);
+  // The Reports card on the Teams page lands here with ?combine=1.
+  const searchParams = useSearchParams();
+  const [combineMode, setCombineMode] = useState(searchParams.get('combine') === '1');
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [assignedExpanded, setAssignedExpanded] = useState(true);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
@@ -71,6 +77,8 @@ export default function DashboardPage() {
   // was flaky because the modal closes (and re-renders the list) before the
   // pending state has propagated.
   const [busyId, setBusyId] = useState<string | null>(null);
+  // The Evaluations & Tryouts panel, so a Quick Access card can bring it into view.
+  const evaluationsRef = useRef<HTMLDivElement>(null);
 
   const { isGuardian, role } = usePermissions();
 
@@ -91,7 +99,7 @@ export default function DashboardPage() {
   // Guardians and coaches share this route but not this data — firing the
   // guardian read for a coach was a round trip whose result is never rendered.
   // (A coach who is also a guardian gets that view at its own route, /my-athletes.)
-  const guardianQuery = useGuardianRostersQuery(isGuardian);
+  const guardianQuery = useGuardianRostersQuery(true);
   const acceptAssignment = useAcceptAssignmentMutation();
   const rejectAssignment = useRejectAssignmentMutation();
   const archiveTryout = useArchiveTryoutMutation();
@@ -249,101 +257,80 @@ export default function DashboardPage() {
     router.push('/assessment/new');
   };
 
+  const guardianAthletes = guardianQuery.data ?? [];
+
   return (
     <>
-      <PageHeader
-        title="Tryouts"
-        right={
-          <>
-            <Button label="Search" variant="secondary" onClick={() => router.push('/search')} />
-            <Button
-              label="+ New Evaluation"
-              onClick={newAssessment}
-              onMouseEnter={warmNewAssessment}
-              onFocus={warmNewAssessment}
-              onTouchStart={warmNewAssessment}
-            />
-          </>
-        }
-      />
+      <h1 className="sr-only">Tryouts</h1>
 
       {loadingTryouts ? null : (
         <UsageNudgeBanner tier={planTier} metric="assessments" count={allTryouts.length} label="evaluations" />
       )}
 
-      {canUseFeature(planTier, 'enterprise') ? (
-        <Link href="/enterprise" className="mb-4 block">
-          <Card accent interactive className="flex items-center gap-3">
-            <Icon name="enterprise" size={22} color={colors.primary} />
-            <span className="flex-1">
-              <span className="block text-base font-bold" style={{ color: colors.ink }}>
-                Dashboard
-              </span>
-              <span className="block text-xs" style={{ color: colors.inkMuted }}>
-                Organization-wide reporting & members
-              </span>
-            </span>
-            <Icon name="chevronRight" size={18} color={colors.inkMuted} />
-          </Card>
-        </Link>
-      ) : null}
+      <HomeIntro
+        active="evaluations"
+        onEvaluations={() => evaluationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        onReports={() => {
+          setCombineMode(true);
+          evaluationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}
+      />
 
-      {/* Overview & jump points */}
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Card accent className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <Icon name="assessments" size={18} color={colors.primary} />
-            {/* An em dash rather than 0 while the count is in flight — a real
-                zero and an unknown count are different things to a coach. */}
-            <Badge label={loadingTryouts ? '—' : `${tryouts.length}`} variant="brand" />
+      {/* A coach who is also a guardian on some athlete. */}
+      {guardianAthletes.length > 0 ? (
+        <HomePanel
+          icon="profile"
+          label="My Athletes"
+          className="mb-6"
+          right={
+            guardianAthletes.length > 3 ? (
+              <Link href="/my-athletes" className="flex items-center gap-1 text-xs font-bold" style={{ color: colors.primary }}>
+                View All
+                <Icon name="chevronRight" size={12} color={colors.primary} strokeWidth={2.5} />
+              </Link>
+            ) : undefined
+          }
+        >
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {guardianAthletes.slice(0, 3).map((ath) => (
+              <Link key={ath.id} href={`/guardian/${ath.id}`} className="block">
+                <PanelRow>
+                  <span
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-[1.5px]"
+                    style={{ borderColor: colors.primary }}
+                  >
+                    <Avatar first={ath.firstName} last={ath.lastName} size={32} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className="block truncate text-base font-bold"
+                      style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+                    >
+                      {ath.firstName} {ath.lastName}
+                    </span>
+                    <span className="block truncate text-xs" style={{ color: colors.inkMuted }}>
+                      {ath.seasons.length === 0
+                        ? 'No active seasons yet'
+                        : ath.seasons.map((se) => se.name).join(' · ')}
+                    </span>
+                  </span>
+                  <Icon name="chevronRight" size={18} color={colors.inkMuted} strokeWidth={2.5} />
+                </PanelRow>
+              </Link>
+            ))}
           </div>
-          <span className="mt-1 text-sm font-bold" style={{ color: colors.ink }}>
-            Evaluations
-          </span>
-          <span className="text-xs" style={{ color: colors.inkMuted }}>
-            Tryouts &amp; Tests
-          </span>
-        </Card>
-
-        <Link href="/teams">
-          <Card interactive className="flex h-full flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <Icon name="teams" size={18} color={colors.primary} />
-              <Badge label={teamsQuery.isLoading ? '—' : `${teams.length}`} />
-            </div>
-            <span className="mt-1 text-sm font-bold" style={{ color: colors.ink }}>
-              Teams
-            </span>
-            <span className="text-xs" style={{ color: colors.inkMuted }}>
-              Rosters &amp; Schedules
-            </span>
-          </Card>
-        </Link>
-
-        <Link href="/archived-assessments">
-          <Card interactive className="flex h-full flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <Icon name="archive" size={18} color={colors.primary} />
-            </div>
-            <span className="mt-1 text-sm font-bold" style={{ color: colors.ink }}>
-              Archived
-            </span>
-            <span className="text-xs" style={{ color: colors.inkMuted }}>
-              Evaluations &amp; teams
-            </span>
-          </Card>
-        </Link>
-      </div>
+        </HomePanel>
+      ) : null}
 
       {/* Assigned to me */}
       {assignedQuery.data && assignedQuery.data.length > 0 ? (
-        <div className="mb-5">
+        <div className="mb-6">
           <button
             type="button"
             onClick={() => setAssignedExpanded((v) => !v)}
-            className="mb-2 flex w-full items-center justify-between py-1"
+            className="mb-3 flex w-full items-center justify-between py-1"
           >
-            <SectionLabel>Assigned to me</SectionLabel>
+            <HomeSectionLabel>Assigned to me</HomeSectionLabel>
             <Icon name={assignedExpanded ? 'chevronDown' : 'chevronRight'} size={16} color={colors.inkMuted} />
           </button>
           {assignedExpanded
@@ -357,7 +344,7 @@ export default function DashboardPage() {
                 const mine = findViewersAssessorRow(t.assessors, user, viewedIds);
                 const isPending = (mine?.status ?? 'pending') === 'pending';
                 return (
-                  <Card key={t.id} className="mb-2 flex flex-col gap-3">
+                  <Card key={t.id} className="mb-3 flex flex-col gap-3">
                     <Link
                       href={`/assessment/${t.id}/roster?assessor=1`}
                       className="flex items-center justify-between gap-3 text-left"
@@ -405,128 +392,149 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      {/* Evaluation list */}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <SectionLabel>Evaluations &amp; Tryouts</SectionLabel>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            label={combineMode ? 'Cancel Combine' : 'Combine Mode'}
-            size="sm"
-            variant={combineMode ? 'primary' : 'secondary'}
-            onClick={() => setCombineMode((m) => !m)}
-          />
-          {combineMode && combineIds.length >= 2 ? (
-            <Button label="View Combined" size="sm" onClick={() => router.push('/combine')} />
-          ) : null}
-        </div>
-      </div>
+      {/* Evaluations & Tryouts: header, actions, the empty state and the cards
+          all live inside one panel. */}
+      <div ref={evaluationsRef} className="scroll-mt-4">
+        <HomePanel
+          icon="calendar"
+          label="Evaluations & Tryouts"
+          right={
+            <Button
+              label="+ New Evaluation"
+              size="sm"
+              onClick={newAssessment}
+              onMouseEnter={warmNewAssessment}
+              onFocus={warmNewAssessment}
+              onTouchStart={warmNewAssessment}
+            />
+          }
+        >
+          <div className="flex flex-wrap gap-2">
+            <Button
+              label={combineMode ? 'Cancel Combine' : 'Combine Mode'}
+              size="sm"
+              variant={combineMode ? 'primary' : 'secondary'}
+              onClick={() => setCombineMode((m) => !m)}
+            />
+            {combineMode && combineIds.length >= 2 ? (
+              <Button label="View Combined" size="sm" onClick={() => router.push('/combine')} />
+            ) : null}
+            <Button label="Archived" size="sm" variant="ghost" onClick={() => router.push('/archived-assessments')} />
+          </div>
 
-      {loadingTryouts ? (
-        <CardGridSkeleton count={4} lines={2} columns="sm:grid-cols-2" />
-      ) : tryouts.length === 0 ? (
-        <EmptyState
-          title="No evaluations yet"
-          message="Create your first tryout or evaluation to begin scoring players."
-        />
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {tryouts.map((item) => {
-            const selected = combineIds.includes(item.id);
-            const isBusy = busyId === item.id;
-            return (
-              // A real <Link>, not a click handler that pushes: only a Link
-              // gets Next's route prefetch, and with /assessment/[id]'s
-              // loading boundary that is what makes the tap land on the next
-              // screen immediately instead of after a server round trip.
-              <Link
-                key={item.id}
-                href={`/assessment/${item.id}/roster`}
-                className="block h-full"
-                // The roster screen this opens needs the full assessment, which
-                // the summary list deliberately doesn't carry. Starting that read
-                // on hover/touch usually covers the whole gap before the tap.
-                onMouseEnter={() => prefetchTryout(item.id)}
-                onTouchStart={() => prefetchTryout(item.id)}
-                onClick={(e) => {
-                  // Combine mode turns the grid into a multi-select, so a tap
-                  // picks the card rather than opening it.
-                  if (isBusy || combineMode) {
-                    e.preventDefault();
-                    if (!isBusy) toggleCombineTryout(item.id);
-                    return;
-                  }
-                  setCurrentTryout(item.id);
-                }}
-              >
-                <Card
-                  interactive={!isBusy}
-                  accent={selected || combineMode}
-                  className="flex h-full items-start justify-between gap-3"
-                  style={isBusy ? { opacity: 0.5 } : undefined}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className="block truncate text-lg font-bold"
-                      style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+          {loadingTryouts ? (
+            <div className="mt-3">
+              <CardGridSkeleton count={4} lines={2} columns="sm:grid-cols-2" />
+            </div>
+          ) : tryouts.length === 0 ? (
+            <div className="mt-3">
+              <HomeEmptyCard
+                icon="target"
+                title="No evaluations yet"
+                message="Create your first tryout or evaluation to begin scoring players."
+              />
+            </div>
+          ) : (
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {tryouts.map((item) => {
+                const selected = combineIds.includes(item.id);
+                const isBusy = busyId === item.id;
+                return (
+                  // A real <Link>, not a click handler that pushes: only a Link
+                  // gets Next's route prefetch, and with /assessment/[id]'s
+                  // loading boundary that is what makes the tap land on the next
+                  // screen immediately instead of after a server round trip.
+                  <Link
+                    key={item.id}
+                    href={`/assessment/${item.id}/roster`}
+                    className="block h-full"
+                    // The roster screen this opens needs the full assessment, which
+                    // the summary list deliberately doesn't carry. Starting that read
+                    // on hover/touch usually covers the whole gap before the tap.
+                    onMouseEnter={() => prefetchTryout(item.id)}
+                    onTouchStart={() => prefetchTryout(item.id)}
+                    onClick={(e) => {
+                      // Combine mode turns the grid into a multi-select, so a tap
+                      // picks the card rather than opening it.
+                      if (isBusy || combineMode) {
+                        e.preventDefault();
+                        if (!isBusy) toggleCombineTryout(item.id);
+                        return;
+                      }
+                      setCurrentTryout(item.id);
+                    }}
+                  >
+                    <Card
+                      interactive={!isBusy}
+                      accent={selected || combineMode}
+                      className="flex h-full items-start justify-between gap-3"
+                      style={isBusy ? { opacity: 0.5 } : undefined}
                     >
-                      {item.name}
-                    </span>
-                    <span className="mt-1 block text-sm" style={{ color: colors.inkMuted }}>
-                      {item.sport} · {item.eventType}
-                    </span>
-                    {item.tryoutDate ? (
-                      <span className="block text-sm" style={{ color: colors.inkFaint }}>
-                        {item.tryoutDate} {item.startTime ? `· ${item.startTime}` : ''}
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className="block truncate text-lg font-bold"
+                          style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
+                        >
+                          {item.name}
+                        </span>
+                        <span className="mt-1 block text-sm" style={{ color: colors.inkMuted }}>
+                          {item.sport} · {item.eventType}
+                        </span>
+                        {item.tryoutDate ? (
+                          <span className="block text-sm" style={{ color: colors.inkFaint }}>
+                            {item.tryoutDate} {item.startTime ? `· ${item.startTime}` : ''}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
-                  <span className="flex flex-col items-end gap-2">
-                    <span className="flex items-center gap-2">
-                      <Badge label={`${item.playerCount} players`} />
-                      <NavPending />
-                      {isBusy ? (
-                        <Spinner size={16} color={colors.danger} />
-                      ) : (
-                        <>
-                          {/* Straight to the edit dialog, as on the app's tiles —
-                              no detour through the actions sheet. */}
-                          <button
-                            type="button"
-                            aria-label={`Edit ${item.name}`}
-                            title="Edit"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setEditingTryout(item);
-                            }}
-                            className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
-                          >
-                            <Icon name="edit" size={16} color={colors.inkMuted} />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label="Evaluation actions"
-                            onClick={(e) => {
-                              // Inside a Link now, so the default has to go too.
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleDeleteAssessment(item);
-                            }}
-                            className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
-                          >
-                            <Icon name="trash" size={16} color={colors.danger} />
-                          </button>
-                        </>
-                      )}
-                    </span>
-                    {selected ? <Badge label="Selected" variant="brand" /> : null}
-                  </span>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+                      <span className="flex flex-col items-end gap-2">
+                        <span className="flex items-center gap-2">
+                          <Badge label={`${item.playerCount} players`} />
+                          <NavPending />
+                          {isBusy ? (
+                            <Spinner size={16} color={colors.danger} />
+                          ) : (
+                            <>
+                              {/* Straight to the edit dialog, as on the app's tiles —
+                                  no detour through the actions sheet. */}
+                              <button
+                                type="button"
+                                aria-label={`Edit ${item.name}`}
+                                title="Edit"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setEditingTryout(item);
+                                }}
+                                className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                              >
+                                <Icon name="edit" size={16} color={colors.inkMuted} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Evaluation actions"
+                                onClick={(e) => {
+                                  // Inside a Link now, so the default has to go too.
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDeleteAssessment(item);
+                                }}
+                                className="flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:brightness-125"
+                              >
+                                <Icon name="trash" size={16} color={colors.danger} />
+                              </button>
+                            </>
+                          )}
+                        </span>
+                        {selected ? <Badge label="Selected" variant="brand" /> : null}
+                      </span>
+                    </Card>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </HomePanel>
+      </div>
 
       <Modal
         visible={!!actionTryout}

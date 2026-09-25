@@ -25,7 +25,6 @@ import {
   PageHeader,
   SectionLabel,
   Spinner,
-  Tabs,
   TimeField,
   useAlert,
 } from '@/components/ui';
@@ -76,7 +75,14 @@ import { TeamManagersCard } from '@/components/TeamManagersCard';
 import { LetterTemplatesManager } from '@/components/letters/LetterTemplatesManager';
 import { ImpersonationTeamPanel } from '@/components/founder/ImpersonationTeamPanel';
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
-import { TeamBanner } from '@/components/TeamBanner';
+import { Icon } from '@/components/Icons';
+import { TeamHubHeader } from '@/components/teamHub/TeamHubHeader';
+import { TeamHubTabs } from '@/components/teamHub/TeamHubTabs';
+import { HubSectionLabel } from '@/components/teamHub/HubSection';
+import { HubRowCard } from '@/components/teamHub/HubRowCard';
+import { HubActionTile } from '@/components/teamHub/HubActionTile';
+import { HubEventCard } from '@/components/teamHub/HubEventCard';
+import { TeamStatusTiles } from '@/components/teamHub/TeamStatusTiles';
 import { AddToCalendar } from '@/components/AddToCalendar';
 import { MapLink, MapLocationHint } from '@/components/MapLink';
 import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
@@ -188,6 +194,9 @@ export default function TeamDetailPage() {
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [tab, setTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'schedule');
   const [openRsvpEventId, setOpenRsvpEventId] = useState<string | null>(null);
+  // The event Team Status, RSVPs and the action row are pointed at.
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [showAllEvents, setShowAllEvents] = useState(false);
   const [rsvpSearch, setRsvpSearch] = useState('');
   const [availabilityTarget, setAvailabilityTarget] = useState<{
     eventId: string;
@@ -804,6 +813,15 @@ export default function TeamDetailPage() {
     .filter((e) => e.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date));
   const scheduleEvents = upcomingEvents;
+  // The hub leads with the next three; "View All" opens every upcoming event.
+  const shownEvents = showAllEvents ? scheduleEvents : scheduleEvents.slice(0, 3);
+  const selectedEvent = shownEvents.find((e) => e.id === selectedEventId) ?? shownEvents[0];
+  const hasHiddenEvents = scheduleEvents.length > 3;
+  const evaluatorCount = new Set(
+    linkedTryouts.flatMap((t) =>
+      (t.assessors ?? []).map((a) => (a.userId ?? a.email ?? '').toLowerCase()).filter(Boolean),
+    ),
+  ).size;
 
   // Availability is stored per invited season-roster player; the coach sees a
   // Yes/Maybe/No tally that expands into the actual names.
@@ -1022,107 +1040,150 @@ export default function TeamDetailPage() {
       className="-mx-4 -my-6 min-h-dvh px-4 py-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
       style={{ backgroundColor: team.brandColor ? `${team.brandColor}14` : undefined }}
     >
-      <PageHeader title={`${team.name} Hub`} showBack backHref="/teams" />
-
-      {/* The team's own branding leads the hub — logo, season, brand colour, and
-          the "Managed" badge for a club-delegated team so it's never mistaken
-          for one of the coach's own. This is the only place name/season show,
-          so the header above stays generic instead of repeating them.
-          linkToHub is off here since this is the hub. */}
-      <TeamBanner
-        team={team}
-        linkToHub={false}
-        className="mb-5"
-        right={canEditTeam ? <Button label="Edit" variant="primary" size="sm" onClick={startEdit} /> : undefined}
+      <TeamHubHeader
+        name={team.name}
+        subtitle={team.season || undefined}
+        logoUrl={team.logoUrl}
+        backHref="/teams"
+        extra={team.managed ? <Badge label="Managed" variant="info" /> : undefined}
+        chatBadge={
+          chatUnread > 0 ? (
+            <span
+              className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[11px] font-bold text-white"
+              style={{ backgroundColor: colors.primary }}
+            >
+              {chatUnread > 99 ? '99+' : chatUnread}
+            </span>
+          ) : undefined
+        }
+        onChat={() => router.push(`/team/${id}/chat`)}
+        onEdit={canEditTeam ? startEdit : undefined}
       />
 
-      <Tabs
+      <TeamHubTabs
         tabs={[
-          { key: 'schedule', label: 'Schedule', badge: upcomingEvents.length },
-          { key: 'players', label: 'Players', badge: playerCount },
+          { key: 'schedule', label: 'Schedule', icon: 'calendar', badge: upcomingEvents.length },
+          { key: 'players', label: 'Players', icon: 'teams', badge: playerCount },
           ...(canViewEvaluations
-            ? [{ key: 'assessments', label: 'Evaluations', badge: tryoutsLoading ? undefined : linkedTryouts.length }]
+            ? [
+                {
+                  key: 'assessments',
+                  label: 'Evaluations',
+                  icon: 'assessments' as const,
+                  badge: tryoutsLoading ? undefined : linkedTryouts.length,
+                },
+              ]
             : []),
-          { key: 'chat', label: 'Chat', badge: chatUnread || undefined },
-          { key: 'settings', label: 'Options' },
+          { key: 'settings', label: 'Options', icon: 'settings' },
         ]}
         activeKey={tab}
         onChange={(k) => {
-          if (k === 'chat') {
-            router.push(`/team/${id}/chat`);
-            return;
-          }
           if (k !== 'players') exitRosterSelect();
           setTab(k);
         }}
-        className="mb-5"
       />
 
       {tab === 'schedule' ? (
         <PlanGate feature="seasonHub" title="Season Hub" tierOverride={effectiveTier}>
         <div>
-          <div className="mb-4 flex flex-wrap gap-2">
-            <Button label="+ Event" size="sm" onClick={() => openEventModal('Event')} />
-          </div>
-
           {seasonsQuery.isLoading || seasonQuery.isLoading ? (
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               Loading events...
             </p>
-          ) : scheduleEvents.length === 0 ? (
-            <Card className="flex flex-col items-center gap-1 py-8 text-center">
-              <span className="font-bold" style={{ color: colors.ink }}>
-                No events yet
-              </span>
-              <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
-                Add an event — everyone on the roster is invited and their guardians can RSVP from the portal.
-              </span>
-            </Card>
           ) : (
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {scheduleEvents.map((ev) => {
-                const rsvp = rsvpSummary(ev);
-                const expanded = openRsvpEventId === ev.id;
-                return (
-                  <Card key={ev.id} className="flex flex-col gap-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-base font-bold" style={{ color: colors.ink }}>
-                          {ev.date}
-                          {ev.startTime ? ` · ${ev.startTime}` : ''}
-                          {ev.location ? (
-                            <>
-                              {' · '}
-                              <MapLink location={ev.location} label={ev.title} size="sm" variant="inline" />
-                            </>
-                          ) : null}
-                        </p>
-                        <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
-                          {ev.title}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 gap-1">
-                        <Badge label={ev.type} variant={ev.type === 'Game' ? 'brand' : 'info'} />
-                      </div>
-                    </div>
+            <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+              <div>
+                <HubSectionLabel
+                  icon="calendar"
+                  label="Upcoming Events"
+                  actionLabel={showAllEvents ? 'Show Less' : hasHiddenEvents ? 'View All' : undefined}
+                  onAction={() => setShowAllEvents((v) => !v)}
+                />
+                {shownEvents.length === 0 ? (
+                  <Card className="mb-2 flex flex-col items-center gap-1 py-8 text-center">
+                    <span className="font-bold" style={{ color: colors.ink }}>
+                      No events yet
+                    </span>
+                    <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
+                      Add an event — everyone on the roster is invited and their guardians can RSVP from the portal.
+                    </span>
+                  </Card>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {shownEvents.map((ev) => (
+                      <HubEventCard
+                        key={ev.id}
+                        event={ev}
+                        selected={selectedEvent?.id === ev.id}
+                        playerCount={playerCount}
+                        evaluatorCount={evaluatorCount}
+                        onSelect={() => {
+                          setSelectedEventId(ev.id);
+                          setOpenRsvpEventId(null);
+                          setRsvpSearch('');
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenRsvpEventId(expanded ? null : ev.id);
-                        setRsvpSearch('');
-                      }}
-                      className="flex flex-wrap items-center gap-2 py-1 text-left"
-                    >
-                      <Badge label={`${rsvp.counts.yes} yes`} variant="success" size="lg" />
-                      <Badge label={`${rsvp.counts.maybe} maybe`} variant="warning" size="lg" />
-                      <Badge label={`${rsvp.counts.no} no`} variant="danger" size="lg" />
-                      {rsvp.counts.pending > 0 ? <Badge label={`${rsvp.counts.pending} pending`} size="lg" /> : null}
-                      <span className="ml-auto text-xs font-bold" style={{ color: colors.primary }}>
-                        {expanded ? 'Hide RSVPs' : "Who's coming? Set RSVPs"}
-                      </span>
-                    </button>
+                {selectedEvent ? (
+                  <div className="mt-3">
+                    <AddToCalendar event={selectedEvent} teamName={team?.name} variant="row" />
+                  </div>
+                ) : null}
 
+                <div className="mt-6">
+                  <HubSectionLabel icon="calendar" label="Season Hub" />
+                  <button
+                    type="button"
+                    onClick={() => openEventModal('Event')}
+                    className="flex h-[50px] w-full items-center gap-3 rounded-2xl px-3 text-left text-base font-bold text-white shadow-[0_4px_14px_rgba(255,107,43,0.4)] transition-[filter] hover:brightness-110"
+                    style={{ backgroundColor: colors.primary }}
+                  >
+                    <Icon name="calendarPlus" size={22} color="#ffffff" />
+                    <span className="flex-1">+ Event</span>
+                    <Icon name="chevronRight" size={18} color="#ffffff" strokeWidth={2.5} />
+                  </button>
+                </div>
+              </div>
+
+              {selectedEvent
+                ? (() => {
+                    const ev = selectedEvent;
+                    const rsvp = rsvpSummary(ev);
+                    const expanded = openRsvpEventId === ev.id;
+                    return (
+                      <div>
+                        <HubSectionLabel icon="barChart" label="Team Status" />
+                        {/* The event lands a round trip or two before its RSVPs do
+                            (see getSeason's staged read) — a tally of zeroes in the
+                            meantime would read as "nobody answered". */}
+                        <div className="mb-3">
+                          <TeamStatusTiles counts={rsvp.counts} loading={!!ev.availabilityPending} />
+                        </div>
+
+                        <HubRowCard
+                          tone="orange"
+                          icon="teams"
+                          title={expanded ? 'Hide RSVPs' : 'Who’s coming? Set RSVPs'}
+                          caption="Get a quick view of your team’s availability"
+                          aria-expanded={expanded}
+                          onClick={() => {
+                            setOpenRsvpEventId(expanded ? null : ev.id);
+                            setRsvpSearch('');
+                          }}
+                          trailing={
+                            <Icon
+                              name={expanded ? 'chevronUp' : 'chevronRight'}
+                              size={16}
+                              color={colors.primary}
+                              strokeWidth={2.5}
+                            />
+                          }
+                        />
+
+                        <div className="mt-2 flex flex-col gap-2">
                     {expanded ? (
                       <div className="flex flex-col gap-2">
                         {rsvp.rows.length > 8 ? (
@@ -1197,37 +1258,24 @@ export default function TeamDetailPage() {
                       </div>
                     ) : null}
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      <AddToCalendar event={ev} teamName={team?.name} />
-                      <MapLink location={ev.location} label={ev.title} />
-                      <button
-                        type="button"
-                        onClick={() => openEditEventModal(ev)}
-                        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors hover:brightness-110"
-                        style={{ backgroundColor: colors.tile, color: colors.ink, border: `1px solid ${colors.border}` }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        disabled={deleteEvent.isPending && deleteEvent.variables === ev.id}
-                        onClick={() => confirmDeleteEvent(ev.id, ev.title)}
-                        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
-                        style={{
-                          backgroundColor: 'rgba(248,113,113,0.14)',
-                          color: colors.danger,
-                          border: '1px solid rgba(248,113,113,0.35)',
-                        }}
-                      >
-                        {deleteEvent.isPending && deleteEvent.variables === ev.id ? (
-                          <Spinner size={14} color={colors.danger} />
-                        ) : null}
-                        Delete
-                      </button>
-                    </div>
-                  </Card>
-                );
-              })}
+                        </div>
+
+                        <div className="mt-3 flex gap-2">
+                          <AddToCalendar event={ev} teamName={team?.name} variant="tile" />
+                          <MapLink location={ev.location} label={ev.title} variant="tile" />
+                          <HubActionTile icon="edit" label="Edit" onClick={() => openEditEventModal(ev)} />
+                          <HubActionTile
+                            icon="trash"
+                            label="Delete"
+                            danger
+                            loading={deleteEvent.isPending && deleteEvent.variables === ev.id}
+                            onClick={() => confirmDeleteEvent(ev.id, ev.title)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()
+                : null}
             </div>
           )}
         </div>

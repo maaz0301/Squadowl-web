@@ -3,6 +3,8 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { Icon } from '@/components/Icons';
+import { HubActionTile } from '@/components/teamHub/HubActionTile';
+import { HubRowCard } from '@/components/teamHub/HubRowCard';
 import {
   downloadIcs,
   googleCalendarUrl,
@@ -93,10 +95,13 @@ export function AddToCalendar({
   event,
   teamName,
   size = 'md',
+  variant = 'chip',
 }: {
   event: CalendarSource;
   teamName?: string;
   size?: 'sm' | 'md';
+  /** `tile` and `row` are the Team Hub's own buttons; `chip` is the standard one. */
+  variant?: 'chip' | 'tile' | 'row';
 }) {
   const colors = useThemeColors();
   const [open, setOpen] = useState(false);
@@ -178,6 +183,26 @@ export function AddToCalendar({
 
   return (
     <>
+      {variant === 'row' ? (
+        <HubRowCard
+          buttonRef={btnRef}
+          icon="calendar"
+          title="Add to Calendar"
+          caption="Sync this event with your calendar"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        />
+      ) : variant === 'tile' ? (
+        <HubActionTile
+          buttonRef={btnRef}
+          icon="calendar"
+          label="Add to calendar"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        />
+      ) : (
       <button
         ref={btnRef}
         type="button"
@@ -200,6 +225,7 @@ export function AddToCalendar({
           strokeWidth={2.5}
         />
       </button>
+      )}
 
       {open ? (
         <div
