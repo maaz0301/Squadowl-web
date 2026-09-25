@@ -482,6 +482,20 @@ export function useAssessmentCountQuery() {
   });
 }
 
+/**
+ * Global search's player pool: names and jerseys only, no scores. Keyed under
+ * `tryouts` so every roster write that already refreshes the evaluations
+ * refreshes this too. Long staleTime because it is a search corpus, not a
+ * live view, and a fresh keystroke should never wait on it.
+ */
+export function useSearchPlayersQuery() {
+  return useQuery({
+    queryKey: [...queryKeys.tryouts(false), 'search-players'] as const,
+    queryFn: () => getDataSource().listSearchPlayers(),
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useAssignedTryoutsQuery() {
   return useQuery({
     queryKey: queryKeys.assignedTryouts,

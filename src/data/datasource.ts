@@ -76,6 +76,11 @@ export interface DataSource {
    * registration reads entirely.
    */
   listTryoutSummaries(includeArchived?: boolean): Promise<TryoutSummary[]>;
+  /**
+   * Every active player across the visible, non-archived evaluations — just the
+   * columns search draws, with no evaluations or scores.
+   */
+  listSearchPlayers(): Promise<import('./search').SearchPlayer[]>;
   /** Assessment count for plan limit checks, without assembling every roster and evaluation. */
   countAssessments(): Promise<number>;
   /** Tryouts the current user is invited to as an assessor (not owned by their account). */

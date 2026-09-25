@@ -3,6 +3,7 @@ import { getSupabase } from '@/lib/supabase';
 import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
+import type { SearchPlayer } from '../search';
 import { PLAN_TIERS } from '../types';
 import { bulkImportPlayers, IMPORT_CREATE_CHUNK } from '../bulkTeamImport';
 import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
@@ -3228,6 +3229,39 @@ export class SupabaseDataSource implements DataSource {
    */
   async listTryoutSummaries(includeArchived = false): Promise<TryoutSummary[]> {
     return this.summariseTryouts(await this.fetchVisibleTryoutRows(includeArchived));
+  }
+
+  async listSearchPlayers(): Promise<SearchPlayer[]> {
+    const { supabase } = await this.ctx();
+    const tryoutRows = await this.fetchVisibleTryoutRows(false);
+    if (tryoutRows.length === 0) return [];
+    const nameById = new Map(tryoutRows.map((t) => [t.id as string, t.name as string]));
+
+    // `removed_at is null` is applied server-side, so soft-removed players never
+    // cross the wire (see fetchAllByIn).
+    const rows = await fetchAllByIn(
+      supabase,
+      'tryout_participants',
+      'id, tryout_id, jersey, position, athletes(first_name, last_name)',
+      'tryout_id',
+      [...nameById.keys()],
+      PARTICIPANTS_PAGE,
+      'removed_at',
+    );
+
+    return rows.map((r) => {
+      const raw = r.athletes;
+      const a = (Array.isArray(raw) ? raw[0] : raw) ?? {};
+      return {
+        id: r.id as string,
+        first: a.first_name ?? '',
+        last: a.last_name ?? '',
+        jersey: r.jersey ?? undefined,
+        pos: r.position ?? undefined,
+        tryoutId: r.tryout_id as string,
+        tryoutName: nameById.get(r.tryout_id) ?? '',
+      };
+    });
   }
 
   /**
