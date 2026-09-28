@@ -36,6 +36,7 @@ import {
   useArchiveTeamMutation,
   useDeleteTeamMutation,
   useSetTryoutTeamMutation,
+  useTeamRosterQuery,
   useTeamRosterPagesQuery,
   useTeamRosterAthleteIdsQuery,
   useAddTeamRosterPlayersMutation,
@@ -180,6 +181,10 @@ export default function TeamDetailPage() {
   const [candidateSearch, setCandidateSearch] = useState('');
   const [candidateTryoutFilter, setCandidateTryoutFilter] = useState<string | null>(null);
   const [playerSearch, setPlayerSearch] = useState('');
+  // 'recent' is the default, unsorted (server created_at) order the paginated
+  // read already gives. 'name'/'age' need the whole roster in memory to sort
+  // correctly — see displayedPlayers below — so they switch off pagination.
+  const [rosterSort, setRosterSort] = useState<'recent' | 'name' | 'age'>('recent');
   const [viewPlayerId, setViewPlayerId] = useState<string | null>(null);
   // Full assessment reads (every roster entry joined to its athlete, every
   // evaluation, score and registration for the whole account) are the
@@ -217,6 +222,10 @@ export default function TeamDetailPage() {
   // stat tile, the tab badge, the plan's player limit, the picker's "already on
   // this team" flags and the RSVP narrowing all actually need.
   const rosterAthleteIdsQuery = useTeamRosterAthleteIdsQuery(id);
+  // Only reads when a real sort is picked (see rosterSort) — an alphabetical or
+  // age order has to be correct across the *whole* roster, not just the pages
+  // already paged in, so those two modes read everyone once instead of paging.
+  const fullRosterQuery = useTeamRosterQuery(id, rosterSort !== 'recent');
   const [addPlayersProgress, setAddPlayersProgress] = useState<{ done: number; total: number } | null>(null);
   const addRosterPlayers = useAddTeamRosterPlayersMutation(id, (done, total) => setAddPlayersProgress({ done, total }));
   const addManualPlayer = useAddManualTeamPlayerMutation(id);
@@ -448,6 +457,40 @@ export default function TeamDetailPage() {
   // and the empty-state checks never read as "no players" on a team that has
   // them.
   const playerCount = rosterAthleteIdsQuery.data?.length ?? listedPlayers.length;
+
+  // What the Players tab actually renders. 'recent' is listedPlayers as-is —
+  // paginated, server-searched, in the order the roster was built. 'name' and
+  // 'age' instead sort the *whole* roster (fullRosterQuery), because sorting
+  // only the pages already paged in would put e.g. "Aaron" from page 4 below
+  // "Zach" from page 1 until someone scrolled far enough to load page 4 —
+  // search here is applied client-side to match, since the full read doesn't
+  // take a search param.
+  const displayedPlayers = (() => {
+    if (rosterSort === 'recent') return listedPlayers;
+    const term = debouncedPlayerSearch.trim().toLowerCase();
+    const all = fullRosterQuery.data ?? [];
+    const matched = term
+      ? all.filter(
+          (p) =>
+            `${p.first} ${p.last}`.toLowerCase().includes(term) ||
+            (p.jersey ?? '').toLowerCase().includes(term),
+        )
+      : all;
+    const sorted = [...matched];
+    if (rosterSort === 'name') {
+      sorted.sort((a, b) => a.last.localeCompare(b.last) || a.first.localeCompare(b.first));
+    } else {
+      // Oldest first, the usual reading order for a roster sorted "by age". A
+      // missing birth year (never required to add a player) sinks to the
+      // bottom on either sort rather than being guessed at as oldest.
+      sorted.sort((a, b) => {
+        if (a.yearOfBirth == null) return b.yearOfBirth == null ? 0 : 1;
+        if (b.yearOfBirth == null) return -1;
+        return a.yearOfBirth - b.yearOfBirth;
+      });
+    }
+    return sorted;
+  })();
 
   // The team_roster row carries the roster-scoped fields plus everything that
   // lives on the athlete itself — name, jersey, position, and the player/guardian
@@ -1327,7 +1370,19 @@ export default function TeamDetailPage() {
               onClick={() => openImportPlayers()}
             />
             {playerCount > 0 ? (
-              <Button label="Select" size="sm" variant="secondary" onClick={() => setRosterSelectMode(true)} />
+              <Button
+                label="Select"
+                size="sm"
+                variant="secondary"
+                // "Select all" targets the paginated list (see
+                // selectableRosterIds below), so entering select mode drops
+                // back to that order rather than leaving it out of step with
+                // whatever's actually on screen under a name/age sort.
+                onClick={() => {
+                  setRosterSort('recent');
+                  setRosterSelectMode(true);
+                }}
+              />
             ) : null}
             {canManageTeam && playerCount > 0 ? (
               <Button
@@ -1348,11 +1403,18 @@ export default function TeamDetailPage() {
               onChange={(e) => setPlayerSearch(e.target.value)}
             />
           ) : null}
-          {rosterPages.isLoading ? (
+          {playerCount > 0 && !rosterSelectMode ? (
+            <div className="mb-3 flex flex-wrap gap-2">
+              <Chip label="Recent" active={rosterSort === 'recent'} onClick={() => setRosterSort('recent')} />
+              <Chip label="A–Z" active={rosterSort === 'name'} onClick={() => setRosterSort('name')} />
+              <Chip label="Age" active={rosterSort === 'age'} onClick={() => setRosterSort('age')} />
+            </div>
+          ) : null}
+          {(rosterSort === 'recent' ? rosterPages.isLoading : fullRosterQuery.isLoading) ? (
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               Loading roster...
             </p>
-          ) : rosterPages.isError ? (
+          ) : (rosterSort === 'recent' ? rosterPages.isError : fullRosterQuery.isError) ? (
             // Distinct from "No players yet": an errored read rendered as a
             // genuinely empty roster reads as "this team has no players" when
             // it may well have hundreds.
@@ -1363,9 +1425,14 @@ export default function TeamDetailPage() {
               <span className="text-sm" style={{ color: colors.inkMuted }}>
                 This team&apos;s players are still on the roster — reload to try again.
               </span>
-              <Button label="Retry" variant="secondary" size="sm" onClick={() => rosterPages.refetch()} />
+              <Button
+                label="Retry"
+                variant="secondary"
+                size="sm"
+                onClick={() => (rosterSort === 'recent' ? rosterPages.refetch() : fullRosterQuery.refetch())}
+              />
             </Card>
-          ) : listedPlayers.length === 0 && !playerSearch.trim() ? (
+          ) : displayedPlayers.length === 0 && !playerSearch.trim() ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
                 No players yet
@@ -1374,7 +1441,7 @@ export default function TeamDetailPage() {
                 Pull players in from any evaluation roster to build this team.
               </span>
             </Card>
-          ) : listedPlayers.length === 0 ? (
+          ) : displayedPlayers.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
                 No players match &quot;{playerSearch}&quot;.
@@ -1383,7 +1450,7 @@ export default function TeamDetailPage() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {listedPlayers.map((p) => (
+              {displayedPlayers.map((p) => (
                 <Card
                   key={p.id}
                   className="flex items-center gap-3"
@@ -1438,7 +1505,7 @@ export default function TeamDetailPage() {
               ))}
             </div>
           )}
-          {rosterPages.hasNextPage ? (
+          {rosterSort === 'recent' && rosterPages.hasNextPage ? (
             <div className="mt-3 flex justify-center">
               <Button
                 label={`Load ${TEAM_ROSTER_PAGE} more players`}
