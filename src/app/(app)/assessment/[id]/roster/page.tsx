@@ -177,7 +177,7 @@ export default function RosterPage() {
       );
     }
     if (rosterSort === 'name') {
-      result = [...result].sort((a, b) => a.last.localeCompare(b.last) || a.first.localeCompare(b.first));
+      result = [...result].sort((a, b) => a.first.localeCompare(b.first) || a.last.localeCompare(b.last));
     } else if (rosterSort === 'age') {
       // Oldest first, the usual reading order for a roster sorted "by age". A
       // missing/unparseable birth year sinks to the bottom on either sort
