@@ -1321,7 +1321,25 @@ export default function TeamDetailPage() {
                       </div>
                     );
                   })()
-                : null}
+                : (
+                  // selectedEvent is only undefined when shownEvents is empty
+                  // (it falls back to shownEvents[0] otherwise), so this is the
+                  // true "no events yet" state — without it the lg:grid-cols-2
+                  // track on the left still reserved this column's width, just
+                  // with nothing in it, which read as a broken layout on a wide
+                  // screen rather than an empty one.
+                  <div>
+                    <HubSectionLabel icon="barChart" label="Team Status" />
+                    <Card className="flex flex-col items-center gap-1 py-8 text-center">
+                      <span className="font-bold" style={{ color: colors.ink }}>
+                        Nothing to show yet
+                      </span>
+                      <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
+                        Add an event and RSVP counts, plus a quick way to set them per player, will show up here.
+                      </span>
+                    </Card>
+                  </div>
+                )}
             </div>
           )}
         </div>
