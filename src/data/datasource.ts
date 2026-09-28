@@ -205,6 +205,20 @@ export interface DataSource {
   ): Promise<SeasonEvent>;
   updateSeasonEvent(seasonId: string, eventId: string, updates: Partial<SeasonEvent>): Promise<SeasonEvent>;
   deleteSeasonEvent(seasonId: string, eventId: string): Promise<void>;
+  /**
+   * Invites athletes onto events that already existed when they joined the
+   * roster — addTeamRosterPlayers/addManualTeamPlayer/importTeamRosterPlayers
+   * only ever write team_roster/season_roster, so a player added after an
+   * event was created gets no event_availability row for it and stays
+   * invisible on that event's RSVP list and invite emails until this runs.
+   * Already-invited (event, athlete) pairs are left untouched, not reset to
+   * 'pending' — see event_availability's unique (season_event_id, roster_id).
+   */
+  addAthletesToEvents(
+    seasonId: string,
+    eventIds: string[],
+    athleteIds: string[],
+  ): Promise<{ added: number; failed: number }>;
   sendPortalInvite(seasonId: string, playerId: string, email: string): Promise<void>;
   /**
    * Invite season-roster players to the portal on every address each has on

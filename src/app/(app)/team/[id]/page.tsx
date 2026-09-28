@@ -54,6 +54,7 @@ import {
   useAddTeamEventMutation,
   useUpdateSeasonEventMutation,
   useDeleteSeasonEventMutation,
+  useAddAthletesToEventsMutation,
   useUploadTeamLogoMutation,
   useSetAvailabilityMutation,
   useGenerateTestDataMutation,
@@ -315,6 +316,7 @@ export default function TeamDetailPage() {
     // The player is on the roster from here on, whatever the invite does — so
     // the form closes first and the send reports itself on top of the roster.
     setShowAddManualPlayer(false);
+    offerAddToUpcomingEvents([athleteId]);
     try {
       setInvitingAthleteId(athleteId);
       await reportInviteResult(await sendInvites.mutateAsync({ athleteIds: [athleteId], emails }));
@@ -363,6 +365,29 @@ export default function TeamDetailPage() {
   const updateEvent = useUpdateSeasonEventMutation(teamSeasonId ?? '');
   const deleteEvent = useDeleteSeasonEventMutation(teamSeasonId ?? '');
   const setAvailability = useSetAvailabilityMutation(teamSeasonId ?? '');
+  const addAthletesToEvents = useAddAthletesToEventsMutation(teamSeasonId ?? '');
+
+  // Offered right after a player lands on the roster, when the team already
+  // has upcoming events — adding to team_roster/season_roster never touches
+  // event_availability, so without this a player added after an event exists
+  // stays invisible on that event's RSVP list and invite emails forever (see
+  // addAthletesToEvents on DataSource). null = no prompt open; a non-null
+  // (always non-empty) array is the athlete ids waiting on a yes/no.
+  const [pendingEventInviteAthleteIds, setPendingEventInviteAthleteIds] = useState<string[] | null>(null);
+  const [selectedInviteEventIds, setSelectedInviteEventIds] = useState<Set<string>>(new Set());
+  // The import modal shows its own per-row summary before closing, so its
+  // athlete ids are held here and the prompt is offered on close instead of
+  // the moment the import call resolves — see the ImportPlayersModal wiring
+  // below. Accumulates across "Import more players" rounds within one open
+  // of the modal, since onClose (and this prompt) only fires once at the end.
+  const [pendingImportAthleteIds, setPendingImportAthleteIds] = useState<string[]>([]);
+
+  const offerAddToUpcomingEvents = (athleteIds: string[]) => {
+    const ids = athleteIds.filter(Boolean);
+    if (ids.length === 0 || upcomingEvents.length === 0) return;
+    setSelectedInviteEventIds(new Set(upcomingEvents.map((e) => e.id)));
+    setPendingEventInviteAthleteIds(ids);
+  };
 
   const eventForm = useForm<CreateEventForm>({
     resolver: zodResolver(CreateEventFormSchema),
@@ -714,6 +739,7 @@ export default function TeamDetailPage() {
       setPickedAthletes(new Set());
       setCandidateTryoutFilter(null);
       setShowAddPlayers(false);
+      offerAddToUpcomingEvents(picked.map((c) => c.athleteId));
 
       // Same rule as the manual add: landing on the roster is what earns the
       // portal invite, so it goes out here rather than waiting for someone to
@@ -1992,7 +2018,13 @@ export default function TeamDetailPage() {
 
       <ImportPlayersModal
         visible={showImportPlayers}
-        onClose={() => setShowImportPlayers(false)}
+        onClose={() => {
+          setShowImportPlayers(false);
+          if (pendingImportAthleteIds.length > 0) {
+            offerAddToUpcomingEvents(pendingImportAthleteIds);
+            setPendingImportAthleteIds([]);
+          }
+        }}
         target={team.name}
         atLimit={isAtPlayerLimit(effectiveTier, playerCount)}
         onLimitReached={() => setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'))}
@@ -2031,6 +2063,10 @@ export default function TeamDetailPage() {
             } catch (e) {
               console.warn('Portal invites failed after a roster import:', e);
             }
+            // Held until the modal actually closes (its own summary screen is
+            // still ahead of this) and merged across "Import more players"
+            // rounds — see pendingImportAthleteIds above.
+            setPendingImportAthleteIds((prev) => [...prev, ...(result.athleteIds ?? [])]);
           }
           return result;
         }}
@@ -2052,6 +2088,86 @@ export default function TeamDetailPage() {
           showFamilyContacts={canEditTeam || canAssess}
           submitLabel="Save Player & Send Invite"
         />
+      </Modal>
+
+      <Modal
+        visible={pendingEventInviteAthleteIds != null}
+        title={pendingEventInviteAthleteIds && pendingEventInviteAthleteIds.length > 1 ? 'Add to Upcoming Events?' : 'Add to Upcoming Event?'}
+        onClose={() => {
+          if (addAthletesToEvents.isPending) return;
+          setPendingEventInviteAthleteIds(null);
+        }}
+        footer={
+          <ModalFooter>
+            <Button
+              label={
+                selectedInviteEventIds.size === 0
+                  ? 'Select events to add to'
+                  : `Add to ${selectedInviteEventIds.size} ${selectedInviteEventIds.size === 1 ? 'event' : 'events'}`
+              }
+              disabled={selectedInviteEventIds.size === 0}
+              loading={addAthletesToEvents.isPending}
+              onClick={async () => {
+                if (!pendingEventInviteAthleteIds || !teamSeasonId) return;
+                try {
+                  await addAthletesToEvents.mutateAsync({
+                    eventIds: [...selectedInviteEventIds],
+                    athleteIds: pendingEventInviteAthleteIds,
+                  });
+                } catch (e) {
+                  await alert('Error', e instanceof Error ? e.message : 'Could not add this player to those events.');
+                  return;
+                }
+                setPendingEventInviteAthleteIds(null);
+              }}
+            />
+            <Button
+              label="Not Now"
+              variant="ghost"
+              disabled={addAthletesToEvents.isPending}
+              onClick={() => setPendingEventInviteAthleteIds(null)}
+            />
+          </ModalFooter>
+        }
+      >
+        <p className="mb-3 text-sm" style={{ color: colors.inkMuted }}>
+          {pendingEventInviteAthleteIds && pendingEventInviteAthleteIds.length > 1
+            ? `These ${pendingEventInviteAthleteIds.length} players were just added to the team, which already has ${upcomingEvents.length === 1 ? 'an upcoming event' : `${upcomingEvents.length} upcoming events`}. Add them to:`
+            : `This player was just added to the team, which already has ${upcomingEvents.length === 1 ? 'an upcoming event' : `${upcomingEvents.length} upcoming events`}. Add them to:`}
+        </p>
+        {upcomingEvents.map((ev) => {
+          const selected = selectedInviteEventIds.has(ev.id);
+          return (
+            <button
+              type="button"
+              key={ev.id}
+              onClick={() =>
+                setSelectedInviteEventIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(ev.id)) next.delete(ev.id);
+                  else next.add(ev.id);
+                  return next;
+                })
+              }
+              className="mb-2 flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left"
+              style={{
+                borderColor: selected ? colors.primary : colors.border,
+                backgroundColor: selected ? 'rgba(255,107,43,0.12)' : 'transparent',
+              }}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block font-bold" style={{ color: colors.ink }}>
+                  {ev.title}
+                </span>
+                <span className="mt-0.5 block text-xs" style={{ color: colors.inkMuted }}>
+                  {ev.date}
+                  {ev.startTime ? ` · ${ev.startTime}` : ''}
+                </span>
+              </span>
+              {selected ? <Badge label="Selected" variant="brand" /> : null}
+            </button>
+          );
+        })}
       </Modal>
 
       <Modal

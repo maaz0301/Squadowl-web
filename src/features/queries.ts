@@ -1708,6 +1708,26 @@ export function useDeleteSeasonEventMutation(seasonId: string) {
   });
 }
 
+/**
+ * Backfills RSVPs for players just added to the roster onto events that
+ * already existed — see addAthletesToEvents on DataSource for why this is
+ * needed at all (a roster add never touches event_availability on its own).
+ * Invalidates the season wholesale rather than patching the cache: the
+ * schedule's per-event availability map is keyed by both roster id and
+ * athlete id (see rowToSeasonEvent), which is fiddlier to splice in by hand
+ * than to just re-fetch for what's normally a handful of new rows.
+ */
+export function useAddAthletesToEventsMutation(seasonId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ eventIds, athleteIds }: { eventIds: string[]; athleteIds: string[] }) =>
+      getDataSource().addAthletesToEvents(seasonId, eventIds, athleteIds),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.season(seasonId) });
+    },
+  });
+}
+
 export function usePortalInviteMutation(seasonId: string) {
   const qc = useQueryClient();
   return useMutation({

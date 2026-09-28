@@ -6861,6 +6861,62 @@ export class SupabaseDataSource implements DataSource {
     unwrap(await supabase.from('season_events').delete().eq('id', eventId).select().maybeSingle());
   }
 
+  /**
+   * Backfills event_availability for athletes who joined the roster after
+   * these events were created — see addAthletesToEvents on DataSource. The
+   * batch here is always small (the players just added × the events a coach
+   * picked in one modal), unlike a whole-roster invite, so this skips the
+   * create_season_event_for_caller-style RPC fast path and just chunks the
+   * insert the way addSeasonEvent's own fallback does.
+   */
+  async addAthletesToEvents(
+    seasonId: string,
+    eventIds: string[],
+    athleteIds: string[],
+  ): Promise<{ added: number; failed: number }> {
+    if (eventIds.length === 0 || athleteIds.length === 0) return { added: 0, failed: 0 };
+    const { supabase } = await this.ctx();
+
+    const rosterRows = unwrap(
+      await supabase
+        .from('season_roster')
+        .select('id, athlete_id')
+        .eq('season_id', seasonId)
+        .in('athlete_id', athleteIds),
+    ) as Row[];
+    if (rosterRows.length === 0) return { added: 0, failed: 0 };
+
+    const rows = eventIds.flatMap((eventId) =>
+      rosterRows.map((r) => ({
+        season_event_id: eventId,
+        roster_id: r.id as string,
+        response: 'pending' as const,
+      })),
+    );
+
+    const chunks: (typeof rows)[] = [];
+    for (let i = 0; i < rows.length; i += REGISTRATION_CHUNK) {
+      chunks.push(rows.slice(i, i + REGISTRATION_CHUNK));
+    }
+    let added = 0;
+    let failed = 0;
+    await mapPool(chunks, REGISTRATION_CHUNK_CONCURRENCY, async (chunk) => {
+      // ignoreDuplicates: an athlete already invited to one of these events
+      // (e.g. re-running this for an overlapping event selection) is left
+      // alone rather than having a real response clobbered back to 'pending'.
+      const { error } = await supabase
+        .from('event_availability')
+        .upsert(chunk, { onConflict: 'season_event_id,roster_id', ignoreDuplicates: true });
+      if (error) {
+        failed += chunk.length;
+        console.error('Failed to add players to events:', error);
+      } else {
+        added += chunk.length;
+      }
+    });
+    return { added, failed };
+  }
+
   async addSeasonPlayer(seasonId: string, player: Omit<SeasonPlayer, 'id'>): Promise<SeasonPlayer> {
     const { supabase, accountId } = await this.ctx();
     const athleteId = player.athleteId || await this.createAthlete(accountId, {
