@@ -92,6 +92,11 @@ export default function RosterPage() {
   const [showTestGen, setShowTestGen] = useState(false);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   const [playerSearch, setPlayerSearch] = useState('');
+  // 'recent' leaves the roster in whatever order the read returned (the order
+  // players were added); 'name'/'age' sort it client-side — the whole roster
+  // is already in memory here, unlike the paginated team roster, so no extra
+  // read is needed.
+  const [rosterSort, setRosterSort] = useState<'recent' | 'name' | 'age'>('recent');
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
@@ -171,8 +176,26 @@ export default function RosterPage() {
         (p) => `${p.first} ${p.last}`.toLowerCase().includes(search) || p.jersey?.toLowerCase().includes(search),
       );
     }
+    if (rosterSort === 'name') {
+      result = [...result].sort((a, b) => a.last.localeCompare(b.last) || a.first.localeCompare(b.first));
+    } else if (rosterSort === 'age') {
+      // Oldest first, the usual reading order for a roster sorted "by age". A
+      // missing/unparseable birth year sinks to the bottom on either sort
+      // rather than being guessed at as oldest.
+      const year = (p: (typeof result)[number]) => {
+        const n = parseInt(p.yearOfBirth ?? '', 10);
+        return Number.isFinite(n) ? n : null;
+      };
+      result = [...result].sort((a, b) => {
+        const ay = year(a);
+        const by = year(b);
+        if (ay == null) return by == null ? 0 : 1;
+        if (by == null) return -1;
+        return ay - by;
+      });
+    }
     return result;
-  }, [tryoutQuery.data, activeFilter, playerSearch, scoredIds, positionGroups]);
+  }, [tryoutQuery.data, activeFilter, playerSearch, rosterSort, scoredIds, positionGroups]);
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading roster..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -473,6 +496,15 @@ export default function RosterPage() {
                   onClick={() => setRosterFilter(`pos:${g.key}`)}
                 />
               ))}
+            </div>
+          </div>
+
+          <div>
+            <SectionLabel className="mb-1.5">Sort</SectionLabel>
+            <div className="flex flex-wrap gap-2">
+              <Chip label="Recent" active={rosterSort === 'recent'} onClick={() => setRosterSort('recent')} />
+              <Chip label="A–Z" active={rosterSort === 'name'} onClick={() => setRosterSort('name')} />
+              <Chip label="Age" active={rosterSort === 'age'} onClick={() => setRosterSort('age')} />
             </div>
           </div>
 
