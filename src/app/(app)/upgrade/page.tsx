@@ -268,7 +268,7 @@ export default function UpgradePage() {
     });
   };
 
-  // Extra teams are an add-on subscription on top of the current plan (Club only), so
+  // Extra teams are an add-on subscription on top of the current plan (Coach+ and Club), so
   // this checkout must not go through `switchPlan` — that one switches the plan tier.
   const buyTeams = async () => {
     try {
@@ -381,53 +381,6 @@ export default function UpgradePage() {
         )}
       </Card>
 
-      {canBuyTeams ? (
-        <Card className="mb-6 flex flex-col gap-2">
-          <h3 className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-            Add Teams
-          </h3>
-          <p className="text-xs" style={{ color: colors.inkMuted }}>
-            Your plan includes {currentPlan.limits.teams} teams. Additional teams are {formatCad(extraTeamPrice)}{' '}
-            each per year.
-            {currentLicenses > 0
-              ? ` You've purchased ${currentLicenses} so far, for a cap of ${getTeamAllowance(currentTier, currentLicenses)} teams.`
-              : ''}
-          </p>
-          <div className="mt-2 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={() => setExtraTeams((n) => Math.max(1, n - 1))}
-                className="text-2xl"
-                style={{ color: colors.primary }}
-                aria-label="Decrease teams"
-              >
-                −
-              </button>
-              <span className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-                {extraTeams}
-              </span>
-              <button
-                type="button"
-                onClick={() => setExtraTeams((n) => Math.min(50, n + 1))}
-                className="text-2xl"
-                style={{ color: colors.primary }}
-                aria-label="Increase teams"
-              >
-                +
-              </button>
-            </div>
-            <span className="font-bold" style={{ color: colors.primary, fontFamily: 'var(--font-space-grotesk)' }}>
-              {formatCad(extraTeamPrice * extraTeams)}/yr
-            </span>
-          </div>
-          <Button
-            label={`Add ${extraTeams} team${extraTeams === 1 ? '' : 's'}`}
-            onClick={buyTeams}
-            loading={buyingTeams}
-          />
-        </Card>
-      ) : null}
 
       {hasLiveSubscription(user?.subscriptionStatus) ? (
         <Card accent className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -572,6 +525,55 @@ export default function UpgradePage() {
                 </p>
               </div>
 
+              {/* Extra teams are an add-on to the plan in force, so the stepper
+                  lives on the current Coach+/Club card rather than its own tile. */}
+              {isCurrent && canBuyTeams ? (
+                <div className="mt-2 flex flex-col gap-2 border-t pt-3" style={{ borderColor: colors.border }}>
+                  <h3 className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                    Add Teams
+                  </h3>
+                  <p className="text-xs" style={{ color: colors.inkMuted }}>
+                    Your plan includes {currentPlan.limits.teams} teams. Additional teams are {formatCad(extraTeamPrice)}{' '}
+                    each per year.
+                    {currentLicenses > 0
+                      ? ` You've purchased ${currentLicenses} so far, for a cap of ${getTeamAllowance(currentTier, currentLicenses)} teams.`
+                      : ''}
+                  </p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setExtraTeams((n) => Math.max(1, n - 1))}
+                        className="text-2xl"
+                        style={{ color: colors.primary }}
+                        aria-label="Decrease teams"
+                      >
+                        −
+                      </button>
+                      <span className="text-lg font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                        {extraTeams}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setExtraTeams((n) => Math.min(50, n + 1))}
+                        className="text-2xl"
+                        style={{ color: colors.primary }}
+                        aria-label="Increase teams"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <span className="font-bold" style={{ color: colors.primary, fontFamily: 'var(--font-space-grotesk)' }}>
+                      {formatCad(extraTeamPrice * extraTeams)}/yr
+                    </span>
+                  </div>
+                  <Button
+                    label={`Add ${extraTeams} team${extraTeams === 1 ? '' : 's'}`}
+                    onClick={buyTeams}
+                    loading={buyingTeams}
+                  />
+                </div>
+              ) : null}
               {isCurrent ? (
                 <div className="pt-4 mt-auto flex flex-col gap-1">
                   <Button

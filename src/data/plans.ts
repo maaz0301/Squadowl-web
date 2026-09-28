@@ -143,10 +143,16 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
     tagline: 'For serious coaches & rep teams',
     highlight: true,
     pricing: { year: { amountCents: 6999 }, month: { amountCents: 700 } },
+    extraTeamPriceCents: EXTRA_TEAM_PRICE_CENTS,
     features: [
       { label: 'Team Chat Messenger', included: true, allPlans: true },
       { label: 'Stripe payments', included: true, fee: true, subItems: STRIPE_FEE_SUBITEMS },
-      { label: '2 teams', included: true },
+      { label: '2 teams included', included: true },
+      {
+        label: `${formatCad(EXTRA_TEAM_PRICE_CENTS)} per additional team beyond 2`,
+        included: true,
+        fee: true,
+      },
       { label: 'Unlimited evaluations', included: true },
       { label: '100 players', included: true },
       { label: 'Everything in Coach', included: true },

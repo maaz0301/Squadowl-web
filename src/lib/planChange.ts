@@ -144,7 +144,7 @@ export function buildDowngradeImpact(input: DowngradeImpactInput): DowngradeImpa
   }
 
   // Add-on team licenses only widen the cap on a tier that sells them, so they
-  // stop counting the moment the account leaves Club — worth saying out loud,
+  // stop counting the moment the account drops below Coach+ — worth saying out loud,
   // since they were paid for separately and are not refunded by this switch.
   if (extraTeamLicenses > 0 && sellsExtraTeams(from) && !sellsExtraTeams(to)) {
     lines.push({

@@ -71,10 +71,8 @@ export default function LoyaltyPage() {
     if (!code) return;
     const link = signupLink(code);
     const message =
-      `Join me on TryoutHQ — sign up with my referral code applied: ${link}\n\n` +
-      `Or enter this code by hand when you sign up: ${code}\n\n` +
-      `Once you subscribe, I get ${formatCad(REFERRAL_BONUS_CENTS)} of account credit — ` +
-      `and you get the same evaluation and team-building tools I use.`;
+      `Join me on TryoutHQ, sign up with my referral code applied: ${link}\n\n` +
+      `Or enter this code by hand when you sign up: ${code}`;
 
     // A real https:// link, so it linkifies wherever it lands — unlike a bare
     // custom URL scheme, which most messaging/email clients won't turn blue.
