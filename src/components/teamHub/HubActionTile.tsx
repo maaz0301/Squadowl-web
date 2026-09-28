@@ -7,7 +7,13 @@ import { Spinner } from '@/components/ui';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { useHubSurfaces } from './hubTheme';
 
-/** One of the four equal buttons under Team Status: icon over a short label. */
+/**
+ * One of the four equal buttons under Team Status: an icon chip beside a
+ * label, on one line. Shaped to match TeamStatusTiles right above it (same
+ * 52px height, same rounded-xl pill, same solid-color icon circle) — it used
+ * to stack the icon over the label instead, which read as a different kind
+ * of control sitting right under a row that already establishes this shape.
+ */
 export function HubActionTile({
   icon,
   label,
@@ -31,16 +37,25 @@ export function HubActionTile({
       ref={buttonRef}
       type="button"
       disabled={loading || props.disabled}
-      className="flex min-h-14 min-w-0 flex-1 flex-col py-1.5 items-center justify-center gap-1 rounded-xl border px-1 text-[11px] font-bold transition-[filter] hover:brightness-110 disabled:pointer-events-none disabled:opacity-60 sm:text-xs"
+      className="flex h-[52px] min-w-0 flex-1 items-center gap-2 rounded-xl border px-2.5 text-left transition-[filter] hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
       style={{
         backgroundColor: danger ? 'rgba(248,113,113,0.10)' : s.blueBg,
         borderColor: danger ? 'rgba(248,113,113,0.5)' : s.blueBorder,
-        color: danger ? colors.danger : colors.ink,
       }}
       {...props}
     >
-      {loading ? <Spinner size={15} color={tint} /> : <Icon name={icon} size={16} color={tint} />}
-      <span className="max-w-full text-center leading-tight">{label}</span>
+      <span
+        className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full"
+        style={{ backgroundColor: tint }}
+      >
+        {loading ? <Spinner size={12} color="#ffffff" /> : <Icon name={icon} size={12} color="#ffffff" strokeWidth={3} />}
+      </span>
+      <span
+        className="min-w-0 flex-1 truncate text-xs font-bold sm:text-sm"
+        style={{ color: danger ? colors.danger : colors.ink }}
+      >
+        {label}
+      </span>
     </button>
   );
 }
