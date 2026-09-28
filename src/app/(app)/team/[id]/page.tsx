@@ -1239,7 +1239,13 @@ export default function TeamDetailPage() {
                             onChange={(e) => setRsvpSearch(e.target.value)}
                           />
                         ) : null}
-                        <div className="overflow-hidden rounded-xl border" style={{ borderColor: colors.border }}>
+                        {/* Scrolls on its own instead of growing the page — a roster in the
+                            hundreds used to push the whole page tall enough that scrolling
+                            through it left the short left column behind, blank, above the fold. */}
+                        <div
+                          className="max-h-[60vh] overflow-y-auto overflow-x-hidden rounded-xl border"
+                          style={{ borderColor: colors.border }}
+                        >
                           {ev.availabilityPending ? (
                             <p className="p-3 text-xs" style={{ color: colors.inkMuted }}>
                               Loading RSVPs...
@@ -1256,7 +1262,7 @@ export default function TeamDetailPage() {
                           ) : (
                             <>
                               <p
-                                className="px-3 py-2 text-xs"
+                                className="sticky top-0 z-10 px-3 py-2 text-xs"
                                 style={{
                                   color: ev.availabilityUnavailable ? colors.warning : colors.inkMuted,
                                   backgroundColor: colors.tile,
