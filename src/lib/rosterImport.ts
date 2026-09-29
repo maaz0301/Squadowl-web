@@ -98,7 +98,7 @@ export interface ParsedSheet {
  * "guardian_email" and "Guardian Email" all reduce to the same thing — the
  * "e mail" fold included, since the hyphenated spelling is common in exports.
  */
-function normalizeHeader(value: string): string {
+export function normalizeHeader(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')

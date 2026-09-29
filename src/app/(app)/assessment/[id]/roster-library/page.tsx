@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -20,6 +21,7 @@ export default function RosterLibraryPage() {
   const router = useRouter();
   const tryoutsQuery = useTryoutsQuery(true);
   const currentTryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(currentTryoutQuery.data?.settings.customLabels);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(currentTryoutQuery.data?.teamId);
   const importPlayers = useImportLibraryPlayersMutation();
@@ -74,13 +76,13 @@ export default function RosterLibraryPage() {
     <>
       <PageHeader
         title="Roster Library"
-        subtitle="Import players from other evaluations in your account"
+        subtitle={terms.t('Import players from other evaluations in your account')}
         showBack
         backHref={href('roster')}
         right={
           selected.size > 0 ? (
             <Button
-              label={`Import ${selected.size} player${selected.size > 1 ? 's' : ''}`}
+              label={terms.t(`Import ${selected.size} player${selected.size > 1 ? 's' : ''}`)}
               loading={importPlayers.isPending}
               onClick={importSelected}
             />
@@ -89,7 +91,7 @@ export default function RosterLibraryPage() {
       />
 
       {library.length === 0 ? (
-        <EmptyState title="Library empty" message="Add players to other evaluations first." />
+        <EmptyState title="Library empty" message={terms.t('Add players to other evaluations first.')} />
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {library.map((item) => {

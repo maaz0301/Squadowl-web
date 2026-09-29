@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader } from '@/components/ui';
@@ -14,6 +15,7 @@ export default function ComparePage() {
   const href = useAssessmentHref();
   const colors = useThemeColors();
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   const aiCompare = useAiCompareMutation(id!);
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -21,7 +23,7 @@ export default function ComparePage() {
   if (tryoutQuery.isError || !tryoutQuery.data) {
     return (
       <>
-        <PageHeader title="Compare Players" showBack />
+        <PageHeader title={terms.t('Compare Players')} showBack />
         <ErrorState message="Could not load compare data." onRetry={() => tryoutQuery.refetch()} />
       </>
     );
@@ -39,7 +41,7 @@ export default function ComparePage() {
 
   return (
     <>
-      <PageHeader title="Compare Players" subtitle="Select 2–4 athletes" showBack backHref={href('results')} />
+      <PageHeader title={terms.t('Compare Players')} subtitle="Select 2–4 athletes" showBack backHref={href('results')} />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="flex flex-col gap-2">
@@ -100,7 +102,7 @@ export default function ComparePage() {
                       <p className="text-sm" style={{ color: colors.inkMuted }}>
                         {(aiCompare.data as { message?: string } | undefined)?.message ||
                           aiCompare.error?.message ||
-                          'Make sure the selected players have been scored before running AI Compare.'}
+                          terms.t('Make sure the selected players have been scored before running AI Compare.')}
                       </p>
                     </div>
                   ) : aiCompare.data ? (

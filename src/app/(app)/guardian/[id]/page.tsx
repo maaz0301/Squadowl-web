@@ -16,6 +16,8 @@ import {
 import type { GuardianRosterAthlete, SeasonEvent } from '@/data/types';
 import { ChatUnreadBadge } from '@/components/ChatUnreadBadge';
 import { AddToCalendar } from '@/components/AddToCalendar';
+import { EventDiscussion } from '@/components/EventDiscussion';
+import { useUser } from '@/state/authStore';
 import { MapLink } from '@/components/MapLink';
 
 type FlatEvent = SeasonEvent & { seasonName: string; teamName: string; seasonId: string };
@@ -105,6 +107,7 @@ function LeaveTeamRow({ season }: { season: GuardianSeason }) {
 function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: string; colors: AppTheme['colors'] }) {
   const { alert } = useAlert();
   const rsvpMutation = useSetAvailabilityMutation(item.seasonId);
+  const user = useUser();
   const rsvp = item.availability?.[playerId] || 'pending';
 
   const handleRsvp = async (response: 'yes' | 'maybe' | 'no') => {
@@ -184,6 +187,7 @@ function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: stri
             {rsvpMutation.isPending && rsvpMutation.variables?.response === 'no' ? <Spinner size={16} /> : 'No'}
           </button>
         </div>
+        <EventDiscussion seasonId={item.seasonId} eventId={item.id} currentUserId={user?.id} />
       </div>
     </Card>
   );

@@ -3,9 +3,9 @@
 import { useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-import { Avatar, Badge, Button, Card, EmptyState, ErrorState, Input, LoadingState, PageHeader } from '@/components/ui';
+import { Avatar, Badge, Button, Card, ErrorState, Input, LoadingState, PageHeader } from '@/components/ui';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { useAthleteSharesQuery, useCoachDirectoryQuery, useShareAthleteMutation } from '@/features/queries';
+import { useAthleteSharesQuery, useFindCoachByEmailMutation, useShareAthleteMutation } from '@/features/queries';
 import type { AthleteShare, AthleteShareStatus, CoachDirectoryEntry } from '@/data/types';
 import type { ThemeColors } from '@/theme/tokens';
 
@@ -80,11 +80,16 @@ export default function ShareDirectoryPage() {
   const { id: athleteId } = useParams<{ id: string }>();
   const router = useRouter();
   const colors = useThemeColors();
-  const [query, setQuery] = useState('');
+  const [email, setEmail] = useState('');
+  // The email a lookup actually ran for, so the empty/no-match state below
+  // reads "no coach found for x@y.com" rather than re-running on every
+  // keystroke — this is a real network round trip per search, not a filter
+  // over an already-loaded list.
+  const [searchedEmail, setSearchedEmail] = useState<string | null>(null);
   const [sharingCoachId, setSharingCoachId] = useState<string | null>(null);
 
   const sharesQuery = useAthleteSharesQuery(athleteId);
-  const directoryQuery = useCoachDirectoryQuery();
+  const findCoach = useFindCoachByEmailMutation();
   const shareMutation = useShareAthleteMutation();
 
   const sharedCoachIds = useMemo(
@@ -92,12 +97,12 @@ export default function ShareDirectoryPage() {
     [sharesQuery.data],
   );
 
-  const filteredCoaches = useMemo(() => {
-    const list = directoryQuery.data ?? [];
-    const q = query.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter((c) => c.displayName.toLowerCase().includes(q) || c.accountName.toLowerCase().includes(q));
-  }, [directoryQuery.data, query]);
+  const handleFind = () => {
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setSearchedEmail(trimmed);
+    findCoach.mutate(trimmed);
+  };
 
   const handleShare = async (coach: CoachDirectoryEntry) => {
     setSharingCoachId(coach.userId);
@@ -110,20 +115,12 @@ export default function ShareDirectoryPage() {
     }
   };
 
-  if (sharesQuery.isLoading || directoryQuery.isLoading) {
-    return <LoadingState message="Loading coaches..." />;
-  }
-
-  if (directoryQuery.isError) {
-    return (
-      <>
-        <PageHeader title="Share with a Coach" showBack />
-        <ErrorState message="Could not load the coach directory." onRetry={() => directoryQuery.refetch()} />
-      </>
-    );
+  if (sharesQuery.isLoading) {
+    return <LoadingState message="Loading..." />;
   }
 
   const shares = sharesQuery.data ?? [];
+  const results = findCoach.data ?? [];
 
   return (
     <>
@@ -141,19 +138,42 @@ export default function ShareDirectoryPage() {
       ) : null}
 
       <p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
-        Find a Coach
+        Share by Email
       </p>
-      <Input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search by coach or club name..."
-        containerClassName="mb-4"
-      />
+      <p className="mb-3 text-sm" style={{ color: colors.inkMuted }}>
+        Enter the coach&apos;s email address to send them this athlete&apos;s profile.
+      </p>
+      <div className="mb-4 flex items-start gap-2">
+        <Input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="coach@example.com"
+          type="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          containerClassName="flex-1"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleFind();
+          }}
+        />
+        <Button label="Find" loading={findCoach.isPending} disabled={!email.trim()} onClick={handleFind} />
+      </div>
 
-      {filteredCoaches.length === 0 ? (
-        <EmptyState title="No coaches found" message="Try a different search." />
+      {findCoach.isPending ? (
+        <LoadingState message="Looking up that email..." />
+      ) : findCoach.isError ? (
+        <ErrorState message={(findCoach.error as Error)?.message || 'Could not look up that email.'} onRetry={handleFind} />
+      ) : searchedEmail && results.length === 0 ? (
+        <Card className="flex flex-col items-center gap-1 py-6 text-center">
+          <p className="font-bold" style={{ color: colors.ink }}>
+            No coach found for {searchedEmail}
+          </p>
+          <p className="text-sm" style={{ color: colors.inkMuted }}>
+            Double-check the address, or ask them to create a TryoutHQ account first.
+          </p>
+        </Card>
       ) : (
-        filteredCoaches.map((c) => (
+        results.map((c) => (
           <CoachRow
             key={`${c.accountId}-${c.userId}`}
             coach={c}

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/cn';
@@ -98,6 +99,7 @@ export default function TeamBuilderPage() {
   const colors = useThemeColors();
   const { confirm, alert, toast } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   const generate = useGenerateTeamBuilderMutation(id!);
   const savedResultsQuery = useTeamBuilderResultsQuery(id!);
   const saveResult = useSaveTeamBuilderResultMutation(id!);
@@ -495,7 +497,7 @@ export default function TeamBuilderPage() {
               <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
                 ⚙️ Configuration
               </span>
-              <Badge label={`${tryout.roster.length} players`} variant="info" />
+              <Badge label={terms.t(`${tryout.roster.length} players`)} variant="info" />
             </div>
 
             <Textarea
@@ -940,7 +942,7 @@ export default function TeamBuilderPage() {
                         <p className="shrink-0 text-xs" style={{ color: colors.inkMuted }}>
                           {effectiveUnassigned.length > 0
                             ? "Didn't fit within the requested team count and size, so they were left out instead of being added to a team."
-                            : 'Drop players here to leave them off every team.'}
+                            : terms.t('Drop players here to leave them off every team.')}
                         </p>
                         {effectiveUnassigned.map((pid) => renderPlayerRow(pid, UNASSIGNED))}
                       </div>

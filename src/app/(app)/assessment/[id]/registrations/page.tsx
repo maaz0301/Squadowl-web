@@ -106,7 +106,7 @@ export default function RegistrationsPage() {
   }
 
   const tryout = tryoutQuery.data;
-  if (!tryout.viewerIsOwner) return <CoachOnlyState what="manage registrations" />;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="manage registrations" labels={tryout.settings.customLabels} />;
   const cloudCode = tryout.cloud?.id ?? '------';
   const baseUrl =
     APP_CONFIG.webUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://www.tryouthq.ca');
@@ -472,6 +472,7 @@ export default function RegistrationsPage() {
       />
 
       <RegistrationProfileModal
+        labels={tryout.settings.customLabels}
         registration={viewing}
         onClose={() => setViewingId(null)}
         onAddToRoster={
@@ -493,6 +494,7 @@ export default function RegistrationsPage() {
       />
 
       <AddToRosterModal
+        labels={tryout.settings.customLabels}
         visible={placing !== null}
         count={placing?.length ?? 0}
         currentTryoutId={id}

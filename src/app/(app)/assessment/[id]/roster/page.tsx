@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms, sportLabel } from '@/lib/terms';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useIsMutating } from '@tanstack/react-query';
@@ -59,6 +60,7 @@ export default function RosterPage() {
   const router = useRouter();
   const { alert, confirm } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
@@ -266,7 +268,7 @@ export default function RosterPage() {
         } catch (e) {
           await alert(
             'Family Members Not Saved',
-            `The player was saved, but the additional family members couldn't be added: ${e instanceof Error ? e.message : 'Unknown error'}`,
+            terms.t(`The player was saved, but the additional family members couldn't be added: ${e instanceof Error ? e.message : 'Unknown error'}`),
           );
         }
       }
@@ -314,21 +316,21 @@ export default function RosterPage() {
   const tools = [
     {
       label: 'Team Builder',
-      desc: 'Auto-split scored players into balanced teams.',
+      desc: terms.t('Auto-split scored players into balanced teams.'),
       go: () => router.push(href('team-builder')),
     },
     {
       label: 'Roster Library',
-      desc: 'Import players from past seasons or other evaluations.',
+      desc: terms.t('Import players from past seasons or other evaluations.'),
       go: () => router.push(href('roster-library')),
     },
     {
-      label: 'Scan Sheet Import',
-      desc: 'Import scores from printed OCR scanning sheets.',
+      label: 'Import Scores from Excel',
+      desc: 'Import results from a spreadsheet and assign its columns to your measures.',
       go: () => router.push(href('scan-sheet')),
     },
     {
-      label: 'Player Selection Letters',
+      label: terms.t('Player Selection Letters'),
       desc: 'Create and send offer or roster decision letters, with a copy attached to each player.',
       go: () => router.push(href('letters')),
     },
@@ -336,12 +338,12 @@ export default function RosterPage() {
       ? [
           {
             label: 'Dummy Data Generator',
-            desc: 'Generate a batch of realistic dummy players with optional scoring data across rubrics.',
+            desc: terms.t('Generate a batch of realistic dummy players with optional scoring data across rubrics.'),
             go: () => setShowTestGen(true),
           },
           {
             label: 'Clear Dummy Data',
-            desc: 'Remove all generated dummy players and evaluation scores.',
+            desc: terms.t('Remove all generated dummy players and evaluation scores.'),
             go: async () => {
               try {
                 const res = await clearTest.mutateAsync();
@@ -366,7 +368,7 @@ export default function RosterPage() {
             tier={effectiveTier}
             metric="players"
             count={tryout.roster.length}
-            label="players in this roster"
+            label={terms.t('players in this roster')}
           />
           {selectMode ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -397,8 +399,8 @@ export default function RosterPage() {
                 onClick={async () => {
                   const ids = [...selectedIds];
                   const ok = await confirm({
-                    title: 'Delete players?',
-                    message: `${ids.length} player${ids.length === 1 ? '' : 's'} will be permanently removed from this roster.`,
+                    title: terms.t('Delete players?'),
+                    message: terms.t(`${ids.length} player${ids.length === 1 ? '' : 's'} will be permanently removed from this roster.`),
                     confirmLabel: 'Delete',
                     destructive: true,
                   });
@@ -416,7 +418,7 @@ export default function RosterPage() {
                       const gone = new Set(deleted);
                       setSelectedIds(new Set(ids.filter((pid) => !gone.has(pid))));
                       await alert(
-                        'Some Players Were Not Deleted',
+                        terms.t('Some Players Were Not Deleted'),
                         `${deleted.length} of ${ids.length} deleted. ${failed.length} could not be removed: ${failed[0].message}`,
                       );
                     }
@@ -431,8 +433,8 @@ export default function RosterPage() {
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              <Button label="Score Players" onClick={() => router.push(href('rinkside'))} />
-              <Button label="+ Add Player" variant="secondary" onClick={openAdd} />
+              <Button label={`Score ${terms.players}`} onClick={() => router.push(href('rinkside'))} />
+              <Button label={`+ Add ${terms.player}`} variant="secondary" onClick={openAdd} />
               <Button label="Import from File" variant="secondary" onClick={openImport} />
               <Button label="Select" variant="secondary" onClick={() => setSelectMode(true)} />
               <Button label="Tools" variant="ghost" onClick={() => setShowTools(true)} />
@@ -479,7 +481,7 @@ export default function RosterPage() {
           <Input
             value={playerSearch}
             onChange={(e) => setPlayerSearch(e.target.value)}
-            placeholder="Search players by name or jersey #"
+            placeholder={terms.t('Search players by name or jersey #')}
           />
 
           <div>
@@ -509,7 +511,7 @@ export default function RosterPage() {
           </div>
 
           <p className="text-sm" style={{ color: colors.inkMuted }}>
-            {tryout.roster.length} player{tryout.roster.length === 1 ? '' : 's'} · {scoredCount} scored
+            {tryout.roster.length} {(tryout.roster.length === 1 ? terms.player : terms.players).toLowerCase()} · {scoredCount} scored
           </p>
         </div>
       ) : null}
@@ -518,21 +520,21 @@ export default function RosterPage() {
         <LoadingState message={bulkWriting ? 'Adding players...' : 'Loading roster...'} />
       ) : !hasPlayers ? (
         <EmptyState
-          title="Add your players to get started"
-          message="Add players to this evaluation, then you can start scoring."
-          actionLabel="+ Add Player"
+          title={`Add your ${terms.players.toLowerCase()} to get started`}
+          message={`Add ${terms.players.toLowerCase()} to this evaluation, then you can start scoring.`}
+          actionLabel={`+ Add ${terms.player}`}
           onAction={openAdd}
           secondaryActionLabel="Import from File"
           onSecondaryAction={openImport}
         />
       ) : filteredRoster.length === 0 ? (
         <EmptyState
-          title={playerSearch.trim() ? 'No players match' : 'No players match this filter'}
+          title={terms.t(playerSearch.trim() ? 'No players match' : 'No players match this filter')}
           message={
             playerSearch.trim()
-              ? `No players match "${playerSearch.trim()}".`
+              ? terms.t(`No players match "${playerSearch.trim()}".`)
               : activeGroup && activeFilter !== 'all'
-                ? `No players under ${activeGroup.label}. Try a different filter.`
+                ? terms.t(`No players under ${activeGroup.label}. Try a different filter.`)
                 : `No ${activeFilter} players. Try a different filter.`
           }
           actionLabel={playerSearch.trim() ? 'Clear search' : 'Show all'}
@@ -610,6 +612,7 @@ export default function RosterPage() {
       )}
 
       <ImportPlayersModal
+        labels={tryout.settings.customLabels}
         visible={showImport}
         onClose={() => setShowImport(false)}
         target={tryout.name}
@@ -656,13 +659,14 @@ export default function RosterPage() {
         }}
       />
 
-      <Modal visible={showAdd} title="Add Player" size="lg" onClose={() => setShowAdd(false)} hideDefaultFooter>
+      <Modal visible={showAdd} title={`Add ${terms.player}`} size="lg" onClose={() => setShowAdd(false)} hideDefaultFooter>
         <AddPlayerForm
           loading={addPlayer.isPending || uploadPhoto.isPending || inviteParticipant.isPending}
           sport={tryout.sport}
+          labels={tryout.settings.customLabels}
           showFamilyContacts={canAssess}
           onSubmit={submitAddPlayer}
-          submitLabel="Save Player & Send Invite"
+          submitLabel={`Save ${terms.player} & Send Invite`}
         />
       </Modal>
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useRouter } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -17,10 +18,11 @@ export default function ResultsPage() {
   const router = useRouter();
   const { data: tryout, results, isLoading, isError, refetch } = useResultsQuery(id);
   const isAssessorOnly = useIsAssessorOnly(tryout?.viewerIsOwner);
+  const terms = useTerms(tryout?.settings.customLabels);
 
   if (isLoading) return <LoadingState message="Loading results..." />;
   if (isError || !tryout) return <ErrorState message="Could not load results." onRetry={() => refetch()} />;
-  if (!tryout.viewerIsOwner) return <CoachOnlyState what="see the results" />;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="see the results" labels={tryout.settings.customLabels} />;
 
   const sorted = [...results].sort((a, b) => b.overall - a.overall);
   const skaters = sorted.filter((r) => !isGoaliePosition(r.player.pos));
@@ -43,7 +45,7 @@ export default function ResultsPage() {
       </div>
 
       {sorted.length === 0 ? (
-        <EmptyState title="No results yet" message="Score players to see the leaderboard." />
+        <EmptyState title="No results yet" message={terms.t('Score players to see the leaderboard.')} />
       ) : (
         <div className="flex flex-col gap-2">
           {sorted.map((item, index) => {

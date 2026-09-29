@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useState } from 'react';
 
 import { Button, Chip, Modal, Spinner } from '@/components/ui';
@@ -22,6 +23,8 @@ interface AddToRosterModalProps {
   progress?: { done: number; total: number };
   onClose: () => void;
   onConfirm: (destination: RosterDestination) => void;
+  /** The evaluation's own names. */
+  labels?: import('@/data/types').CustomLabels;
 }
 
 type Kind = 'assessment' | 'team';
@@ -39,7 +42,9 @@ export function AddToRosterModal({
   progress,
   onClose,
   onConfirm,
+  labels,
 }: AddToRosterModalProps) {
+  const terms = useTerms(labels);
   const colors = useThemeColors();
   const [kind, setKind] = useState<Kind | null>(null);
   const [targetId, setTargetId] = useState<string | null>(null);
@@ -80,7 +85,7 @@ export function AddToRosterModal({
       ? (tryoutsQuery.data ?? []).map((t) => ({
           id: t.id,
           name: t.name,
-          hint: t.id === currentTryoutId ? 'Current' : `${t.roster.length} players`,
+          hint: t.id === currentTryoutId ? 'Current' : terms.t(`${t.roster.length} players`),
         }))
       : kind === 'team'
         ? (teamsQuery.data ?? []).map((t) => ({ id: t.id, name: t.name, hint: t.season ?? '' }))
@@ -92,7 +97,7 @@ export function AddToRosterModal({
   return (
     <Modal
       visible={visible}
-      title={count > 1 ? `Add ${count} Players` : 'Add Player'}
+      title={terms.t(count > 1 ? `Add ${count} Players` : 'Add Player')}
       onClose={onClose}
       hideDefaultFooter
       footer={
@@ -168,8 +173,8 @@ export function AddToRosterModal({
             </p>
             <p className="text-sm" style={{ color: colors.inkMuted }}>
               {kind === 'assessment'
-                ? 'Create an evaluation before adding players to one.'
-                : 'Create a team before adding players to one.'}
+                ? terms.t('Create an evaluation before adding players to one.')
+                : terms.t('Create a team before adding players to one.')}
             </p>
           </div>
         ) : (

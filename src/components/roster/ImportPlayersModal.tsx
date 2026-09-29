@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useMemo, useRef, useState } from 'react';
 
 import { Badge, Button, Modal, Select, Spinner, useAlert } from '@/components/ui';
@@ -46,6 +47,7 @@ function UploadIcon({ color }: { color: string }) {
  * coach has seen the rows that are about to be.
  */
 export function ImportPlayersModal({
+  labels,
   visible,
   onClose,
   target,
@@ -53,6 +55,8 @@ export function ImportPlayersModal({
   atLimit = false,
   onLimitReached,
 }: {
+  /** The evaluation's own names, when opened from one. */
+  labels?: import('@/data/types').CustomLabels;
   visible: boolean;
   onClose: () => void;
   /** Names what the players are being added to, for the copy. */
@@ -70,6 +74,7 @@ export function ImportPlayersModal({
   ) => Promise<PlayerImportResult>;
 }) {
   const colors = useThemeColors();
+  const terms = useTerms(labels);
   const { alert } = useAlert();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -172,9 +177,9 @@ export function ImportPlayersModal({
   ];
 
   return (
-    <Modal visible={visible} title={`Import Players into ${target}`} size="lg" onClose={close} hideDefaultFooter>
+    <Modal visible={visible} title={terms.t(`Import Players into ${target}`)} size="lg" onClose={close} hideDefaultFooter>
       {result ? (
-        <ImportSummary result={result} onDone={close}
+        <ImportSummary result={result} terms={terms} onDone={close}
           onAgain={() => {
             if (atLimit) {
               close();
@@ -221,7 +226,7 @@ export function ImportPlayersModal({
             </span>
           </div>
           <p className="text-xs" style={{ color: colors.inkFaint }}>
-            One player per row, with a heading row above them. Whatever your columns are called, you&apos;ll match
+            {terms.t('One player per row, with a heading row above them.')} Whatever your columns are called, you&apos;ll match
             them up on the next step. PDFs can&apos;t be read — export the roster as CSV or Excel first.
           </p>
           <input
@@ -266,7 +271,7 @@ export function ImportPlayersModal({
               {IMPORT_FIELDS.map((field) => (
                 <Select
                   key={field.key}
-                  label={field.label}
+                  label={terms.t(field.label)}
                   disabled={importing}
                   value={mapping[field.key] == null ? '' : String(mapping[field.key])}
                   onChange={(e) =>
@@ -285,6 +290,7 @@ export function ImportPlayersModal({
             removedCount={removed.size}
             onRemove={(lines) => removeLines(lines)}
             onRestore={() => setRemoved(new Set())}
+            t={terms.t}
           />
 
           {importing ? (
@@ -300,7 +306,7 @@ export function ImportPlayersModal({
                 label={
                   ready.length === 0
                     ? 'Nothing to import'
-                    : `Import ${ready.length} ${ready.length === 1 ? 'player' : 'players'}`
+                    : `Import ${ready.length} ${(ready.length === 1 ? terms.player : terms.players).toLowerCase()}`
                 }
                 disabled={ready.length === 0}
                 onClick={runImport}
@@ -325,7 +331,9 @@ function RowPreview({
   removedCount,
   onRemove,
   onRestore,
+  t,
 }: {
+  t: (text: string) => string;
   rows: ImportRow[];
   colors: Colors;
   disabled: boolean;
@@ -380,7 +388,7 @@ function RowPreview({
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10">
             <tr style={{ backgroundColor: colors.tile }}>
-              {['Row', 'Name', 'Email', 'Jersey', 'Pos', 'Born', '', ''].map((h, i) => (
+              {['Row', 'Name', 'Email', t('Jersey'), 'Pos', 'Born', '', ''].map((h, i) => (
                 <th
                   key={h || `blank-${i}`}
                   className="whitespace-nowrap px-3 py-2 text-left text-xs font-bold uppercase tracking-wider"
@@ -455,11 +463,13 @@ function RowPreview({
 
 function ImportSummary({
   result,
+  terms,
   onDone,
   onAgain,
   colors,
 }: {
   result: PlayerImportResult;
+  terms: { player: string; players: string };
   onDone: () => void;
   onAgain: () => void;
   colors: Colors;
@@ -467,7 +477,7 @@ function ImportSummary({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-lg font-bold" style={{ color: colors.ink }}>
-        {result.added} {result.added === 1 ? 'player' : 'players'} added
+        {result.added} {(result.added === 1 ? terms.player : terms.players).toLowerCase()} added
       </p>
       {result.failed.length > 0 ? (
         <div>

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -93,6 +94,7 @@ interface Props {
  */
 export function FriendPackagesCard({ tryout, disabled }: Props) {
   const colors = useThemeColors();
+  const terms = useTerms(tryout.settings.customLabels);
   const { confirm, alert } = useAlert();
   const setFriendPackages = useSetFriendPackagesMutation();
   const qc = useQueryClient();
@@ -179,8 +181,8 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
     }
     if (editing.playerIds.length < MIN_MEMBERS) {
       await alert(
-        'Pick at least two players',
-        'A friend package is the group that has to stay together, so it needs at least two players.',
+        terms.t('Pick at least two players'),
+        terms.t('A friend package is the group that has to stay together, so it needs at least two players.'),
       );
       return;
     }
@@ -210,7 +212,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
   const handleDelete = async (pkg: FriendPackage) => {
     const ok = await confirm({
       title: 'Delete this package?',
-      message: `"${pkg.name}" will no longer be kept together when you generate teams. The players stay on the roster.`,
+      message: terms.t(`"${pkg.name}" will no longer be kept together when you generate teams. The players stay on the roster.`),
       confirmLabel: 'Delete',
       destructive: true,
     });
@@ -241,9 +243,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
         </div>
 
         <p className="text-xs leading-relaxed" style={{ color: colors.inkMuted }}>
-          Players in a package land on the same team when you generate. Groups picked up from
-          friend names on registration forms are kept too, and a package you build here wins
-          wherever the two disagree.
+          {terms.t('Players in a package land on the same team when you generate. Groups picked up from friend names on registration forms are kept too, and a package you build here wins wherever the two disagree.')}
         </p>
 
         {packages.length === 0 ? (
@@ -258,7 +258,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
               No packages yet
             </p>
             <p className="text-xs" style={{ color: colors.inkMuted }}>
-              Group the players who have to stay together — carpools, siblings, a coach&apos;s own kid.
+              {terms.t("Group the players who have to stay together — carpools, siblings, a coach's own kid.")}
             </p>
           </div>
         ) : (
@@ -290,7 +290,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
                         {pkg.name}
                       </p>
                       <p className="text-[11px]" style={{ color: missing > 0 ? colors.warning : colors.inkMuted }}>
-                        {names.length} player{names.length === 1 ? '' : 's'}
+                        {names.length} {(names.length === 1 ? terms.player : terms.players).toLowerCase()}
                         {missing > 0 ? ` · ${missing} no longer on the roster` : ''}
                       </p>
                     </div>
@@ -337,7 +337,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
         />
         {tryout.roster.length < MIN_MEMBERS ? (
           <p className="text-[11px]" style={{ color: colors.inkFaint }}>
-            Add at least two players to the roster first.
+            {terms.t('Add at least two players to the roster first.')}
           </p>
         ) : packages.length >= MAX_PACKAGES ? (
           <p className="text-[11px]" style={{ color: colors.inkFaint }}>
@@ -370,7 +370,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
 
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-bold" style={{ color: colors.ink }}>
-                Players
+                {terms.players}
               </span>
               <Badge
                 label={`${editing.playerIds.length} selected`}
@@ -390,7 +390,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
             >
               {visibleRoster.length === 0 ? (
                 <p className="p-3 text-xs" style={{ color: colors.inkMuted }}>
-                  No players match &ldquo;{search}&rdquo;.
+                  {terms.t('No players match')} &ldquo;{search}&rdquo;.
                 </p>
               ) : (
                 visibleRoster.map((p) => (

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms, sportLabel } from '@/lib/terms';
 import { use, useEffect, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -53,6 +54,7 @@ export default function AssessmentLayout({
   useTryoutRealtimeSync(id);
 
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   const regsQuery = useRegistrationsQuery(id);
   const pendingRegs = (regsQuery.data ?? []).filter((r) => r.status === 'pending').length;
 
@@ -70,7 +72,7 @@ export default function AssessmentLayout({
     <>
       <div className="mb-4">
         <Link
-          href="/dashboard"
+          href="/dashboard#evaluations"
           className="mb-2 inline-flex items-center gap-1.5 text-sm font-semibold"
           style={{ color: colors.inkMuted }}
         >
@@ -90,7 +92,7 @@ export default function AssessmentLayout({
         {tryoutQuery.data ? (
           <>
             <p className="mt-0.5 text-sm" style={{ color: colors.inkMuted }}>
-              {tryoutQuery.data.sport} · {tryoutQuery.data.eventType}
+              {sportLabel(tryoutQuery.data.sport, terms)} · {tryoutQuery.data.eventType}
               {tryoutQuery.data.tryoutDate ? ` · ${tryoutQuery.data.tryoutDate}` : ''}
               {tryoutQuery.data.startTime
                 ? ` · ${tryoutQuery.data.startTime}${tryoutQuery.data.endTime ? `–${tryoutQuery.data.endTime}` : ''}`

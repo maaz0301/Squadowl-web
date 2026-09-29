@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
@@ -57,6 +58,7 @@ export default function PlayerHubPage() {
   const { alert, confirm } = useAlert();
 
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   // A hook, so it belongs above the early returns below rather than beside
   // the derived values it feeds.
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
@@ -135,9 +137,9 @@ export default function PlayerHubPage() {
 
   if (tryoutQuery.isLoading) return <LoadingState />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
-    return <ErrorState message="Player not found." onRetry={() => tryoutQuery.refetch()} />;
+    return <ErrorState message={terms.t('Player not found.')} onRetry={() => tryoutQuery.refetch()} />;
   }
-  if (!player) return <EmptyState title="Player not found" />;
+  if (!player) return <EmptyState title={terms.t('Player not found')} />;
 
   const tryout = tryoutQuery.data;
   // Two different questions, and both have to answer yes. canManageTeam reads
@@ -348,7 +350,7 @@ export default function PlayerHubPage() {
         backHref={href('roster')}
         right={
           <>
-            <Button label="Score Player" onClick={() => router.push(href(`score/${playerId}`))} />
+            <Button label={terms.t('Score Player')} onClick={() => router.push(href(`score/${playerId}`))} />
             {/* Edit is open to anyone who can assess — including an invited
                 assessor — since fixing a wrong jersey number or position
                 shouldn't need the owning coach; Delete stays coach/admin-only. */}
@@ -429,7 +431,7 @@ export default function PlayerHubPage() {
                 <Button label="+ Add" size="sm" variant="ghost" onClick={() => setShowAddContact(true)} />
               </div>
               <p className="text-xs" style={{ color: colors.inkMuted }}>
-                A second parent, a grandparent, or anyone else who should get invites for this player.
+                {terms.t('A second parent, a grandparent, or anyone else who should get invites for this player.')}
               </p>
               {familyContactsQuery.isLoading ? (
                 <Spinner size={16} />
@@ -479,7 +481,7 @@ export default function PlayerHubPage() {
                 <Spinner size={16} />
               ) : playerLetters.length === 0 ? (
                 <span style={{ color: colors.inkFaint }}>
-                  No offer or roster decision letters sent to this player yet.
+                  {terms.t('No offer or roster decision letters sent to this player yet.')}
                 </span>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -535,13 +537,13 @@ export default function PlayerHubPage() {
 
           {isCoachHere ? (
             <Button
-              label="Delete Player"
+              label={terms.t('Delete Player')}
               variant="danger"
               loading={deletePlayer.isPending}
               onClick={async () => {
                 const ok = await confirm({
-                  title: 'Delete Player',
-                  message: 'Are you sure you want to delete this player? This cannot be undone.',
+                  title: terms.t('Delete Player'),
+                  message: terms.t('Are you sure you want to delete this player? This cannot be undone.'),
                   confirmLabel: 'Delete',
                   destructive: true,
                 });
@@ -621,7 +623,7 @@ export default function PlayerHubPage() {
               them. */}
           {isAssessorOnly ? null : (
             <Card className="flex flex-col items-start gap-2">
-              <p className="font-display font-bold" style={{ color: colors.ink }}>Player Profile</p>
+              <p className="font-display font-bold" style={{ color: colors.ink }}>{terms.t('Player Profile')}</p>
               <p className="text-sm" style={{ color: colors.inkMuted }}>
                 View full evaluation history, score trends, and season-over-season comparison.
               </p>
@@ -644,7 +646,7 @@ export default function PlayerHubPage() {
           <div>
             <SectionLabel className="mb-3">Evaluations ({evals.length})</SectionLabel>
             {evals.length === 0 ? (
-              <EmptyState title="No evaluations yet" message="Use Score Player to add the first evaluation." />
+              <EmptyState title="No evaluations yet" message={terms.t('Use Score Player to add the first evaluation.')} />
             ) : (
               <div className="flex flex-col gap-2">
                 {evals.map((ev) => {
@@ -691,10 +693,11 @@ export default function PlayerHubPage() {
         </div>
       </div>
 
-      <Modal visible={showEdit} title="Edit Player" size="lg" onClose={() => setShowEdit(false)} hideDefaultFooter>
+      <Modal visible={showEdit} title={terms.t('Edit Player')} size="lg" onClose={() => setShowEdit(false)} hideDefaultFooter>
         <AddPlayerForm
           defaultValues={player}
           sport={tryout.sport}
+          labels={tryout.settings.customLabels}
           loading={updatePlayer.isPending || uploadPhoto.isPending}
           showFamilyContacts={canAssess}
           onSubmit={async (data, _inviteEmails, extraFamilyContacts) => {

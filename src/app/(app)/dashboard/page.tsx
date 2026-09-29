@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useTerms, sportLabel } from '@/lib/terms';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -47,6 +48,7 @@ import { EditEvaluationModal } from '@/components/assessment/EditEvaluationModal
 import type { TryoutSummary } from '@/data/types';
 
 export default function DashboardPage() {
+  const terms = useTerms();
   const colors = useThemeColors();
   const router = useRouter();
   const { alert: showAlert, toast } = useAlert();
@@ -92,6 +94,14 @@ export default function DashboardPage() {
   // registration in the account along with it. See useTryoutSummariesQuery.
   const teamsQuery = useTeamsQuery();
   const tryoutsQuery = useTryoutSummariesQuery(false);
+
+  // "All evaluations" on an evaluation page links here with #evaluations: bring
+  // the list into view once it has rendered (it is not there while loading).
+  const listReady = !tryoutsQuery.isLoading && !tryoutsQuery.isError;
+  useEffect(() => {
+    if (!listReady || window.location.hash !== '#evaluations') return;
+    evaluationsRef.current?.scrollIntoView({ block: 'start' });
+  }, [listReady]);
   const assignedQuery = useAssignedTryoutSummariesQuery(!isGuardian);
   // Guardians and coaches share this route but not this data — firing the
   // guardian read for a coach was a round trip whose result is never rendered.
@@ -359,7 +369,7 @@ export default function DashboardPage() {
                           {t.name}
                         </span>
                         <span className="block text-sm" style={{ color: colors.inkMuted }}>
-                          {t.sport} · {t.playerCount} players
+                          {sportLabel(t.sport, terms)} · {t.playerCount} {terms.players.toLowerCase()}
                         </span>
                       </span>
                       <span className="flex shrink-0 items-center gap-2">
@@ -395,7 +405,7 @@ export default function DashboardPage() {
 
       {/* Evaluations & Tryouts: header, actions, the empty state and the cards
           all live inside one panel. */}
-      <div ref={evaluationsRef} className="scroll-mt-4">
+      <div ref={evaluationsRef} id="evaluations" className="scroll-mt-4">
         <HomePanel
           icon="calendar"
           label="Evaluations & Tryouts"
@@ -485,7 +495,7 @@ export default function DashboardPage() {
                           {item.name}
                         </span>
                         <span className="mt-1 block text-sm" style={{ color: colors.inkMuted }}>
-                          {item.sport} · {item.eventType}
+                          {sportLabel(item.sport, terms)} · {item.eventType}
                         </span>
                         {item.tryoutDate ? (
                           <span className="block text-sm" style={{ color: colors.inkFaint }}>

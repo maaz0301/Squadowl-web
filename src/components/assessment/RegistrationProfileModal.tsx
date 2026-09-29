@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import type { ReactNode } from 'react';
 
 import { Badge, Button, Modal } from '@/components/ui';
@@ -41,6 +42,8 @@ interface RegistrationProfileModalProps {
   /** Omitted for non-pending registrations, which have nowhere left to go. */
   onAddToRoster?: () => void;
   onDismiss?: () => void;
+  /** The evaluation's own names. */
+  labels?: import('@/data/types').CustomLabels;
 }
 
 /**
@@ -53,8 +56,10 @@ export function RegistrationProfileModal({
   onClose,
   onAddToRoster,
   onDismiss,
+  labels,
 }: RegistrationProfileModalProps) {
   const colors = useThemeColors();
+  const terms = useTerms(labels);
   const r = registration;
 
   return (
@@ -90,7 +95,7 @@ export function RegistrationProfileModal({
             ) : null}
           </div>
 
-          <Section title="Player" colors={colors}>
+          <Section title={terms.player} colors={colors}>
             <Row label="Name" value={`${r.firstName} ${r.lastName}`} colors={colors} />
             <Row label="Year of Birth" value={r.yearOfBirth} colors={colors} />
             <Row label="Position" value={r.positionTryingOutFor} colors={colors} />

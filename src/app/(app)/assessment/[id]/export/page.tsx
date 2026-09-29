@@ -10,6 +10,7 @@ import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery }
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
+import { useTerms } from '@/lib/terms';
 import type { ExportFormat } from '@/data/types';
 
 export default function ExportPage() {
@@ -20,6 +21,7 @@ export default function ExportPage() {
   const tryoutQuery = useTryoutQuery(id);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   const shareMut = useShareLinkMutation(id!);
   const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
   const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
@@ -32,7 +34,7 @@ export default function ExportPage() {
   }
 
   const tryout = tryoutQuery.data;
-  if (!tryout.viewerIsOwner) return <CoachOnlyState what="export this evaluation" />;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="export this evaluation" labels={tryout.settings.customLabels} />;
   const tier = effectiveTier;
   const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
   const allowedFormats = getPlanDefinition(tier).limits.exports;
@@ -69,7 +71,8 @@ export default function ExportPage() {
           {tryout.name}
         </span>
         <span style={{ color: colors.inkMuted }}>
-          {tryout.roster.length} players · {tryout.evals.length} evaluations
+          {tryout.roster.length} {(tryout.roster.length === 1 ? terms.player : terms.players).toLowerCase()} · {tryout.evals.length}{' '}
+          {tryout.evals.length === 1 ? 'evaluation' : 'evaluations'}
         </span>
       </Card>
 

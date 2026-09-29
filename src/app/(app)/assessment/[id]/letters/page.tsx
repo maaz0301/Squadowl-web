@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useMemo, useState } from 'react';
 
 import {
@@ -53,6 +54,7 @@ export default function LettersPage() {
   const user = useUser();
 
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   const teamsQuery = useTeamsQuery();
   const templatesQuery = useLetterTemplatesQuery();
   const lettersQuery = usePlayerLettersQuery(id);
@@ -115,12 +117,12 @@ export default function LettersPage() {
   if (tryoutQuery.isError || !tryout) {
     return (
       <>
-        <PageHeader title="Player Selection Letters" showBack backHref={href('roster')} />
+        <PageHeader title={terms.t('Player Selection Letters')} showBack backHref={href('roster')} />
         <ErrorState message="Could not load this evaluation." onRetry={() => tryoutQuery.refetch()} />
       </>
     );
   }
-  if (!tryout.viewerIsOwner) return <CoachOnlyState what="send selection letters" />;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="send selection letters" labels={tryout.settings.customLabels} />;
 
   const templates = templatesQuery.data ?? [];
   const letters = lettersQuery.data ?? [];
@@ -255,8 +257,8 @@ export default function LettersPage() {
   return (
     <>
       <PageHeader
-        title="Player Selection Letters"
-        subtitle="Write an offer or roster decision letter once, then send it to the players you choose"
+        title={terms.t('Player Selection Letters')}
+        subtitle={terms.t('Write an offer or roster decision letter once, then send it to the players you choose')}
         showBack
         backHref={href('roster')}
         right={
@@ -305,7 +307,7 @@ export default function LettersPage() {
                 <Badge label={LETTER_KIND_LABELS[t.kind]} variant={t.kind === 'offer' ? 'success' : 'info'} />
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button label={sendWith?.id === t.id ? 'Selected' : 'Select Players'} onClick={() => startSend(t)} />
+                <Button label={sendWith?.id === t.id ? 'Selected' : terms.t('Select Players')} onClick={() => startSend(t)} />
                 <Button
                   label="Edit"
                   variant="secondary"
@@ -348,7 +350,7 @@ export default function LettersPage() {
               label={
                 sendProgress
                   ? `Sending ${sendProgress.done}/${sendProgress.total}...`
-                  : `Send to ${selectedIds.size} Player${selectedIds.size === 1 ? '' : 's'}`
+                  : terms.t(`Send to ${selectedIds.size} Player${selectedIds.size === 1 ? '' : 's'}`)
               }
               disabled={selectedIds.size === 0}
               loading={sendLetters.isPending}
@@ -360,7 +362,7 @@ export default function LettersPage() {
             containerClassName="mt-3"
             value={playerSearch}
             onChange={(e) => setPlayerSearch(e.target.value)}
-            placeholder="Search players by name"
+            placeholder={terms.t('Search players by name')}
           />
 
           {filteredRoster.length === 0 ? (
@@ -426,7 +428,7 @@ export default function LettersPage() {
       ) : letters.length === 0 ? (
         <EmptyState
           title="No letters sent yet"
-          message="Pick a template above, choose the players it applies to, and send. Every copy shows up here and on the player's card."
+          message={terms.t("Pick a template above, choose the players it applies to, and send. Every copy shows up here and on the player's card.")}
         />
       ) : (
         <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
@@ -516,6 +518,7 @@ export default function LettersPage() {
             subject={renderFor(previewFor, sendWith.subject)}
             body={renderFor(previewFor, sendWith.body)}
             to={letterRecipient(previewFor)}
+            noEmail={terms.t('No email address on file for this player')}
           />
         ) : null}
       </Modal>
@@ -527,7 +530,12 @@ export default function LettersPage() {
         onClose={() => setOpenLetter(null)}
       >
         {openLetter ? (
-          <LetterBody subject={openLetter.subject} body={openLetter.body} to={openLetter.recipientEmail} />
+          <LetterBody
+            subject={openLetter.subject}
+            body={openLetter.body}
+            to={openLetter.recipientEmail}
+            noEmail={terms.t('No email address on file for this player')}
+          />
         ) : null}
       </Modal>
     </>
@@ -535,7 +543,7 @@ export default function LettersPage() {
 }
 
 /** The rendered letter, as the family will read it. */
-function LetterBody({ subject, body, to }: { subject: string; body: string; to?: string }) {
+function LetterBody({ subject, body, to, noEmail }: { subject: string; body: string; to?: string; noEmail: string }) {
   const colors = useThemeColors();
   const leftover = unfilledTokens(`${subject}\n${body}`);
   return (
@@ -543,7 +551,7 @@ function LetterBody({ subject, body, to }: { subject: string; body: string; to?:
       <div>
         <SectionLabel>To</SectionLabel>
         <p className="text-sm" style={{ color: to ? colors.ink : colors.warning }}>
-          {to ?? 'No email address on file for this player'}
+          {to ?? noEmail}
         </p>
       </div>
       <div>

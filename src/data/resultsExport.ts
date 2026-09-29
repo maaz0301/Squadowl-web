@@ -1,3 +1,4 @@
+import { termsFor } from '@/lib/termsCore';
 import type { Evaluation, RankingDirection, ScoringType, Tryout } from './types';
 import { computePlayerResults } from './scoring';
 import {
@@ -213,7 +214,7 @@ export function buildResultsSummary(tryout: Tryout): ResultsSummary {
   ];
 
   const headers = [
-    'Rank', 'Name', 'Jersey', 'Position', 'Shoots', 'Overall',
+    'Rank', 'Name', termsFor(tryout)('Jersey'), 'Position', 'Shoots', 'Overall',
     ...columns.map((c) => c.label),
     'Evaluations', 'Recommendation', 'Strengths', 'Areas to Improve',
   ];

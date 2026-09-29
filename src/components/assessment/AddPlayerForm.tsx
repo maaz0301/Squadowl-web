@@ -1,6 +1,7 @@
 'use client';
 'use no memo';
 
+import { useTerms, sportLabel } from '@/lib/terms';
 import { useMemo, useRef, useState } from 'react';
 import { useForm, Controller, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -54,6 +55,8 @@ interface Props {
    * keep it away from an assessor.
    */
   showFamilyContacts?: boolean;
+  /** The evaluation's own renames, so the form speaks its language. */
+  labels?: import('@/data/types').CustomLabels;
 }
 
 /**
@@ -106,9 +109,11 @@ export function AddPlayerForm({
   sport,
   onSubmit,
   showInvite,
-  submitLabel = 'Save Player',
+  submitLabel,
   showFamilyContacts = true,
+  labels,
 }: Props) {
+  const terms = useTerms(labels);
   const colors = useThemeColors();
   const { alert, confirm } = useAlert();
   const athletesQuery = useAthletesQuery();
@@ -254,7 +259,7 @@ export function AddPlayerForm({
   const removeExistingContact = async (contactId: string, name: string) => {
     const ok = await confirm({
       title: 'Remove Contact',
-      message: `Remove ${name} from this player's family contacts?`,
+      message: terms.t(`Remove ${name} from this player's family contacts?`),
       confirmLabel: 'Remove',
       destructive: true,
     });
@@ -270,10 +275,10 @@ export function AddPlayerForm({
     <div className="flex flex-col gap-4 pb-2">
       <FormLock busy={loading} className="flex flex-col gap-4">
         {athletesQuery.data && athletesQuery.data.length > 0 ? (
-          <Button label="Search Existing Players" variant="secondary" onClick={() => setModalVisible(true)} />
+          <Button label={`Search Existing ${terms.players}`} variant="secondary" onClick={() => setModalVisible(true)} />
         ) : null}
 
-        <Modal visible={modalVisible} title="Select Existing Player" onClose={() => setModalVisible(false)}>
+        <Modal visible={modalVisible} title={`Select Existing ${terms.player}`} onClose={() => setModalVisible(false)}>
           <Input
             label="Search by name"
             value={searchQuery}
@@ -348,7 +353,7 @@ export function AddPlayerForm({
             control={control}
             name="jersey"
             render={({ field, fieldState }) => (
-              <Input label="Jersey #" inputMode="numeric" {...field} error={fieldState.error?.message} />
+              <Input label={terms.jersey} inputMode="numeric" {...field} error={fieldState.error?.message} />
             )}
           />
           <Controller
@@ -407,7 +412,7 @@ export function AddPlayerForm({
             name="playerEmail"
             render={({ field, fieldState }) => (
               <Input
-                label="Player Email"
+                label={`${terms.player} Email`}
                 type="email"
                 {...field}
                 error={fieldState.error?.message}
@@ -479,7 +484,7 @@ export function AddPlayerForm({
               <Button label="+ Add" size="sm" variant="ghost" onClick={() => setShowAddContact(true)} />
             </div>
             <p className="text-xs" style={{ color: colors.inkMuted }}>
-              A second parent, a grandparent, or anyone else who should get invites for this player.
+              {terms.t('A second parent, a grandparent, or anyone else who should get invites for this player.')}
             </p>
 
             {existingContactsQuery.isLoading ? (
@@ -525,7 +530,7 @@ export function AddPlayerForm({
                       {c.name && c.email ? (
                         <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p>
                       ) : null}
-                      <p className="truncate text-[11px] italic" style={{ color: colors.inkFaint }}>Not saved yet — added when you save the player.</p>
+                      <p className="truncate text-[11px] italic" style={{ color: colors.inkFaint }}>{terms.t('Not saved yet — added when you save the player.')}</p>
                     </div>
                     <Button label="Remove" variant="ghost" size="sm" onClick={() => removeFamilyContact(i)} />
                   </div>
@@ -560,7 +565,7 @@ export function AddPlayerForm({
         </div>
       </Modal>
 
-      <Button label={submitLabel} onClick={submit} loading={loading} size="lg" />
+      <Button label={submitLabel ?? `Save ${terms.player}`} onClick={submit} loading={loading} size="lg" />
     </div>
   );
 }

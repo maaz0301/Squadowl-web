@@ -1914,6 +1914,16 @@ export function useCoachDirectoryQuery() {
   });
 }
 
+/**
+ * On-demand (not a live query) — triggered once per "Find" click rather than
+ * on every keystroke, since it's a real network round trip per lookup.
+ */
+export function useFindCoachByEmailMutation() {
+  return useMutation({
+    mutationFn: (email: string) => getDataSource().findCoachByEmail(email),
+  });
+}
+
 export function useAthleteSharesQuery(athleteId?: string) {
   return useQuery({
     queryKey: queryKeys.athleteShares(athleteId ?? ''),
@@ -2735,13 +2745,69 @@ export function useImportScanScoresMutation() {
     mutationFn: ({
       tryoutId,
       scores,
+      session,
     }: {
       tryoutId: string;
       scores: { playerId: string; rubricKey: string; value: number }[];
-    }) => getDataSource().importScanScores(tryoutId, scores),
+      session?: string;
+    }) => getDataSource().importScanScores(tryoutId, scores, session),
     onSuccess: (_, { tryoutId }) => {
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId) });
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
     },
+  });
+}
+
+// ---- Event comments & files ----
+
+const eventCommentsKey = (eventId: string) => ['event-comments', eventId] as const;
+const eventFilesKey = (eventId: string) => ['event-files', eventId] as const;
+
+export function useEventCommentsQuery(eventId: string | undefined, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: eventCommentsKey(eventId ?? ''),
+    queryFn: () => getDataSource().listEventComments(eventId!),
+    enabled: !!eventId && options?.enabled !== false,
+  });
+}
+
+export function useAddEventCommentMutation(eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) => getDataSource().addEventComment(eventId, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: eventCommentsKey(eventId) }),
+  });
+}
+
+export function useDeleteEventCommentMutation(eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (commentId: string) => getDataSource().deleteEventComment(commentId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: eventCommentsKey(eventId) }),
+  });
+}
+
+export function useEventFilesQuery(eventId: string | undefined, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: eventFilesKey(eventId ?? ''),
+    queryFn: () => getDataSource().listEventFiles(eventId!),
+    enabled: !!eventId && options?.enabled !== false,
+  });
+}
+
+export function useUploadEventFileMutation(seasonId: string, eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) =>
+      getDataSource().uploadEventFile(seasonId, eventId, file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: eventFilesKey(eventId) }),
+  });
+}
+
+export function useDeleteEventFileMutation(eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: import('@/data/types').EventFile) => getDataSource().deleteEventFile(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: eventFilesKey(eventId) }),
   });
 }

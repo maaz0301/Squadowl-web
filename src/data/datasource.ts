@@ -253,6 +253,13 @@ export interface DataSource {
    * portal buttons write, so there is one source of truth for attendance.
    */
   issueEventRsvpTokens(eventId: string): Promise<EventRsvpToken[]>;
+  /** Event discussion: anyone who can open the season comments; coaches attach files. */
+  listEventComments(eventId: string): Promise<import('./types').EventComment[]>;
+  addEventComment(eventId: string, body: string): Promise<import('./types').EventComment>;
+  deleteEventComment(commentId: string): Promise<void>;
+  listEventFiles(eventId: string): Promise<import('./types').EventFile[]>;
+  uploadEventFile(seasonId: string, eventId: string, file: File): Promise<import('./types').EventFile>;
+  deleteEventFile(file: import('./types').EventFile): Promise<void>;
   getEventRsvpContext(token: string): Promise<EventRsvpContext | null>;
   submitEventRsvp(token: string, response: 'yes' | 'maybe' | 'no'): Promise<EventRsvpContext>;
   getAthleteHistory(athleteId: string): Promise<AthleteHistory>;
@@ -281,6 +288,14 @@ export interface DataSource {
 
   // Guardian -> Coach athlete profile sharing
   getCoachDirectory(): Promise<import('./types').CoachDirectoryEntry[]>;
+  /**
+   * Looks up coach-capable accounts (owner/admin/coach) by the coach's own
+   * email — what "Share with a Coach" actually searches by, instead of
+   * browsing getCoachDirectory()'s full platform-wide list. Empty array means
+   * no match; more than one means that email holds a coach-capable role on
+   * more than one account.
+   */
+  findCoachByEmail(email: string): Promise<import('./types').CoachDirectoryEntry[]>;
   shareAthleteWithCoach(athleteId: string, coachUserId: string, coachAccountId: string): Promise<import('./types').AthleteShare>;
   getMyAthleteShares(athleteId: string): Promise<import('./types').AthleteShare[]>;
   getSharedAthletesForCoach(): Promise<import('./types').AthleteShare[]>;
@@ -472,7 +487,11 @@ export interface DataSource {
     athleteIds?: string[],
     emails?: string[],
   ): Promise<import('./types').TeamInviteResult>;
-  importScanScores(tryoutId: string, scores: { playerId: string; rubricKey: string; value: number }[]): Promise<void>;
+  importScanScores(
+    tryoutId: string,
+    scores: { playerId: string; rubricKey: string; value: number }[],
+    session?: string,
+  ): Promise<void>;
   getGuardianRosters(): Promise<GuardianRosterAthlete[]>;
   /**
    * Takes the guardian's own athlete off a team: the season roster entry, the

@@ -1,6 +1,7 @@
 'use client';
 'use no memo';
 
+import { useTerms, sportLabel } from '@/lib/terms';
 import { useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useForm, Controller } from 'react-hook-form';
@@ -86,6 +87,8 @@ import { HubActionTile } from '@/components/teamHub/HubActionTile';
 import { HubEventCard } from '@/components/teamHub/HubEventCard';
 import { TeamStatusTiles } from '@/components/teamHub/TeamStatusTiles';
 import { AddToCalendar } from '@/components/AddToCalendar';
+import { MonthCalendar } from '@/components/MonthCalendar';
+import { EventDiscussion } from '@/components/EventDiscussion';
 import { MapLink, MapLocationHint } from '@/components/MapLink';
 import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
@@ -133,6 +136,7 @@ function PlayerDetailRow({ label, value, colors }: { label: string; value?: stri
 }
 
 export default function TeamDetailPage() {
+  const terms = useTerms();
   const routeParams = useParams();
   const id = Array.isArray(routeParams?.id) ? routeParams.id[0] : (routeParams?.id as string);
   const colors = useThemeColors();
@@ -931,13 +935,13 @@ export default function TeamDetailPage() {
     return { counts, rows };
   };
 
-  const openEventModal = (kind: EventKind) => {
+  const openEventModal = (kind: EventKind, date = '') => {
     setEditingEventId(null);
     setEventProgress(null);
     eventForm.reset({
       type: kind,
       title: '',
-      date: '',
+      date,
       endDate: '',
       startTime: '',
       endTime: '',
@@ -1135,7 +1139,8 @@ export default function TeamDetailPage() {
       <TeamHubTabs
         tabs={[
           { key: 'schedule', label: 'Schedule', icon: 'calendar', badge: upcomingEvents.length },
-          { key: 'players', label: 'Players', icon: 'teams', badge: playerCount },
+          { key: 'calendar', label: 'Calendar', icon: 'calendar' },
+          { key: 'players', label: terms.players, icon: 'teams', badge: playerCount },
           ...(canViewEvaluations
             ? [
                 {
@@ -1338,6 +1343,10 @@ export default function TeamDetailPage() {
 
                         </div>
 
+                        {teamSeasonId ? (
+                          <EventDiscussion seasonId={teamSeasonId} eventId={ev.id} canManage currentUserId={user?.id} />
+                        ) : null}
+
                         <div className="mt-3 flex gap-2">
                           <AddToCalendar event={ev} teamName={team?.name} variant="tile" />
                           <MapLink location={ev.location} label={ev.title} variant="tile" />
@@ -1376,6 +1385,20 @@ export default function TeamDetailPage() {
           )}
         </div>
         </PlanGate>
+      ) : tab === 'calendar' ? (
+        <PlanGate feature="seasonHub" title="Season Hub" tierOverride={effectiveTier}>
+          {seasonsQuery.isLoading || seasonQuery.isLoading ? (
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              Loading calendar…
+            </p>
+          ) : (
+            <MonthCalendar
+              events={seasonQuery.data?.events ?? []}
+              teamName={team?.name}
+              onAddEvent={(date) => openEventModal('Event', date)}
+            />
+          )}
+        </PlanGate>
       ) : tab === 'players' ? (
         <div>
           {rosterSelectMode ? (
@@ -1408,7 +1431,7 @@ export default function TeamDetailPage() {
               }}
             />
             <Button
-              label="+ Add Player Manually"
+              label={`+ Add ${terms.player} Manually`}
               size="sm"
               variant="secondary"
               onClick={() => setShowAddManualPlayer(true)}
@@ -2074,7 +2097,7 @@ export default function TeamDetailPage() {
 
       <Modal
         visible={showAddManualPlayer}
-        title="Add Player Manually"
+        title={`Add ${terms.player} Manually`}
         onClose={() => {
           if (addManualPlayer.isPending || uploadTeamPlayerPhoto.isPending) return;
           setShowAddManualPlayer(false);
@@ -2086,7 +2109,7 @@ export default function TeamDetailPage() {
           onSubmit={submitManualPlayer}
           showInvite
           showFamilyContacts={canEditTeam || canAssess}
-          submitLabel="Save Player & Send Invite"
+          submitLabel={`Save ${terms.player} & Send Invite`}
         />
       </Modal>
 

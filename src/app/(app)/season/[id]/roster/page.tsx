@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms, sportLabel } from '@/lib/terms';
 import { useState } from 'react';
 import Link from 'next/link';
 
@@ -16,6 +17,7 @@ import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { useSeasonId } from '@/features/useSeasonId';
 
 export default function SeasonRosterPage() {
+  const terms = useTerms();
   const id = useSeasonId();
   const colors = useThemeColors();
   const { alert } = useAlert();
@@ -182,8 +184,8 @@ export default function SeasonRosterPage() {
         <div className="flex flex-col gap-3">
           <Input label="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           <Input label="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-          <Input label="Jersey" value={jersey} onChange={(e) => setJersey(e.target.value)} />
-          <Input label="Player email" type="email" value={playerEmail} onChange={(e) => setPlayerEmail(e.target.value)} />
+          <Input label={terms.jersey} value={jersey} onChange={(e) => setJersey(e.target.value)} />
+          <Input label={`${terms.player} email`} type="email" value={playerEmail} onChange={(e) => setPlayerEmail(e.target.value)} />
           <Input label="Guardian email" type="email" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} />
           <Button label="Add to Roster" onClick={handleAdd} loading={addPlayer.isPending} />
         </div>

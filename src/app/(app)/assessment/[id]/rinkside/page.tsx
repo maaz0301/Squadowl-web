@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -41,6 +42,7 @@ export default function RinksidePage() {
   const router = useRouter();
   const { alert } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   const saveEval = useSaveEvaluationMutation(id!);
   const rinksideIndex = useSessionStore((s) => s.rinksideIndex);
   const setRinksideIndex = useSessionStore((s) => s.setRinksideIndex);
@@ -302,7 +304,7 @@ export default function RinksidePage() {
     return (
       <>
         <PageHeader title="Rinkside Scoring" showBack backHref={href('roster')} />
-        <EmptyState title="No players" message="Add players to the roster first." />
+        <EmptyState title={terms.t('No players')} message={terms.t('Add players to the roster first.')} />
       </>
     );
   }
@@ -548,7 +550,7 @@ export default function RinksidePage() {
         style={{ borderColor: colors.border, backgroundColor: colors.bg }}
       >
         <p className="text-center text-xs" style={{ color: colors.inkFaint }}>
-          Use ← / → arrow keys to change players
+          {terms.t('Use ← / → arrow keys to change players')}
         </p>
         <div className="flex gap-2">
           <Button

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTerms } from '@/lib/terms';
 import { EmptyState } from '@/components/ui';
 
 /**
@@ -11,11 +12,12 @@ import { EmptyState } from '@/components/ui';
  * this only appears when someone arrives by URL — which is exactly how the
  * `?assessor=1` tab-hiding was got around before `viewerIsOwner` existed.
  */
-export function CoachOnlyState({ what }: { what: string }) {
+export function CoachOnlyState({ what, labels }: { what: string; labels?: import('@/data/types').CustomLabels }) {
+  const terms = useTerms(labels);
   return (
     <EmptyState
       title="Coach only"
-      message={`Only the coach who created this evaluation can ${what}. You can still score players and edit the roster.`}
+      message={terms.t(`Only the coach who created this evaluation can ${what}. You can still score players and edit the roster.`)}
     />
   );
 }

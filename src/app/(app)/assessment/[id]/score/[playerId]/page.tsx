@@ -1,6 +1,7 @@
 'use client';
 'use no memo';
 
+import { useTerms } from '@/lib/terms';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Controller, useForm } from 'react-hook-form';
@@ -48,6 +49,7 @@ export default function ScorePage() {
   const { alert } = useAlert();
   const [saving, setSaving] = useState(false);
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   const { canComplete, completing, complete } = useCompleteAssessing(tryoutQuery.data);
   // Same resolution as the layout's tab-hiding — see useIsAssessorOnly. Read
   // here rather than beside its first use below so setParams can keep the URL
@@ -359,7 +361,7 @@ export default function ScorePage() {
     return <ErrorState message="Could not load required data." onRetry={() => tryoutQuery.refetch()} />;
   }
   if (!player || !tryoutQuery.data) {
-    return <ErrorState message="Player not found." onRetry={() => tryoutQuery.refetch()} />;
+    return <ErrorState message={terms.t('Player not found.')} onRetry={() => tryoutQuery.refetch()} />;
   }
 
   const overall = weightedOverall(scores ?? {}, categories, weights);

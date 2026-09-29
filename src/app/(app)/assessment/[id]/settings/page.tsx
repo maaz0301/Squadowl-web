@@ -1,5 +1,7 @@
 'use client';
 
+import { TermsEditor } from '@/components/TermsEditor';
+import { useTerms, sportLabel } from '@/lib/terms';
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -48,6 +50,7 @@ export default function SettingsPage() {
   const { alert, confirm, toast } = useAlert();
   const welcomedRef = useRef(false);
   const tryoutQuery = useTryoutQuery(id);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   // Just the number, for the copy-assessment plan check. This used to be
@@ -86,7 +89,7 @@ export default function SettingsPage() {
   }
 
   const tryout = tryoutQuery.data;
-  if (!tryout.viewerIsOwner) return <CoachOnlyState what="change or delete this evaluation" />;
+  if (!tryout.viewerIsOwner) return <CoachOnlyState what="change or delete this evaluation" labels={tryout.settings.customLabels} />;
   // Templates were removed — every rubric is custom, so this is the whole set.
   const rubrics = tryout.settings.customRubrics ?? [];
 
@@ -223,7 +226,7 @@ export default function SettingsPage() {
     try {
       await getDataSource().sendEmail('reminder', assessor.email, {
         title: tryout.name,
-        message: `This is a reminder that you have been assigned to assess players for ${tryout.name}. Please log in to complete your evaluations.`,
+        message: terms.t(`This is a reminder that you have been assigned to assess players for ${tryout.name}. Please log in to complete your evaluations.`),
       });
       await alert('Reminder Sent', `Reminder successfully sent to ${assessor.name}.`);
     } catch (e) {
@@ -298,7 +301,7 @@ export default function SettingsPage() {
           {tryout.name}
         </span>
         <span style={{ color: colors.inkMuted }}>
-          {tryout.sport} · {tryout.eventType}
+          {sportLabel(tryout.sport, terms)} · {tryout.eventType}
         </span>
         {tryout.tryoutDate ? (
           <span style={{ color: colors.inkFaint }}>
@@ -315,6 +318,18 @@ export default function SettingsPage() {
         {tryout.cloud?.id ? <Badge label={`Code: ${tryout.cloud.id}`} variant="brand" /> : null}
         <Button label="Edit Details" variant="secondary" size="sm" onClick={openEdit} />
       </Card>
+
+      <TermsEditor
+        key={JSON.stringify(tryout.settings.customLabels ?? {})}
+        value={tryout.settings.customLabels}
+        saving={updateTryout.isPending}
+        onSave={async (customLabels) => {
+          await updateTryout.mutateAsync({
+            id: tryout.id,
+            updates: { settings: { ...tryout.settings, customLabels } },
+          });
+        }}
+      />
 
       <Card className="flex flex-col gap-3">
         <SectionLabel>Rubrics</SectionLabel>

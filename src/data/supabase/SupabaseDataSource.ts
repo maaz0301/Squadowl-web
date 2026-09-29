@@ -499,6 +499,7 @@ const VIEWER_MANAGES_TEAM = '__viewerManagesTeam';
 
 /** Private bucket holding feedback screenshots — reachable only via signed URLs. */
 const FEEDBACK_BUCKET = 'feedback-attachments';
+const EVENT_FILES_BUCKET = 'event-files';
 
 /** Long enough to open an attachment and look at it; short enough that a copied link goes stale. */
 const FEEDBACK_SIGNED_URL_TTL_SECONDS = 60 * 10;
@@ -1747,6 +1748,7 @@ export class SupabaseDataSource implements DataSource {
       email: profile.email,
       displayName: profile.display_name,
       organization: account?.type === 'organization' ? account.name : undefined,
+      customLabels: (account?.custom_labels as UserProfile['customLabels']) ?? undefined,
       avatarUrl: profile.avatar_url ?? undefined,
       planTier: (account?.plan_tier as UserProfile['planTier']) ?? 'free',
       subscriptionStatus: account?.subscription_status,
@@ -1926,6 +1928,17 @@ export class SupabaseDataSource implements DataSource {
     if (updates.avatarUrl !== undefined) profilePatch.avatar_url = updates.avatarUrl;
     if (Object.keys(profilePatch).length) {
       unwrap(await supabase.from('profiles').update(profilePatch).eq('id', userId).select().single());
+    }
+    if (updates.customLabels !== undefined) {
+      // Unwrapped, unlike the account patch below: a non-admin's update matches
+      // no row under RLS, and this one must say so rather than look saved.
+      const res = await supabase
+        .from('accounts')
+        .update({ custom_labels: updates.customLabels })
+        .eq('id', accountId)
+        .select('id');
+      if (res.error) throw new Error(res.error.message);
+      if (!res.data?.length) throw new Error('Only an account owner or admin can rename these terms.');
     }
     if (updates.planTier !== undefined || updates.organization !== undefined) {
       const accPatch: Row = {};
@@ -4635,16 +4648,117 @@ export class SupabaseDataSource implements DataSource {
   async importScanScores(
     tryoutId: string,
     scores: { playerId: string; rubricKey: string; value: number }[],
+    session = 'Scan Import',
   ): Promise<void> {
     const byPlayer: Record<string, Record<string, number>> = {};
     for (const s of scores) (byPlayer[s.playerId] ??= {})[s.rubricKey] = s.value;
     for (const [playerId, scoreMap] of Object.entries(byPlayer)) {
       await this.saveEvaluation(tryoutId, playerId, {
-        session: 'Scan Import',
+        session,
         recommendation: '',
         scores: scoreMap,
       });
     }
+  }
+
+  // ─── Event comments & files ──────────────────────────────────────────────────
+  private rowToEventComment(r: Row): import('@/data/types').EventComment {
+    return {
+      id: r.id,
+      eventId: r.event_id,
+      authorUserId: r.author_user_id,
+      authorName: r.author_name ?? '',
+      body: r.body,
+      createdAt: new Date(r.created_at).getTime(),
+    };
+  }
+
+  async listEventComments(eventId: string): Promise<import('@/data/types').EventComment[]> {
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase.from('season_event_comments').select('*').eq('event_id', eventId).order('created_at', { ascending: true }),
+    ) as Row[];
+    return rows.map((r) => this.rowToEventComment(r));
+  }
+
+  async addEventComment(eventId: string, body: string): Promise<import('@/data/types').EventComment> {
+    assertNotViewingAs();
+    const { supabase, userId } = await this.userCtx();
+    const text = body.trim();
+    if (!text) throw new Error('Write a comment first.');
+    const profile = await this.loadUserProfile(userId);
+    const row = unwrap(
+      await supabase
+        .from('season_event_comments')
+        .insert({ event_id: eventId, author_user_id: userId, author_name: profile.displayName ?? '', body: text })
+        .select()
+        .single(),
+    ) as Row;
+    return this.rowToEventComment(row);
+  }
+
+  async deleteEventComment(commentId: string): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('season_event_comments').delete().eq('id', commentId));
+  }
+
+  async listEventFiles(eventId: string): Promise<import('@/data/types').EventFile[]> {
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase.from('season_event_files').select('*').eq('event_id', eventId).order('created_at', { ascending: true }),
+    ) as Row[];
+    const { data: signed } = rows.length
+      ? await supabase.storage.from(EVENT_FILES_BUCKET).createSignedUrls(rows.map((r) => r.path), 3600)
+      : { data: [] as { path: string | null; signedUrl: string }[] };
+    const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
+    return rows.map((r) => ({
+      id: r.id,
+      eventId: r.event_id,
+      name: r.name,
+      path: r.path,
+      size: Number(r.size ?? 0),
+      contentType: r.content_type,
+      createdAt: new Date(r.created_at).getTime(),
+      url: urls.get(r.path) ?? undefined,
+    }));
+  }
+
+  async uploadEventFile(seasonId: string, eventId: string, file: File): Promise<import('@/data/types').EventFile> {
+    assertNotViewingAs();
+    const { supabase, userId } = await this.userCtx();
+    const contentType = file.type || 'application/octet-stream';
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-120) || 'file';
+    // First segment is the season id: the storage policies check staff access against it.
+    const path = `${seasonId}/${eventId}/${generateId('ef')}/${safeName}`;
+    const { error } = await supabase.storage.from(EVENT_FILES_BUCKET).upload(path, file, { contentType, upsert: false });
+    if (error) throw new Error(`Could not upload ${file.name}: ${error.message}`);
+    const inserted = await supabase
+      .from('season_event_files')
+      .insert({ event_id: eventId, name: file.name, path, size: file.size, content_type: contentType, uploaded_by: userId })
+      .select()
+      .single();
+    if (inserted.error) {
+      await supabase.storage.from(EVENT_FILES_BUCKET).remove([path]);
+      throw new Error(inserted.error.message);
+    }
+    const r = inserted.data as Row;
+    return {
+      id: r.id,
+      eventId: r.event_id,
+      name: r.name,
+      path: r.path,
+      size: Number(r.size ?? 0),
+      contentType: r.content_type,
+      createdAt: new Date(r.created_at).getTime(),
+    };
+  }
+
+  async deleteEventFile(file: import('@/data/types').EventFile): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('season_event_files').delete().eq('id', file.id));
+    await supabase.storage.from(EVENT_FILES_BUCKET).remove([file.path]);
   }
 
   // ─── Testing utilities (association/enterprise) ───────────────────────────────
@@ -9558,6 +9672,20 @@ export class SupabaseDataSource implements DataSource {
   async getCoachDirectory(): Promise<import('../types').CoachDirectoryEntry[]> {
     const { supabase } = await this.userCtx();
     const { data, error } = await supabase.rpc('list_coach_directory');
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as Row[]).map((row) => ({
+      userId: row.user_id,
+      displayName: row.display_name,
+      avatarUrl: row.avatar_url ?? undefined,
+      accountId: row.account_id,
+      accountName: row.account_name,
+      sport: row.sport ?? undefined,
+    }));
+  }
+
+  async findCoachByEmail(email: string): Promise<import('../types').CoachDirectoryEntry[]> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase.rpc('find_coach_by_email', { p_email: email.trim() });
     if (error) throw new Error(error.message);
     return ((data ?? []) as Row[]).map((row) => ({
       userId: row.user_id,
