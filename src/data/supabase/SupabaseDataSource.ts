@@ -3500,7 +3500,9 @@ export class SupabaseDataSource implements DataSource {
     if (getImpersonationTarget()) await this.ensureViewedMembers(supabase);
     const viewedIds = getImpersonationTarget() ? getViewedPersonIds() : [];
     const links = unwrap(
-      await (viewedIds.length > 1
+      // `> 0`, not `> 1`: an organization with a single staff member has one viewed id, and
+      // falling back to the founder's own id here listed nobody's assignments.
+      await (viewedIds.length > 0
         ? supabase.from('tryout_assessors').select('tryout_id').in('user_id', viewedIds)
         : supabase.from('tryout_assessors').select('tryout_id').eq('user_id', userId)
       ).not('status', 'in', '(declined,completed)'),

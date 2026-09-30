@@ -40,7 +40,7 @@ import {
 import { daysUntil } from '@/lib/accountAccess';
 import { useDebouncedValue } from '@/lib/hooks';
 import { FounderSection } from '../FounderUi';
-import { ACCESS_OPTIONS, PLAN_OPTIONS, STATUS_BADGE, formatDate, planLabel } from '../labels';
+import { PLAN_OPTIONS, STATUS_BADGE, formatDate, planLabel } from '../labels';
 import { errorMessage, formatMoney, subscriptionStatusBadge } from './format';
 
 const PAGE_SIZE = 25;
@@ -176,7 +176,7 @@ export function SubscriptionsView({ onViewPayments }: { onViewPayments: (account
                   ) : null}
                 </div>
                 <p className="truncate text-sm" style={{ color: colors.inkMuted }}>
-                  {a.ownerEmail ?? 'No owner'} · {a.accountType === 'organization' ? 'Organization' : 'Individual'}
+                  {a.ownerEmail ?? 'No owner'}
                 </p>
                 <p className="text-xs" style={{ color: colors.inkFaint }}>
                   {[
@@ -253,7 +253,7 @@ function ManageSubscriptionModal({ account, onClose }: { account: FounderSubscri
       <FounderSection title="Stripe subscriptions">
         {!account.stripeCustomerId ? (
           <p className="text-sm" style={{ color: colors.inkMuted }}>
-            Never billed through Stripe. Use manual access below to upgrade or comp this account without charging.
+            Never billed through Stripe. Use the manual plan below to upgrade or comp this account without charging.
           </p>
         ) : stripeQuery.isLoading ? (
           <Spinner />
@@ -436,17 +436,13 @@ function ManualAccessSection({ account, hasLiveStripe }: { account: FounderSubsc
   const update = useUpdateOrganizationAccessMutation();
   const refresh = useInvalidateBilling();
   const [planTier, setPlanTier] = useState(account.planTier);
-  const [access, setAccess] = useState<FounderAccessKind>(account.isComp ? 'comp' : account.trialEndsAt ? 'trial' : 'active');
-  const [trialDays, setTrialDays] = useState(String(account.trialEndsAt ? Math.max(1, daysUntil(account.trialEndsAt)) : 30));
+  // Only the plan is editable here: the account's current access setting is sent back unchanged.
+  const access: FounderAccessKind = account.isComp ? 'comp' : account.trialEndsAt ? 'trial' : 'active';
+  const trialDays = account.trialEndsAt ? Math.max(1, daysUntil(account.trialEndsAt)) : 30;
 
   const submit = async () => {
-    const days = Number(trialDays);
-    if (access === 'trial' && !(Number.isInteger(days) && days >= 1 && days <= 365)) {
-      await alert('Check Trial Length', 'Enter a whole number of days from 1 to 365.');
-      return;
-    }
     try {
-      await update.mutateAsync({ accountId: account.id, planTier, access, trialDays: access === 'trial' ? days : undefined });
+      await update.mutateAsync({ accountId: account.id, planTier, access, trialDays: access === 'trial' ? trialDays : undefined });
       refresh();
       toast(`${account.name} updated.`, 'success');
     } catch (e) {
@@ -455,7 +451,7 @@ function ManualAccessSection({ account, hasLiveStripe }: { account: FounderSubsc
   };
 
   return (
-    <FounderSection title="Manual plan & access">
+    <FounderSection title="Manual plan">
       <p className="text-sm" style={{ color: colors.inkMuted }}>
         Sets the plan in TryoutHQ without charging anything — for comps, pilots and fixing a stuck account.
       </p>
@@ -467,26 +463,9 @@ function ManualAccessSection({ account, hasLiveStripe }: { account: FounderSubsc
       ) : null}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Select label="Plan" value={planTier} onChange={(e) => setPlanTier(e.target.value)} options={PLAN_OPTIONS} />
-        <Select
-          label="Access"
-          value={access}
-          onChange={(e) => setAccess(e.target.value as FounderAccessKind)}
-          options={ACCESS_OPTIONS}
-        />
-        {access === 'trial' ? (
-          <Input
-            label="Trial days"
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={365}
-            value={trialDays}
-            onChange={(e) => setTrialDays(e.target.value)}
-          />
-        ) : null}
       </div>
       <div>
-        <Button label="Save Plan & Access" loading={update.isPending} onClick={submit} />
+        <Button label="Save Plan" loading={update.isPending} onClick={submit} />
       </div>
     </FounderSection>
   );

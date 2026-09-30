@@ -111,7 +111,6 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
           <Badge label={badge.label} variant={badge.variant} />
           <Badge label={planLabel(org.planTier)} variant="brand" />
           {org.isComp ? <Badge label="Comp" /> : null}
-          {org.accountType === 'individual' ? <Badge label="Individual" /> : null}
         </div>
         <p className="text-sm break-all" style={{ color: colors.inkMuted }}>
           Owner: {org.ownerEmail ?? 'none'}

@@ -79,12 +79,10 @@ export function EditAccessModal({ org, onClose }: { org: FounderOrganization | n
   const update = useUpdateOrganizationAccessMutation();
   // Seeded from the org on open; the modal is keyed by org id so this resets per org.
   const [planTier, setPlanTier] = useState(org?.planTier ?? 'free');
-  const [access, setAccess] = useState<FounderAccessKind>(
-    org?.isComp ? 'comp' : org?.trialEndsAt ? 'trial' : 'active',
-  );
-  const [trialDays, setTrialDays] = useState(
-    String(org?.trialEndsAt ? Math.max(1, daysUntil(org.trialEndsAt)) : 30),
-  );
+  // Access is no longer editable here: the account's current setting is sent back unchanged,
+  // so saving a plan change never alters comp, trial or normal billing.
+  const access: FounderAccessKind = org?.isComp ? 'comp' : org?.trialEndsAt ? 'trial' : 'active';
+  const trialDays = String(org?.trialEndsAt ? Math.max(1, daysUntil(org.trialEndsAt)) : 30);
 
   const submit = async () => {
     if (!org) return;
@@ -121,23 +119,6 @@ export function EditAccessModal({ org, onClose }: { org: FounderOrganization | n
           <strong>{org?.name}</strong>
         </p>
         <Select label="Plan tier" value={planTier} onChange={(e) => setPlanTier(e.target.value)} options={PLAN_OPTIONS} />
-        <Select
-          label="Access"
-          value={access}
-          onChange={(e) => setAccess(e.target.value as FounderAccessKind)}
-          options={ACCESS_OPTIONS}
-        />
-        {access === 'trial' ? (
-          <Input
-            label="Trial length (days from today)"
-            type="number"
-            min={1}
-            max={365}
-            value={trialDays}
-            onChange={(e) => setTrialDays(e.target.value)}
-            hint="When it runs out without a paid subscription, the organization is suspended automatically."
-          />
-        ) : null}
         {org?.accessStatus === 'suspended' ? (
           <p className="text-xs">This does not lift the suspension — use Reactivate for that.</p>
         ) : null}

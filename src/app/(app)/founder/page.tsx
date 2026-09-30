@@ -12,7 +12,6 @@ import {
   Input,
   LoadingState,
   PageHeader,
-  Switch,
   Tabs,
   useAlert,
 } from '@/components/ui';
@@ -38,7 +37,6 @@ const PAGE_SIZE = 25;
 const STATUS_TABS = [
   { key: 'all', label: 'All' },
   { key: 'active', label: 'Active' },
-  { key: 'trial', label: 'Trial' },
   { key: 'suspended', label: 'Suspended' },
 ];
 
@@ -82,7 +80,6 @@ function OrganizationsView() {
   const { alert, confirm, toast } = useAlert();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
-  const [includeIndividual, setIncludeIndividual] = useState(false);
   const [page, setPage] = useState(0);
   const [suspending, setSuspending] = useState<FounderOrganization | null>(null);
   const [editing, setEditing] = useState<FounderOrganization | null>(null);
@@ -93,7 +90,8 @@ function OrganizationsView() {
   const query = useFounderOrganizationsQuery({
     search: debouncedSearch || undefined,
     status: status === 'all' ? undefined : (status as AccountAccessStatus),
-    includeIndividual,
+    // Every account, organization or individual, is listed.
+    includeIndividual: true,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
   });
@@ -138,11 +136,6 @@ function OrganizationsView() {
           value={search}
           onChange={(e) => resetPage(setSearch)(e.target.value)}
           placeholder="Search by name or owner email..."
-        />
-        <Switch
-          checked={includeIndividual}
-          onChange={resetPage(setIncludeIndividual)}
-          label="Include individual coach accounts"
         />
       </div>
       <Tabs tabs={STATUS_TABS} activeKey={status} onChange={resetPage(setStatus)} className="mb-4" />
@@ -260,7 +253,6 @@ function OrganizationRow({
           <Badge label={badge.label} variant={badge.variant} />
           <Badge label={planLabel(org.planTier)} variant="brand" />
           {org.isComp ? <Badge label="Comp" /> : null}
-          {org.accountType === 'individual' ? <Badge label="Individual" /> : null}
         </div>
       </div>
 
