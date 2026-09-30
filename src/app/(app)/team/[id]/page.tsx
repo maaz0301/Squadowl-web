@@ -1025,7 +1025,14 @@ export default function TeamDetailPage() {
     async (errors) => {
       await alert(
         'Validation Error',
-        errors.date?.message || errors.title?.message || (errors.endTime ? 'The event ends before it starts. Pick a duration to set a new end.' : undefined) || errors.endDate?.message || 'Please check the required fields.',
+        [
+          errors.title?.message,
+          errors.date?.message,
+          errors.endTime ? 'The event ends before it starts. Pick a duration to set a new end.' : undefined,
+          errors.endDate?.message,
+        ]
+          .filter(Boolean)
+          .join('\n') || 'Please check the required fields.',
       );
     },
   );
@@ -1461,7 +1468,7 @@ export default function TeamDetailPage() {
                 onClick={() => setSelectedRosterIds(allRosterSelected ? new Set() : new Set(selectableRosterIds))}
               />
               <Button
-                label={`Delete Selected${selectedRosterIds.size ? ` (${selectedRosterIds.size})` : ''}`}
+                label={`Remove Selected${selectedRosterIds.size ? ` (${selectedRosterIds.size})` : ''}`}
                 variant="danger"
                 size="sm"
                 disabled={selectedRosterIds.size === 0}

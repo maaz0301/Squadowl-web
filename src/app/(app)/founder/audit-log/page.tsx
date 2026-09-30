@@ -8,6 +8,7 @@ import { FounderNotAvailable } from '@/components/founder/FounderUi';
 import { AUDIT_CATEGORIES } from '@/components/founder/labels';
 import { useFounderAuditPageQuery, useIsFounderQuery } from '@/features/founderQueries';
 import { useDebouncedValue } from '@/lib/hooks';
+import { scrollToTop } from '@/lib/scrollToTop';
 
 const PAGE_SIZE = 50;
 
@@ -114,7 +115,10 @@ function AuditLog() {
                 size="sm"
                 variant="secondary"
                 disabled={page === 0}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                onClick={() => {
+                  setPage((p) => Math.max(0, p - 1));
+                  scrollToTop();
+                }}
               />
               <span className="text-sm" style={{ color: colors.inkMuted }}>
                 Page {page + 1} of {pageCount}
@@ -124,7 +128,10 @@ function AuditLog() {
                 size="sm"
                 variant="secondary"
                 disabled={page + 1 >= pageCount}
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => {
+                  setPage((p) => p + 1);
+                  scrollToTop();
+                }}
               />
             </div>
           ) : null}
