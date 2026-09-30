@@ -500,6 +500,8 @@ const VIEWER_MANAGES_TEAM = '__viewerManagesTeam';
 /** Private bucket holding feedback screenshots — reachable only via signed URLs. */
 const FEEDBACK_BUCKET = 'feedback-attachments';
 const EVENT_FILES_BUCKET = 'event-files';
+const FEED_FILES_BUCKET = 'feed-files';
+const ORG_INFO_FILES_BUCKET = 'org-info-files';
 
 /** Long enough to open an attachment and look at it; short enough that a copied link goes stale. */
 const FEEDBACK_SIGNED_URL_TTL_SECONDS = 60 * 10;
@@ -2662,6 +2664,16 @@ export class SupabaseDataSource implements DataSource {
         .from('team_roster')
         .update({ jersey: form.jersey || null, position: form.pos || null })
         .eq('team_id', teamId)
+        .eq('athlete_id', athleteId),
+    );
+
+    // The same athlete also sits in any evaluation they were pulled into, each
+    // with its own jersey and position. Keep those in step, or the profile the
+    // coach just corrected would still read the old number there.
+    unwrap(
+      await supabase
+        .from('tryout_participants')
+        .update({ jersey: form.jersey || null, position: form.pos || null })
         .eq('athlete_id', athleteId),
     );
   }
@@ -6060,6 +6072,7 @@ export class SupabaseDataSource implements DataSource {
       type: EVENT_KIND_FROM_DB[ev.kind] ?? 'Game',
       title: ev.title,
       date: ev.event_date,
+      endDate: ev.end_date && ev.end_date !== ev.event_date ? ev.end_date : undefined,
       startTime: ev.start_time ?? undefined,
       endTime: ev.end_time ?? undefined,
       location: ev.location ?? undefined,
@@ -6719,6 +6732,7 @@ export class SupabaseDataSource implements DataSource {
           kind: EVENT_KIND_TO_DB[form.type] ?? 'game',
           title: form.title,
           event_date: form.date,
+          end_date: form.endDate || form.date,
           // Same empty-string guard as _createTryout — the schema requires
           // `date`, but both times are optional and submit as ''.
           start_time: form.startTime || null,
@@ -6860,6 +6874,11 @@ export class SupabaseDataSource implements DataSource {
     if (updates.type !== undefined) patch.kind = EVENT_KIND_TO_DB[updates.type];
     if (updates.title !== undefined) patch.title = updates.title;
     if (updates.date !== undefined) patch.event_date = updates.date;
+    // A blank end date means "same day as the start", and moving the start date
+    // has to move the end with it, or an edit could leave an end before the start.
+    if (updates.endDate !== undefined || updates.date !== undefined) {
+      patch.end_date = updates.endDate || updates.date || patch.event_date;
+    }
     if (updates.startTime !== undefined) patch.start_time = updates.startTime || null;
     if (updates.endTime !== undefined) patch.end_time = updates.endTime || null;
     if (updates.location !== undefined) patch.location = updates.location || null;
@@ -8558,6 +8577,256 @@ export class SupabaseDataSource implements DataSource {
       // bucket is orphaned but harmless, so this doesn't fail the removal.
       if (error) console.warn('Could not remove feedback attachments:', error.message);
     }
+  }
+
+  // ─── Team feed & organization info ───────────────────────────────────────────
+  private async signFeedFiles(supabase: SupabaseClient, bucket: string, rows: Row[], parentKey: string): Promise<import('@/data/types').FeedFile[]> {
+    if (!rows.length) return [];
+    const { data: signed } = await supabase.storage.from(bucket).createSignedUrls(rows.map((r) => r.path), 3600);
+    const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
+    return rows.map((r) => ({
+      id: r.id,
+      parentId: r[parentKey],
+      name: r.name,
+      path: r.path,
+      size: Number(r.size ?? 0),
+      contentType: r.content_type,
+      createdAt: new Date(r.created_at).getTime(),
+      url: urls.get(r.path) ?? undefined,
+    }));
+  }
+
+  private async uploadFeedFile(
+    bucket: string,
+    table: string,
+    parentKey: string,
+    scopeId: string,
+    parentId: string,
+    file: File,
+  ): Promise<import('@/data/types').FeedFile> {
+    assertNotViewingAs();
+    const { supabase, userId } = await this.userCtx();
+    const contentType = file.type || 'application/octet-stream';
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-120) || 'file';
+    // First segment is the season/account id: the storage policies check access against it.
+    const path = `${scopeId}/${parentId}/${generateId('ff')}/${safeName}`;
+    const { error } = await supabase.storage.from(bucket).upload(path, file, { contentType, upsert: false });
+    if (error) throw new Error(`Could not upload ${file.name}: ${error.message}`);
+    const inserted = await supabase
+      .from(table)
+      .insert({ [parentKey]: parentId, name: file.name, path, size: file.size, content_type: contentType, uploaded_by: userId })
+      .select()
+      .single();
+    if (inserted.error) {
+      // Don't leave an unreachable object behind.
+      await supabase.storage.from(bucket).remove([path]);
+      throw new Error(inserted.error.message);
+    }
+    const r = inserted.data as Row;
+    return {
+      id: r.id,
+      parentId: r[parentKey],
+      name: r.name,
+      path: r.path,
+      size: Number(r.size ?? 0),
+      contentType: r.content_type,
+      createdAt: new Date(r.created_at).getTime(),
+    };
+  }
+
+  private rowToPostComment(r: Row): import('@/data/types').PostComment {
+    return {
+      id: r.id,
+      postId: r.post_id,
+      authorUserId: r.author_user_id,
+      authorName: r.author_name ?? '',
+      body: r.body,
+      createdAt: new Date(r.created_at).getTime(),
+    };
+  }
+
+  async listSeasonPosts(seasonId: string): Promise<import('@/data/types').SeasonPost[]> {
+    const { supabase } = await this.userCtx();
+    const posts = unwrap(
+      await supabase.from('season_posts').select('*').eq('season_id', seasonId).order('created_at', { ascending: false }).limit(100),
+    ) as Row[];
+    if (!posts.length) return [];
+    const ids = posts.map((p) => p.id);
+    const [fileRows, commentRows] = await Promise.all([
+      supabase.from('season_post_files').select('*').in('post_id', ids).order('created_at', { ascending: true }),
+      supabase.from('season_post_comments').select('post_id').in('post_id', ids),
+    ]);
+    const files = await this.signFeedFiles(supabase, FEED_FILES_BUCKET, unwrap(fileRows) as Row[], 'post_id');
+    const filesByPost = new Map<string, import('@/data/types').FeedFile[]>();
+    for (const f of files) filesByPost.set(f.parentId, [...(filesByPost.get(f.parentId) ?? []), f]);
+    const counts = new Map<string, number>();
+    for (const c of unwrap(commentRows) as Row[]) counts.set(c.post_id, (counts.get(c.post_id) ?? 0) + 1);
+    return posts.map((p) => ({
+      id: p.id,
+      seasonId: p.season_id,
+      authorUserId: p.author_user_id,
+      authorName: p.author_name ?? '',
+      title: p.title ?? '',
+      body: p.body,
+      createdAt: new Date(p.created_at).getTime(),
+      files: filesByPost.get(p.id) ?? [],
+      commentCount: counts.get(p.id) ?? 0,
+    }));
+  }
+
+  async addSeasonPost(seasonId: string, input: { title: string; body: string }): Promise<import('@/data/types').SeasonPost> {
+    assertNotViewingAs();
+    const { supabase, userId } = await this.userCtx();
+    const body = input.body.trim();
+    if (!body) throw new Error('Write something to post first.');
+    const profile = await this.loadUserProfile(userId);
+    const row = unwrap(
+      await supabase
+        .from('season_posts')
+        .insert({ season_id: seasonId, author_user_id: userId, author_name: profile.displayName ?? '', title: input.title.trim(), body })
+        .select()
+        .single(),
+    ) as Row;
+    return {
+      id: row.id,
+      seasonId: row.season_id,
+      authorUserId: row.author_user_id,
+      authorName: row.author_name ?? '',
+      title: row.title ?? '',
+      body: row.body,
+      createdAt: new Date(row.created_at).getTime(),
+      files: [],
+      commentCount: 0,
+    };
+  }
+
+  async deleteSeasonPost(post: import('@/data/types').SeasonPost): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('season_posts').delete().eq('id', post.id));
+    if (post.files.length) await supabase.storage.from(FEED_FILES_BUCKET).remove(post.files.map((f) => f.path));
+  }
+
+  async uploadPostFile(seasonId: string, postId: string, file: File): Promise<import('@/data/types').FeedFile> {
+    return this.uploadFeedFile(FEED_FILES_BUCKET, 'season_post_files', 'post_id', seasonId, postId, file);
+  }
+
+  async deletePostFile(file: import('@/data/types').FeedFile): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('season_post_files').delete().eq('id', file.id));
+    await supabase.storage.from(FEED_FILES_BUCKET).remove([file.path]);
+  }
+
+  async listPostComments(postId: string): Promise<import('@/data/types').PostComment[]> {
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase.from('season_post_comments').select('*').eq('post_id', postId).order('created_at', { ascending: true }),
+    ) as Row[];
+    return rows.map((r) => this.rowToPostComment(r));
+  }
+
+  async addPostComment(postId: string, body: string): Promise<import('@/data/types').PostComment> {
+    assertNotViewingAs();
+    const { supabase, userId } = await this.userCtx();
+    const text = body.trim();
+    if (!text) throw new Error('Write a comment first.');
+    const profile = await this.loadUserProfile(userId);
+    const row = unwrap(
+      await supabase
+        .from('season_post_comments')
+        .insert({ post_id: postId, author_user_id: userId, author_name: profile.displayName ?? '', body: text })
+        .select()
+        .single(),
+    ) as Row;
+    return this.rowToPostComment(row);
+  }
+
+  async deletePostComment(commentId: string): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('season_post_comments').delete().eq('id', commentId));
+  }
+
+  private async seasonAccountId(supabase: SupabaseClient, seasonId: string): Promise<string> {
+    const row = unwrap(await supabase.from('seasons').select('account_id').eq('id', seasonId).maybeSingle()) as Row | null;
+    if (!row?.account_id) throw new Error('Team not found.');
+    return row.account_id as string;
+  }
+
+  async listOrgInfo(seasonId: string): Promise<import('@/data/types').OrgInfoItem[]> {
+    const { supabase } = await this.userCtx();
+    const accountId = await this.seasonAccountId(supabase, seasonId);
+    const items = unwrap(
+      await supabase.from('account_info_items').select('*').eq('account_id', accountId).order('created_at', { ascending: false }).limit(200),
+    ) as Row[];
+    if (!items.length) return [];
+    const fileRows = unwrap(
+      await supabase.from('account_info_files').select('*').in('info_id', items.map((i) => i.id)).order('created_at', { ascending: true }),
+    ) as Row[];
+    const files = await this.signFeedFiles(supabase, ORG_INFO_FILES_BUCKET, fileRows, 'info_id');
+    const filesByItem = new Map<string, import('@/data/types').FeedFile[]>();
+    for (const f of files) filesByItem.set(f.parentId, [...(filesByItem.get(f.parentId) ?? []), f]);
+    return items.map((i) => this.rowToOrgInfo(i, filesByItem.get(i.id) ?? []));
+  }
+
+  private rowToOrgInfo(i: Row, files: import('@/data/types').FeedFile[]): import('@/data/types').OrgInfoItem {
+    return {
+      id: i.id,
+      accountId: i.account_id,
+      category: i.category,
+      title: i.title,
+      body: i.body ?? '',
+      url: i.url ?? '',
+      authorName: i.author_name ?? '',
+      createdAt: new Date(i.created_at).getTime(),
+      files,
+    };
+  }
+
+  async addOrgInfo(seasonId: string, input: import('@/data/types').OrgInfoInput): Promise<import('@/data/types').OrgInfoItem> {
+    assertNotViewingAs();
+    const { supabase, userId } = await this.userCtx();
+    const title = input.title.trim();
+    if (!title) throw new Error('Add a title first.');
+    let url = input.url.trim();
+    if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+    const accountId = await this.seasonAccountId(supabase, seasonId);
+    const profile = await this.loadUserProfile(userId);
+    const row = unwrap(
+      await supabase
+        .from('account_info_items')
+        .insert({
+          account_id: accountId,
+          category: input.category,
+          title,
+          body: input.body.trim(),
+          url,
+          author_user_id: userId,
+          author_name: profile.displayName ?? '',
+        })
+        .select()
+        .single(),
+    ) as Row;
+    return this.rowToOrgInfo(row, []);
+  }
+
+  async deleteOrgInfo(item: import('@/data/types').OrgInfoItem): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('account_info_items').delete().eq('id', item.id));
+    if (item.files.length) await supabase.storage.from(ORG_INFO_FILES_BUCKET).remove(item.files.map((f) => f.path));
+  }
+
+  async uploadOrgInfoFile(accountId: string, infoId: string, file: File): Promise<import('@/data/types').FeedFile> {
+    return this.uploadFeedFile(ORG_INFO_FILES_BUCKET, 'account_info_files', 'info_id', accountId, infoId, file);
+  }
+
+  async deleteOrgInfoFile(file: import('@/data/types').FeedFile): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.from('account_info_files').delete().eq('id', file.id));
+    await supabase.storage.from(ORG_INFO_FILES_BUCKET).remove([file.path]);
   }
 
   // ─── Org Members ─────────────────────────────────────────────────────────────

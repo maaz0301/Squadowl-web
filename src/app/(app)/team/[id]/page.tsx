@@ -25,10 +25,12 @@ import {
   ModalFooter,
   PageHeader,
   SectionLabel,
+  Select,
   Spinner,
   TimeField,
   useAlert,
 } from '@/components/ui';
+import { DURATION_OPTIONS, durationOf, endFromDuration, formatDuration } from '@/data/timeRange';
 import {
   useTeamsQuery,
   useTryoutsQuery,
@@ -84,6 +86,7 @@ import { TeamHubTabs } from '@/components/teamHub/TeamHubTabs';
 import { HubSectionLabel } from '@/components/teamHub/HubSection';
 import { HubRowCard } from '@/components/teamHub/HubRowCard';
 import { HubActionTile } from '@/components/teamHub/HubActionTile';
+import { TeamFeed } from '@/components/teamHub/TeamFeed';
 import { HubEventCard } from '@/components/teamHub/HubEventCard';
 import { TeamStatusTiles } from '@/components/teamHub/TeamStatusTiles';
 import { AddToCalendar } from '@/components/AddToCalendar';
@@ -945,6 +948,7 @@ export default function TeamDetailPage() {
       endDate: '',
       startTime: '',
       endTime: '',
+      duration: undefined,
       location: '',
       notes: '',
       playerIds: [],
@@ -954,14 +958,21 @@ export default function TeamDetailPage() {
 
   const openEditEventModal = (ev: SeasonEvent) => {
     setEditingEventId(ev.id);
+    const duration = durationOf(ev.date, ev.startTime, ev.endDate, ev.endTime) ?? undefined;
     setEventProgress(null);
     eventForm.reset({
       type: ev.type,
       title: ev.title,
       date: ev.date,
-      endDate: ev.endDate ?? '',
+      // The end date follows from the start and duration, so it isn't
+      // pre-filled: a stale one would pin the old end when the start date or
+      // duration changes (a blank one saves as the start date).
+      endDate: duration ? '' : (ev.endDate ?? ''),
       startTime: ev.startTime ?? '',
-      endTime: ev.endTime ?? '',
+      // Derived from start + duration on save. Pre-filling it would validate a
+      // stale end against a moved start and reject the edit.
+      endTime: duration ? '' : (ev.endTime ?? ''),
+      duration,
       location: ev.location ?? '',
       notes: ev.notes ?? '',
       playerIds: [],
@@ -979,6 +990,13 @@ export default function TeamDetailPage() {
         await alert('Validation Error', msg);
         return;
       }
+      // The form asks for a duration; the event is stored with an end date and
+      // time, so turn one into the other here.
+      const { duration, ...fields } = data;
+      const end = duration && data.startTime ? endFromDuration(data.date, data.startTime, duration) : null;
+      const endTime = end ? end.endTime : data.endTime;
+      const endDate = end && end.endDate > data.date ? end.endDate : data.endDate;
+      const eventData = { ...fields, endTime, endDate };
       try {
         if (editingEventId) {
           await updateEvent.mutateAsync({
@@ -987,15 +1005,15 @@ export default function TeamDetailPage() {
               type: data.type,
               title: data.title,
               date: data.date,
-              endDate: data.endDate,
+              endDate: eventData.endDate,
               startTime: data.startTime,
-              endTime: data.endTime,
+              endTime: eventData.endTime,
               location: data.location,
               notes: data.notes,
             },
           });
         } else {
-          await addEvent.mutateAsync(data);
+          await addEvent.mutateAsync(eventData);
         }
         setShowAddEvent(false);
         setEditingEventId(null);
@@ -1007,7 +1025,7 @@ export default function TeamDetailPage() {
     async (errors) => {
       await alert(
         'Validation Error',
-        errors.date?.message || errors.title?.message || 'Please check the required fields.',
+        errors.date?.message || errors.title?.message || (errors.endTime ? 'The event ends before it starts. Pick a duration to set a new end.' : undefined) || errors.endDate?.message || 'Please check the required fields.',
       );
     },
   );
@@ -1095,6 +1113,7 @@ export default function TeamDetailPage() {
         'Are you sure you want to delete this team? This action cannot be undone and will delete all associated data.',
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'delete',
     });
     if (!ok) return;
     try {
@@ -1139,6 +1158,7 @@ export default function TeamDetailPage() {
       <TeamHubTabs
         tabs={[
           { key: 'schedule', label: 'Schedule', icon: 'calendar', badge: upcomingEvents.length },
+          { key: 'feed', label: 'Feed', icon: 'megaphone' },
           { key: 'calendar', label: 'Calendar', icon: 'calendar' },
           { key: 'players', label: terms.players, icon: 'teams', badge: playerCount },
           ...(canViewEvaluations
@@ -1212,6 +1232,7 @@ export default function TeamDetailPage() {
 
                 <div className="mt-6">
                   <HubSectionLabel icon="calendar" label="Season Hub" />
+                  {canEditTeam ? (
                   <button
                     type="button"
                     onClick={() => openEventModal('Event')}
@@ -1222,6 +1243,7 @@ export default function TeamDetailPage() {
                     <span className="flex-1">+ Event</span>
                     <Icon name="chevronRight" size={18} color="#ffffff" strokeWidth={2.5} />
                   </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -1344,12 +1366,14 @@ export default function TeamDetailPage() {
                         </div>
 
                         {teamSeasonId ? (
-                          <EventDiscussion seasonId={teamSeasonId} eventId={ev.id} canManage currentUserId={user?.id} />
+                          <EventDiscussion seasonId={teamSeasonId} eventId={ev.id} canManage={canEditTeam} currentUserId={user?.id} />
                         ) : null}
 
                         <div className="mt-3 flex gap-2">
                           <AddToCalendar event={ev} teamName={team?.name} variant="tile" />
                           <MapLink location={ev.location} label={ev.title} variant="tile" />
+                          {canEditTeam ? (
+                            <>
                           <HubActionTile icon="edit" label="Edit" onClick={() => openEditEventModal(ev)} />
                           <HubActionTile
                             icon="trash"
@@ -1358,6 +1382,8 @@ export default function TeamDetailPage() {
                             loading={deleteEvent.isPending && deleteEvent.variables === ev.id}
                             onClick={() => confirmDeleteEvent(ev.id, ev.title)}
                           />
+                            </>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -1385,6 +1411,29 @@ export default function TeamDetailPage() {
           )}
         </div>
         </PlanGate>
+      ) : tab === 'feed' ? (
+        <PlanGate feature="seasonHub" title="Season Hub" tierOverride={effectiveTier}>
+          {seasonsQuery.isLoading || seasonQuery.isLoading ? (
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              Loading feed…
+            </p>
+          ) : teamSeasonId ? (
+            <TeamFeed
+              seasonId={teamSeasonId}
+              events={seasonQuery.data?.events ?? []}
+              canPost={canEditTeam}
+              // Organization info belongs to the club that owns the team, so a
+              // delegated manager (whose own role is another account's) can read it, not write it.
+              canPostOrg={canManageTeam && !team.managed}
+              currentUserId={user?.id}
+              onViewSchedule={() => setTab('schedule')}
+            />
+          ) : (
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              The feed opens once this team has a season.
+            </p>
+          )}
+        </PlanGate>
       ) : tab === 'calendar' ? (
         <PlanGate feature="seasonHub" title="Season Hub" tierOverride={effectiveTier}>
           {seasonsQuery.isLoading || seasonQuery.isLoading ? (
@@ -1395,7 +1444,7 @@ export default function TeamDetailPage() {
             <MonthCalendar
               events={seasonQuery.data?.events ?? []}
               teamName={team?.name}
-              onAddEvent={(date) => openEventModal('Event', date)}
+              onAddEvent={canEditTeam ? (date) => openEventModal('Event', date) : undefined}
             />
           )}
         </PlanGate>
@@ -2254,9 +2303,26 @@ export default function TeamDetailPage() {
             />
             <Controller
               control={eventForm.control}
-              name="endTime"
+              name="duration"
               render={({ field, fieldState }) => (
-                <TimeField label="End Time" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+                <Select
+                  label="Duration"
+                  value={field.value ? String(field.value) : ''}
+                  onChange={(e) => {
+                    field.onChange(e.target.value ? Number(e.target.value) : undefined);
+                    // The end time is derived from the duration, so a leftover one must not be validated.
+                    eventForm.setValue('endTime', '');
+                  }}
+                  error={fieldState.error?.message}
+                  disabled={!eventForm.watch('startTime')}
+                >
+                  <option value="">{eventForm.watch('startTime') ? 'Select a duration' : 'Pick a start time first'}</option>
+                  {DURATION_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {formatDuration(m)}
+                    </option>
+                  ))}
+                </Select>
               )}
             />
             <Controller

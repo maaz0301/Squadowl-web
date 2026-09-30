@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { VIEW_AS_READ_ONLY_MESSAGE, getImpersonationTarget } from '@/state/impersonationStore';
 import { Button } from './Button';
+import { Input } from './Input';
 import { Modal, ModalFooter } from './Modal';
 
 interface ConfirmOptions {
@@ -19,6 +20,11 @@ interface ConfirmOptions {
    * edit and blocked by the read-only guard below.
    */
   allowWhileViewingAs?: boolean;
+  /**
+   * When set, the confirm button stays disabled until the user types this word
+   * (case-insensitive) — for deletes that can't be undone.
+   */
+  requireText?: string;
 }
 
 interface AlertApi {
@@ -47,9 +53,11 @@ export function AlertProvider({ children }: { children: ReactNode }) {
   const colors = useThemeColors();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [toasts, setToasts] = useState<ToastState[]>([]);
+  const [typed, setTyped] = useState('');
 
   const close = useCallback(
     (value: boolean) => {
+      setTyped('');
       setDialog((d) => {
         d?.resolve(value);
         return null;
@@ -125,6 +133,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
             <Button
               label={dialog?.mode === 'confirm' ? (dialog.confirmLabel ?? 'Confirm') : 'OK'}
               variant={dialog?.destructive ? 'danger' : 'primary'}
+              disabled={!!dialog?.requireText && typed.trim().toLowerCase() !== dialog.requireText.toLowerCase()}
               onClick={() => close(true)}
             />
           </ModalFooter>
@@ -138,6 +147,18 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         <p className="whitespace-pre-wrap text-[15px] leading-relaxed" style={{ color: colors.inkMuted }}>
           {dialog?.message}
         </p>
+        {dialog?.requireText ? (
+          <div className="mt-4">
+            <Input
+              label={`Type "${dialog.requireText}" to confirm`}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+              autoCapitalize="none"
+              autoFocus
+            />
+          </div>
+        ) : null}
       </Modal>
 
       <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex flex-col gap-2">

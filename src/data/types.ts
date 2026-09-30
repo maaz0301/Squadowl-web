@@ -864,13 +864,15 @@ export const CreateEventFormSchema = z.object({
     .or(z.literal('')),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
+  /** Minutes, from the Duration picker; the form turns it into endDate/endTime on save. */
+  duration: z.number().optional(),
   location: z.string().optional(),
   notes: z.string().optional(),
   playerIds: z.array(z.string()).optional(),
 }).refine((data) => !data.endDate || data.endDate >= data.date, {
   message: 'End date must be on or after the start date',
   path: ['endDate'],
-}).refine((data) => isEndAfterStart(data.startTime, data.endTime), {
+}).refine((data) => (!!data.endDate && data.endDate > data.date) || isEndAfterStart(data.startTime, data.endTime), {
   message: END_BEFORE_START_MESSAGE,
   path: ['endTime'],
 });
@@ -1298,4 +1300,69 @@ export interface EventFile {
   contentType: string;
   createdAt: number;
   url?: string;
+}
+
+/** A file a coach attached to a feed post or an organization info item. `url` is a short-lived signed link. */
+export interface FeedFile {
+  id: string;
+  parentId: string;
+  name: string;
+  path: string;
+  size: number;
+  contentType: string;
+  createdAt: number;
+  url?: string;
+}
+
+/** A coach's update on a team's news feed. */
+export interface SeasonPost {
+  id: string;
+  seasonId: string;
+  authorUserId: string;
+  authorName: string;
+  title: string;
+  body: string;
+  createdAt: number;
+  files: FeedFile[];
+  commentCount: number;
+}
+
+/** A comment on a feed post, from staff or a guardian. */
+export interface PostComment {
+  id: string;
+  postId: string;
+  authorUserId: string;
+  authorName: string;
+  body: string;
+  createdAt: number;
+}
+
+export const ORG_INFO_CATEGORIES = ['announcement', 'testing', 'competition', 'links', 'documents'] as const;
+export type OrgInfoCategory = (typeof ORG_INFO_CATEGORIES)[number];
+export const ORG_INFO_CATEGORY_LABELS: Record<OrgInfoCategory, string> = {
+  announcement: 'Announcement',
+  testing: 'Testing Info',
+  competition: 'Competition Info',
+  links: 'Important Links',
+  documents: 'Documents',
+};
+
+/** Information an organization shares with every one of its teams. */
+export interface OrgInfoItem {
+  id: string;
+  accountId: string;
+  category: OrgInfoCategory;
+  title: string;
+  body: string;
+  url: string;
+  authorName: string;
+  createdAt: number;
+  files: FeedFile[];
+}
+
+export interface OrgInfoInput {
+  category: OrgInfoCategory;
+  title: string;
+  body: string;
+  url: string;
 }

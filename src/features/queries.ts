@@ -2811,3 +2811,130 @@ export function useDeleteEventFileMutation(eventId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: eventFilesKey(eventId) }),
   });
 }
+
+
+// ---- Team feed & organization info ----
+
+const seasonPostsKey = (seasonId: string) => ['season-posts', seasonId] as const;
+const postCommentsKey = (postId: string) => ['post-comments', postId] as const;
+const orgInfoKey = (seasonId: string) => ['org-info', seasonId] as const;
+
+type FeedUpload = File;
+
+/** The post or item itself was saved; only some of its files did not go up. */
+export class FeedUploadError extends Error {}
+
+/** Uploads each file in turn; a failure names the file but leaves what already went up. */
+async function uploadAll(files: FeedUpload[], upload: (file: FeedUpload) => Promise<unknown>) {
+  const failed: string[] = [];
+  for (const file of files) {
+    try {
+      await upload(file);
+    } catch (e) {
+      failed.push(e instanceof Error ? e.message : file.name);
+    }
+  }
+  if (failed.length) throw new FeedUploadError(`Saved, but not every file uploaded. ${failed.join(' ')} Attach them again.`);
+}
+
+export function useSeasonPostsQuery(seasonId: string | undefined) {
+  return useQuery({
+    queryKey: seasonPostsKey(seasonId ?? ''),
+    queryFn: () => getDataSource().listSeasonPosts(seasonId!),
+    enabled: !!seasonId,
+  });
+}
+
+export function useCreateSeasonPostMutation(seasonId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { title: string; body: string; files: FeedUpload[] }) => {
+      const post = await getDataSource().addSeasonPost(seasonId, { title: input.title, body: input.body });
+      await uploadAll(input.files, (f) => getDataSource().uploadPostFile(seasonId, post.id, f));
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: seasonPostsKey(seasonId) }),
+  });
+}
+
+export function useDeleteSeasonPostMutation(seasonId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (post: import('@/data/types').SeasonPost) => getDataSource().deleteSeasonPost(post),
+    onSuccess: () => qc.invalidateQueries({ queryKey: seasonPostsKey(seasonId) }),
+  });
+}
+
+export function useDeletePostFileMutation(seasonId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: import('@/data/types').FeedFile) => getDataSource().deletePostFile(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: seasonPostsKey(seasonId) }),
+  });
+}
+
+export function usePostCommentsQuery(postId: string | undefined, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: postCommentsKey(postId ?? ''),
+    queryFn: () => getDataSource().listPostComments(postId!),
+    enabled: !!postId && options?.enabled !== false,
+  });
+}
+
+export function useAddPostCommentMutation(seasonId: string, postId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) => getDataSource().addPostComment(postId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: postCommentsKey(postId) });
+      qc.invalidateQueries({ queryKey: seasonPostsKey(seasonId) });
+    },
+  });
+}
+
+export function useDeletePostCommentMutation(seasonId: string, postId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (commentId: string) => getDataSource().deletePostComment(commentId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: postCommentsKey(postId) });
+      qc.invalidateQueries({ queryKey: seasonPostsKey(seasonId) });
+    },
+  });
+}
+
+export function useOrgInfoQuery(seasonId: string | undefined) {
+  return useQuery({
+    queryKey: orgInfoKey(seasonId ?? ''),
+    queryFn: () => getDataSource().listOrgInfo(seasonId!),
+    enabled: !!seasonId,
+  });
+}
+
+export function useCreateOrgInfoMutation(seasonId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: import('@/data/types').OrgInfoInput & { files: FeedUpload[] }) => {
+      const { files, ...fields } = input;
+      const item = await getDataSource().addOrgInfo(seasonId, fields);
+      await uploadAll(files, (f) => getDataSource().uploadOrgInfoFile(item.accountId, item.id, f));
+    },
+    // Org info is shared by every team of the account, so refresh all of them.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['org-info'] }),
+  });
+}
+
+export function useDeleteOrgInfoMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (item: import('@/data/types').OrgInfoItem) => getDataSource().deleteOrgInfo(item),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-info'] }),
+  });
+}
+
+export function useDeleteOrgInfoFileMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: import('@/data/types').FeedFile) => getDataSource().deleteOrgInfoFile(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-info'] }),
+  });
+}

@@ -115,6 +115,7 @@ export default function TeamsPage() {
       message: `Are you sure you want to delete "${name}"? This action cannot be undone.`,
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'delete',
     });
     if (!ok) return;
     setBusyId(id);

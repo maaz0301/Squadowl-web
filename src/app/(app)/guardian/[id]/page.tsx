@@ -17,6 +17,7 @@ import type { GuardianRosterAthlete, SeasonEvent } from '@/data/types';
 import { ChatUnreadBadge } from '@/components/ChatUnreadBadge';
 import { AddToCalendar } from '@/components/AddToCalendar';
 import { EventDiscussion } from '@/components/EventDiscussion';
+import { TeamFeed } from '@/components/teamHub/TeamFeed';
 import { useUser } from '@/state/authStore';
 import { MapLink } from '@/components/MapLink';
 
@@ -200,6 +201,7 @@ export default function GuardianPortalPage() {
   const searchParams = useSearchParams();
   const colors = useThemeColors();
   const { alert } = useAlert();
+  const user = useUser();
   const [tab, setTab] = useState('overview');
 
   const guardianQuery = useGuardianRostersQuery();
@@ -296,6 +298,7 @@ export default function GuardianPortalPage() {
         tabs={[
           { key: 'overview', label: 'Overview' },
           { key: 'schedule', label: 'Schedule', badge: allEvents.length || undefined },
+          { key: 'feed', label: 'News' },
           { key: 'chat', label: 'Chat', badge: chatUnread || undefined },
           { key: 'info', label: 'Info' },
         ]}
@@ -344,6 +347,28 @@ export default function GuardianPortalPage() {
           <div>
             {allEvents.map((event) => (
               <EventCard key={event.id} item={event} playerId={playerId} colors={colors} />
+            ))}
+          </div>
+        )
+      ) : tab === 'feed' ? (
+        athlete.seasons.length === 0 ? (
+          <EmptyState title="No teams yet" message="News from a team appears here once this athlete is on its roster." />
+        ) : (
+          <div className="space-y-8">
+            {athlete.seasons.map((season) => (
+              <div key={season.id}>
+                {athlete.seasons.length > 1 ? (
+                  <h2 className="mb-3 text-lg font-bold" style={{ color: colors.ink }}>{season.teamName}</h2>
+                ) : null}
+                <TeamFeed
+                  seasonId={season.id}
+                  events={season.events ?? []}
+                  canPost={false}
+                  canPostOrg={false}
+                  currentUserId={user?.id}
+                  onViewSchedule={() => setTab('schedule')}
+                />
+              </div>
             ))}
           </div>
         )
