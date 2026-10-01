@@ -209,6 +209,13 @@ export default function GuardianPortalPage() {
   // navigate away and back for the cache to refresh.
   useGuardianRealtimeSync();
 
+  // The athlete can leave this list while the page is open (the guardian just left their only
+  // team, or deleted them). Go back to the dashboard instead of stranding them on a dead end.
+  const athleteGone = guardianQuery.isSuccess && !guardianQuery.data?.some((a) => a.id === playerId);
+  useEffect(() => {
+    if (athleteGone) router.replace('/dashboard');
+  }, [athleteGone, router]);
+
   // Stripe redirects back here after a team-fee checkout — the webhook that
   // flips fee_status to 'paid' can lag a moment behind, so refetch a few
   // times instead of trusting the very first response back.
