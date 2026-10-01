@@ -24,6 +24,7 @@ const ROLE_TABS = [
   { key: 'all', label: 'All' },
   { key: 'coach', label: 'Coach' },
   { key: 'guardian', label: 'Guardian' },
+  { key: 'none', label: 'No organization' },
 ];
 
 /** Founder console — founder@tryout.ca only. Same double-gated pattern as /founder (see that page). */
@@ -147,7 +148,7 @@ function UsersView() {
 
   return (
     <>
-      <PageHeader title="User Management" subtitle="Search, roles and account access across every organization" />
+      <PageHeader title="User Management" subtitle="People who belong to an organization. Logins with no organization are under the No organization tab." />
       <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <Input
           containerClassName="w-full md:max-w-sm"
