@@ -24,7 +24,7 @@ const ROLE_TABS = [
   { key: 'all', label: 'All' },
   { key: 'coach', label: 'Coach' },
   { key: 'guardian', label: 'Guardian' },
-  { key: 'none', label: 'No organization' },
+  { key: 'none', label: 'Not signed in yet' },
 ];
 
 /** Founder console — founder@tryout.ca only. Same double-gated pattern as /founder (see that page). */
@@ -148,7 +148,7 @@ function UsersView() {
 
   return (
     <>
-      <PageHeader title="User Management" subtitle="People who belong to an organization. Logins with no organization are under the No organization tab." />
+      <PageHeader title="User Management" subtitle="People who belong to an organization. Parents who were added by a coach but have not signed in yet are under Not signed in yet." />
       <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <Input
           containerClassName="w-full md:max-w-sm"
@@ -173,6 +173,12 @@ function UsersView() {
         />
       ) : (
         <>
+          {role === 'none' ? (
+            <p className="mb-3 text-sm" style={{ color: colors.inkMuted }}>
+              These are parent and guardian logins created automatically when a coach adds a player with a guardian email.
+              They have not signed in yet, so they do not belong to any organization.
+            </p>
+          ) : null}
           <p className="mb-2 text-xs" style={{ color: colors.inkMuted }}>
             {total} {total === 1 ? 'user' : 'users'}
             {query.isFetching ? ' · updating…' : ''}
