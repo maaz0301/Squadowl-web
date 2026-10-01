@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useTheme } from '@/theme/ThemeProvider';
 import { EmptyState, ErrorState, Spinner } from '@/components/ui';
+import { useAlert } from '@/components/ui/Alert';
 import {
   useDeleteTeamMessageMutation,
   useSendTeamMessageMutation,
@@ -184,6 +185,7 @@ export function TeamChat({
   heightClassName?: string;
 }) {
   const { colors, isDark } = useTheme();
+  const { alert: alertDialog, confirm: confirmDialog } = useAlert();
   const currentUserId = useAuthStore((s) => s.session?.user?.id);
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -247,11 +249,18 @@ export function TeamChat({
   };
 
   const confirmDelete = async (message: TeamMessage) => {
-    if (!confirm('Remove this message for everyone on the team?')) return;
+    const ok = await confirmDialog({
+      title: 'Delete Message',
+      message: 'Remove this message for everyone on the team?',
+      confirmLabel: 'Delete',
+      destructive: true,
+      requireText: 'DELETE',
+    });
+    if (!ok) return;
     try {
       await deleteMessage.mutateAsync(message.id);
     } catch (e) {
-      alert(`Error\n\n${(e as Error)?.message || 'Could not delete this message.'}`);
+      await alertDialog('Error', (e as Error)?.message || 'Could not delete this message.');
     }
   };
 

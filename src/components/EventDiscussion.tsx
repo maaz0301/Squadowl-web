@@ -77,7 +77,7 @@ export function EventDiscussion({
   };
 
   const remove = async (title: string, run: () => Promise<unknown>, failTitle: string) => {
-    if (!(await confirm({ title, confirmLabel: 'Remove', destructive: true }))) return;
+    if (!(await confirm({ title, confirmLabel: 'Remove', destructive: true, requireText: 'DELETE' }))) return;
     try {
       await run();
     } catch (e) {

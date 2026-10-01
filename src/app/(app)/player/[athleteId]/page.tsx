@@ -87,6 +87,7 @@ export default function PlayerProfilePage() {
       message: `Remove ${name} from this athlete's family contacts?`,
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {

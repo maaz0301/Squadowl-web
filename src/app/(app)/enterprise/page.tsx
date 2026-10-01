@@ -115,6 +115,7 @@ export default function EnterprisePage() {
       message,
       confirmLabel: isAssessor ? 'Remove Assessor' : isGuardian ? 'Revoke' : 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {

@@ -43,6 +43,7 @@ export default function SeasonSettingsPage() {
       message: 'Are you sure you want to delete this season? This action cannot be undone and will delete all associated data.',
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     await deleteSeason.mutateAsync(id);

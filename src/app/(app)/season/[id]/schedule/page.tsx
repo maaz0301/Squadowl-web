@@ -219,7 +219,7 @@ export default function SeasonSchedulePage() {
   };
 
   const confirmDeleteEvent = async (eventId: string, label: string) => {
-    const ok = await confirm({ title: 'Delete Event', message: `Delete "${label}"?`, confirmLabel: 'Delete', destructive: true });
+    const ok = await confirm({ title: 'Delete Event', message: `Delete "${label}"?`, confirmLabel: 'Delete', destructive: true, requireText: 'DELETE' });
     if (ok) deleteEvent.mutate(eventId);
   };
 

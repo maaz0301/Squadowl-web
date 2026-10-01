@@ -403,6 +403,7 @@ export default function RosterPage() {
                     message: terms.t(`${ids.length} player${ids.length === 1 ? '' : 's'} will be permanently removed from this roster.`),
                     confirmLabel: 'Delete',
                     destructive: true,
+                    requireText: 'DELETE',
                   });
                   if (!ok) return;
                   setDeleteProgress({ done: 0, total: ids.length });

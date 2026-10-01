@@ -67,6 +67,7 @@ export function LetterTemplatesManager() {
       message: `"${t.name}" will be removed. Letters already sent from it stay on the players' cards.`,
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {

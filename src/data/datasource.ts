@@ -515,6 +515,11 @@ export interface DataSource {
    * stick — anything less and the team's next event save re-enrolls them.
    */
   leaveSeason(seasonRosterId: string): Promise<void>;
+  /**
+   * Deletes an athlete from the guardian's "My Athletes" list (guardian_remove_athlete
+   * RPC). Only the guardian's link is cleared; the coach's roster and records stay.
+   */
+  removeGuardianAthlete(athleteId: string): Promise<void>;
 
   // Extra family contacts a guardian keeps on their own athlete's profile
   // (see athlete_family_contacts migration for the access model).

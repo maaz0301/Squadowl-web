@@ -120,6 +120,61 @@ export function parseMeasureValue(
   return { value: n, error: null };
 }
 
+export interface ImportSetupIssue {
+  /** `error` blocks the import; `warning` is worth a look but does not. */
+  level: 'error' | 'warning';
+  message: string;
+}
+
+/**
+ * Checks the column choices before any row is read: a player column, no column
+ * used twice, headings that are present and unambiguous, and at least one measure.
+ */
+export function validateImportSetup(
+  headers: string[],
+  identity: IdentityMapping,
+  mapping: MeasureMapping,
+  measures: CustomRubric[],
+): ImportSetupIssue[] {
+  const issues: ImportSetupIssue[] = [];
+  const name = (i: number) => (headers[i]?.trim() ? `"${headers[i].trim()}"` : `Column ${i + 1}`);
+
+  if (identity.first == null && identity.last == null && identity.fullName == null && identity.jersey == null) {
+    issues.push({ level: 'error', message: 'Choose the column that identifies each player (name or jersey number).' });
+  }
+
+  const used = new Map<number, number>();
+  const picked: number[] = [
+    ...Object.values(identity).filter((v): v is number => v != null),
+    ...measures.map((m) => mapping[m.key]).filter((v): v is number => v != null),
+  ];
+  for (const i of picked) used.set(i, (used.get(i) ?? 0) + 1);
+  for (const [i, count] of used) {
+    if (count > 1) issues.push({ level: 'error', message: `${name(i)} is assigned more than once.` });
+    if (!headers[i]?.trim()) issues.push({ level: 'warning', message: `${name(i)} has no heading.` });
+  }
+
+  const byHeading = new Map<string, number[]>();
+  for (const i of used.keys()) {
+    const key = normalizeHeader(headers[i] ?? '');
+    if (key) byHeading.set(key, [...(byHeading.get(key) ?? []), i]);
+  }
+  for (const group of byHeading.values()) {
+    if (group.length > 1) {
+      issues.push({ level: 'warning', message: `Columns ${group.map((i) => i + 1).join(' and ')} share the heading ${name(group[0])}.` });
+    }
+  }
+
+  const mapped = measures.filter((m) => mapping[m.key] != null);
+  if (mapped.length === 0) {
+    issues.push({ level: 'error', message: 'Assign a column to at least one measure.' });
+  } else if (mapped.length < measures.length) {
+    const missing = measures.filter((m) => mapping[m.key] == null).map((m) => m.label);
+    issues.push({ level: 'warning', message: `Not in this file: ${missing.join(', ')}.` });
+  }
+  return issues;
+}
+
 export interface ScoreImportRow {
   line: number;
   /** The name/jersey as written in the file, for the preview. */

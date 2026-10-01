@@ -284,6 +284,7 @@ export default function SettingsPage() {
         'Are you sure you want to delete this evaluation? This action cannot be undone and will delete all associated data.',
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {

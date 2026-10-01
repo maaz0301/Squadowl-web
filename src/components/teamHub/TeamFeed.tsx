@@ -172,7 +172,7 @@ function PostComments({
   };
 
   const removeComment = async (id: string) => {
-    if (!(await confirm({ title: 'Remove this comment?', confirmLabel: 'Remove', destructive: true }))) return;
+    if (!(await confirm({ title: 'Remove this comment?', confirmLabel: 'Remove', destructive: true, requireText: 'DELETE' }))) return;
     try {
       await remove.mutateAsync(id);
     } catch (e) {
@@ -245,7 +245,7 @@ function PostCard({
   const deleteFile = useDeletePostFileMutation(seasonId);
 
   const removePost = async () => {
-    if (!(await confirm({ title: 'Delete Post', message: 'Delete this post, its comments and files?', confirmLabel: 'Delete', destructive: true }))) return;
+    if (!(await confirm({ title: 'Delete Post', message: 'Delete this post, its comments and files?', confirmLabel: 'Delete', destructive: true, requireText: 'DELETE' }))) return;
     try {
       await deletePost.mutateAsync(post);
     } catch (e) {
@@ -254,7 +254,7 @@ function PostCard({
   };
 
   const removeFile = async (f: FeedFile) => {
-    if (!(await confirm({ title: `Remove ${f.name}?`, confirmLabel: 'Remove', destructive: true }))) return;
+    if (!(await confirm({ title: `Remove ${f.name}?`, confirmLabel: 'Remove', destructive: true, requireText: 'DELETE' }))) return;
     try {
       await deleteFile.mutateAsync(f);
     } catch (e) {
@@ -410,7 +410,7 @@ function OrgInfoCard({ item, canPost }: { item: OrgInfoItem; canPost: boolean })
   const deleteFile = useDeleteOrgInfoFileMutation();
 
   const removeItem = async () => {
-    if (!(await confirm({ title: 'Delete', message: `Delete "${item.title}" for every team?`, confirmLabel: 'Delete', destructive: true }))) return;
+    if (!(await confirm({ title: 'Delete', message: `Delete "${item.title}" for every team?`, confirmLabel: 'Delete', destructive: true, requireText: 'DELETE' }))) return;
     try {
       await deleteItem.mutateAsync(item);
     } catch (e) {
@@ -419,7 +419,7 @@ function OrgInfoCard({ item, canPost }: { item: OrgInfoItem; canPost: boolean })
   };
 
   const removeFile = async (f: FeedFile) => {
-    if (!(await confirm({ title: `Remove ${f.name}?`, confirmLabel: 'Remove', destructive: true }))) return;
+    if (!(await confirm({ title: `Remove ${f.name}?`, confirmLabel: 'Remove', destructive: true, requireText: 'DELETE' }))) return;
     try {
       await deleteFile.mutateAsync(f);
     } catch (e) {

@@ -89,6 +89,7 @@ export function TeamManagersCard({ teamId, teamName }: Props) {
         : `Are you sure you want to remove ${who} from "${teamName}"?`,
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
 
