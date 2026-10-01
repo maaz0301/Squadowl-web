@@ -959,12 +959,20 @@ export class SupabaseDataSource implements DataSource {
       const nextUserId = session?.user?.id ?? null;
       // A token refresh for the same person changes nothing worth dropping.
       if (event !== 'SIGNED_OUT' && nextUserId === this.userId) return;
+      const previousUserId = this.userId;
       this.userId = nextUserId;
       this.profileCache = {};
       this.resetAccountCaches();
       // "View as" belongs to the founder's own session; it must not survive
-      // signing out or someone else signing in on this tab.
-      if (getImpersonationTarget()) useImpersonationStore.getState().setTarget(null);
+      // signing out or someone else signing in on this tab. The first sign-in event after a
+      // page load (no previous user in memory) is the same founder coming back, so a reload
+      // keeps the view and its audit trail intact instead of silently ending it unlogged.
+      const founderId = getImpersonationTarget()?.founderId;
+      const userChanged =
+        event === 'SIGNED_OUT' ||
+        (previousUserId !== null && previousUserId !== nextUserId) ||
+        (founderId !== undefined && nextUserId !== null && founderId !== nextUserId);
+      if (userChanged && getImpersonationTarget()) useImpersonationStore.getState().setTarget(null);
     });
   }
 

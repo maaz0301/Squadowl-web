@@ -133,8 +133,8 @@ const EMPTY_FORM = {
   name: '',
   ownerEmail: '',
   ownerName: '',
-  planTier: 'club',
-  access: 'comp' as FounderAccessKind,
+  planTier: 'free',
+  access: 'active' as FounderAccessKind,
   trialDays: '30',
   sendInvite: true,
 };

@@ -17,6 +17,8 @@ export interface ImpersonationTarget {
   accountId: string;
   accountName: string;
   startedAt: number;
+  /** The founder who opened this view; it is dropped if anyone else is signed in on this tab. */
+  founderId?: string;
   /**
    * Set for "view as user": the app loads as this one person — their own
    * memberships, role, delegated (managed) teams, assessor assignments and
@@ -100,4 +102,4 @@ export function getViewedPersonIds(): string[] {
   return [...ids];
 }
 
-export const VIEW_AS_READ_ONLY_MESSAGE = 'Viewing as is read-only. Exit "view as" to make changes.';
+export const VIEW_AS_READ_ONLY_MESSAGE = 'This view is read-only. Exit "view as" to make changes.';

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:founder": "vitest run --config vitest.founder.config.mts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.5.7",

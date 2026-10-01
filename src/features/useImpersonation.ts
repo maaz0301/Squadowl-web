@@ -51,6 +51,7 @@ export function useImpersonation() {
           accountId,
           accountName,
           startedAt: Date.now(),
+          founderId: useAuthStore.getState().session?.user?.id,
           user,
           owner: people?.owner,
           memberIds: people?.memberIds,
