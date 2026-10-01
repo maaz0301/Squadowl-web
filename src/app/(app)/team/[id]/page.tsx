@@ -1811,6 +1811,14 @@ export default function TeamDetailPage() {
                     variant="ghost"
                     loading={clearTest.isPending}
                     onClick={async () => {
+                      const ok = await confirm({
+                                title: 'Clear Dummy Data',
+                                message: "Remove all generated dummy players and their scores? This can't be undone.",
+                                confirmLabel: 'Clear',
+                                destructive: true,
+                                requireText: 'DELETE',
+                              });
+                              if (!ok) return;
                       try {
                         const res = await clearTest.mutateAsync();
                         await alert('Cleared', `Removed ${res.removed} generated record${res.removed === 1 ? '' : 's'}.`);

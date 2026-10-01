@@ -88,6 +88,7 @@ function Ticket({ ticket }: { ticket: SupportTicketDetail }) {
       message: `Delete this ticket and its ${messageCount} message${messageCount === 1 ? '' : 's'}? This can't be undone.`,
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {

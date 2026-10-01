@@ -42,7 +42,7 @@ type Form = z.infer<typeof FormSchema>;
 export default function NewTeamPage() {
   const router = useRouter();
   const colors = useThemeColors();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const createTeam = useCreateTeamMutation();
   const createSeason = useCreateSeasonMutation();
   const teamCount = useTeamCountQuery();
@@ -250,6 +250,14 @@ export default function NewTeamPage() {
   };
 
   const runClearDummy = async () => {
+    const ok = await confirm({
+      title: 'Clear Dummy Teams',
+      message: "Remove all generated dummy teams and their evaluations? This can't be undone.",
+      confirmLabel: 'Clear',
+      destructive: true,
+      requireText: 'DELETE',
+    });
+    if (!ok) return;
     try {
       const res = await clearDummy.mutateAsync();
       await alert(

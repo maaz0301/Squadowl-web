@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Modal, ModalFooter, Textarea, useAlert } from '@/components/ui';
+import { Button, Input, Modal, ModalFooter, Textarea, useAlert } from '@/components/ui';
 import type { FounderUser } from '@/data/founder/types';
 import { useSetFounderUserRoleMutation } from '@/features/founderQueries';
 import { USER_ROLE_OPTIONS } from './labels';
@@ -64,6 +64,7 @@ export function UserReasonModal({
   message,
   confirmLabel,
   loading,
+  requireText,
   onClose,
   onConfirm,
 }: {
@@ -72,13 +73,19 @@ export function UserReasonModal({
   message: string;
   confirmLabel: string;
   loading: boolean;
+  /** When set, the confirm button stays disabled until this exact text is typed. */
+  requireText?: string;
+
   onClose: () => void;
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
+  const [typed, setTyped] = useState('');
+  const blocked = !!requireText && typed.trim() !== requireText;
 
   const close = () => {
     setReason('');
+    setTyped('');
     onClose();
   };
 
@@ -92,7 +99,7 @@ export function UserReasonModal({
       footer={
         <ModalFooter>
           <Button label="Cancel" variant="ghost" onClick={close} />
-          <Button label={confirmLabel} variant="danger" loading={loading} onClick={() => onConfirm(reason)} />
+          <Button label={confirmLabel} variant="danger" loading={loading} disabled={blocked} onClick={() => onConfirm(reason)} />
         </ModalFooter>
       }
     >
@@ -105,6 +112,15 @@ export function UserReasonModal({
         rows={3}
         maxLength={500}
       />
+      {requireText ? (
+        <Input
+          label={`Type ${requireText} to confirm`}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder={requireText}
+          autoComplete="off"
+        />
+      ) : null}
     </Modal>
   );
 }

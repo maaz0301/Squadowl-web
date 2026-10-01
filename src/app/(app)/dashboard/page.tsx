@@ -51,7 +51,7 @@ export default function DashboardPage() {
   const terms = useTerms();
   const colors = useThemeColors();
   const router = useRouter();
-  const { alert: showAlert, toast } = useAlert();
+  const { alert: showAlert, confirm: confirmDialog, toast } = useAlert();
   const user = useUser();
   const setCurrentTryout = useSessionStore((s) => s.setCurrentTryout);
   const setActiveAssessor = useSessionStore((s) => s.setActiveAssessor);
@@ -604,18 +604,26 @@ export default function DashboardPage() {
           <Button
             label="Delete Permanently"
             variant="danger"
-            onClick={() => {
-              if (actionTryout) {
-                setBusyId(actionTryout.id);
-                const { id, name } = actionTryout;
-                deleteTryout.mutate(id, {
-                  onSettled: () => setBusyId(null),
-                  onSuccess: () => toast(`"${name}" deleted`, 'success'),
-                  onError: (e) =>
-                    showAlert('Error', e instanceof Error ? e.message : 'Could not delete this evaluation.'),
-                });
-              }
+            onClick={async () => {
+              const target = actionTryout;
               setActionTryout(null);
+              if (!target) return;
+              const ok = await confirmDialog({
+                title: 'Delete Evaluation',
+                message: `Permanently delete "${target.name}" and all of its scores? This can't be undone.`,
+                confirmLabel: 'Delete',
+                destructive: true,
+                requireText: 'DELETE',
+              });
+              if (!ok) return;
+              setBusyId(target.id);
+              const { id, name } = target;
+              deleteTryout.mutate(id, {
+                onSettled: () => setBusyId(null),
+                onSuccess: () => toast(`"${name}" deleted`, 'success'),
+                onError: (e) =>
+                  showAlert('Error', e instanceof Error ? e.message : 'Could not delete this evaluation.'),
+              });
             }}
           />
         </div>

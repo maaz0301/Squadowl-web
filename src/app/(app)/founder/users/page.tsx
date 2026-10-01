@@ -247,6 +247,7 @@ function UsersView() {
         title="Delete User"
         message={`Permanently delete the sign-in for ${deleting?.email ?? deleting?.displayName ?? 'this user'}. This cannot be undone. Their organizations, teams and evaluations are not deleted.`}
         confirmLabel="Delete"
+        requireText="DELETE"
         loading={deleteUser.isPending}
         onClose={() => setDeleting(null)}
         onConfirm={confirmDelete}

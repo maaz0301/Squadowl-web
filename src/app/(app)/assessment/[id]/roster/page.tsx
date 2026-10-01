@@ -345,6 +345,14 @@ export default function RosterPage() {
             label: 'Clear Dummy Data',
             desc: terms.t('Remove all generated dummy players and evaluation scores.'),
             go: async () => {
+              const ok = await confirm({
+                title: 'Clear Dummy Data',
+                message: "Remove all generated dummy players and their scores? This can't be undone.",
+                confirmLabel: 'Clear',
+                destructive: true,
+                requireText: 'DELETE',
+              });
+              if (!ok) return;
               try {
                 const res = await clearTest.mutateAsync();
                 await alert(

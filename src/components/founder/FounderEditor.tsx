@@ -191,6 +191,8 @@ export function useFounderAction() {
           message: opts.confirmMessage ?? '',
           confirmLabel: opts.confirmLabel,
           destructive: opts.destructive,
+          // Deleting or removing always makes the founder type DELETE, like the rest of the app.
+          requireText: opts.destructive ? 'DELETE' : undefined,
         });
         if (!ok) return false;
       }

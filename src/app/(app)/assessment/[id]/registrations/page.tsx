@@ -51,7 +51,7 @@ export default function RegistrationsPage() {
   const href = useAssessmentHref();
   const colors = useThemeColors();
   const router = useRouter();
-  const { alert, toast } = useAlert();
+  const { alert, confirm, toast } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
@@ -226,6 +226,14 @@ export default function RegistrationsPage() {
   };
 
   const clearTestData = async () => {
+    const ok = await confirm({
+      title: 'Clear Dummy Data',
+      message: "Remove all generated dummy players and their scores? This can't be undone.",
+      confirmLabel: 'Clear',
+      destructive: true,
+      requireText: 'DELETE',
+    });
+    if (!ok) return;
     try {
       const res = await clearTest.mutateAsync();
       await alert('Cleared', `Removed ${res.removed} generated record${res.removed === 1 ? '' : 's'}.`);
