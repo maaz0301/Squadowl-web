@@ -22,7 +22,7 @@ interface ConfirmOptions {
   allowWhileViewingAs?: boolean;
   /**
    * When set, the confirm button stays disabled until the user types this word
-   * exactly as written (case-sensitive) — for deletes that can't be undone.
+   * exactly as written (case-sensitive), for deletes that can't be undone.
    */
   requireText?: string;
 }
