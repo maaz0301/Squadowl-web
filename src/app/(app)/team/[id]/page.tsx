@@ -374,26 +374,22 @@ export default function TeamDetailPage() {
   const setAvailability = useSetAvailabilityMutation(teamSeasonId ?? '');
   const addAthletesToEvents = useAddAthletesToEventsMutation(teamSeasonId ?? '');
 
-  // Offered right after a player lands on the roster, when the team already
-  // has upcoming events — adding to team_roster/season_roster never touches
-  // event_availability, so without this a player added after an event exists
-  // stays invisible on that event's RSVP list and invite emails forever (see
-  // addAthletesToEvents on DataSource). null = no prompt open; a non-null
-  // (always non-empty) array is the athlete ids waiting on a yes/no.
-  const [pendingEventInviteAthleteIds, setPendingEventInviteAthleteIds] = useState<string[] | null>(null);
-  const [selectedInviteEventIds, setSelectedInviteEventIds] = useState<Set<string>>(new Set());
+  // A player added after events exist is connected to the schedule automatically:
+  // adding to team_roster/season_roster alone never writes event_availability, so
+  // they would stay off every RSVP list and invite email (see addAthletesToEvents
+  // on DataSource). The database trigger does the same for new roster rows; this
+  // call is idempotent (already-invited pairs are left alone).
   // The import modal shows its own per-row summary before closing, so its
-  // athlete ids are held here and the prompt is offered on close instead of
-  // the moment the import call resolves — see the ImportPlayersModal wiring
-  // below. Accumulates across "Import more players" rounds within one open
-  // of the modal, since onClose (and this prompt) only fires once at the end.
+  // athlete ids are held here and connected on close. Accumulates across
+  // "Import more players" rounds within one open of the modal.
   const [pendingImportAthleteIds, setPendingImportAthleteIds] = useState<string[]>([]);
 
   const offerAddToUpcomingEvents = (athleteIds: string[]) => {
     const ids = athleteIds.filter(Boolean);
-    if (ids.length === 0 || upcomingEvents.length === 0) return;
-    setSelectedInviteEventIds(new Set(upcomingEvents.map((e) => e.id)));
-    setPendingEventInviteAthleteIds(ids);
+    if (ids.length === 0 || upcomingEvents.length === 0 || !teamSeasonId) return;
+    addAthletesToEvents
+      .mutateAsync({ eventIds: upcomingEvents.map((e) => e.id), athleteIds: ids })
+      .catch((e) => void alert('Error', e instanceof Error ? e.message : 'Could not add this player to the upcoming events.'));
   };
 
   const eventForm = useForm<CreateEventForm>({
@@ -778,6 +774,7 @@ export default function TeamDetailPage() {
       message: `Remove ${label} from ${team.name}?`,
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (ok) removeRosterPlayer.mutate(athleteId);
   };
@@ -813,6 +810,7 @@ export default function TeamDetailPage() {
       message: `${ids.length} player${ids.length === 1 ? '' : 's'} will be removed from ${team.name}.`,
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     setRemoveProgress({ done: 0, total: ids.length });
@@ -1043,6 +1041,7 @@ export default function TeamDetailPage() {
       message: `Delete "${label}"?`,
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (ok) deleteEvent.mutate(eventId);
   };
@@ -1120,7 +1119,7 @@ export default function TeamDetailPage() {
         'Are you sure you want to delete this team? This action cannot be undone and will delete all associated data.',
       confirmLabel: 'Delete',
       destructive: true,
-      requireText: 'delete',
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {
@@ -2167,86 +2166,6 @@ export default function TeamDetailPage() {
           showFamilyContacts={canEditTeam || canAssess}
           submitLabel={`Save ${terms.player} & Send Invite`}
         />
-      </Modal>
-
-      <Modal
-        visible={pendingEventInviteAthleteIds != null}
-        title={pendingEventInviteAthleteIds && pendingEventInviteAthleteIds.length > 1 ? 'Add to Upcoming Events?' : 'Add to Upcoming Event?'}
-        onClose={() => {
-          if (addAthletesToEvents.isPending) return;
-          setPendingEventInviteAthleteIds(null);
-        }}
-        footer={
-          <ModalFooter>
-            <Button
-              label={
-                selectedInviteEventIds.size === 0
-                  ? 'Select events to add to'
-                  : `Add to ${selectedInviteEventIds.size} ${selectedInviteEventIds.size === 1 ? 'event' : 'events'}`
-              }
-              disabled={selectedInviteEventIds.size === 0}
-              loading={addAthletesToEvents.isPending}
-              onClick={async () => {
-                if (!pendingEventInviteAthleteIds || !teamSeasonId) return;
-                try {
-                  await addAthletesToEvents.mutateAsync({
-                    eventIds: [...selectedInviteEventIds],
-                    athleteIds: pendingEventInviteAthleteIds,
-                  });
-                } catch (e) {
-                  await alert('Error', e instanceof Error ? e.message : 'Could not add this player to those events.');
-                  return;
-                }
-                setPendingEventInviteAthleteIds(null);
-              }}
-            />
-            <Button
-              label="Not Now"
-              variant="ghost"
-              disabled={addAthletesToEvents.isPending}
-              onClick={() => setPendingEventInviteAthleteIds(null)}
-            />
-          </ModalFooter>
-        }
-      >
-        <p className="mb-3 text-sm" style={{ color: colors.inkMuted }}>
-          {pendingEventInviteAthleteIds && pendingEventInviteAthleteIds.length > 1
-            ? `These ${pendingEventInviteAthleteIds.length} players were just added to the team, which already has ${upcomingEvents.length === 1 ? 'an upcoming event' : `${upcomingEvents.length} upcoming events`}. Add them to:`
-            : `This player was just added to the team, which already has ${upcomingEvents.length === 1 ? 'an upcoming event' : `${upcomingEvents.length} upcoming events`}. Add them to:`}
-        </p>
-        {upcomingEvents.map((ev) => {
-          const selected = selectedInviteEventIds.has(ev.id);
-          return (
-            <button
-              type="button"
-              key={ev.id}
-              onClick={() =>
-                setSelectedInviteEventIds((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(ev.id)) next.delete(ev.id);
-                  else next.add(ev.id);
-                  return next;
-                })
-              }
-              className="mb-2 flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left"
-              style={{
-                borderColor: selected ? colors.primary : colors.border,
-                backgroundColor: selected ? 'rgba(255,107,43,0.12)' : 'transparent',
-              }}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block font-bold" style={{ color: colors.ink }}>
-                  {ev.title}
-                </span>
-                <span className="mt-0.5 block text-xs" style={{ color: colors.inkMuted }}>
-                  {ev.date}
-                  {ev.startTime ? ` · ${ev.startTime}` : ''}
-                </span>
-              </span>
-              {selected ? <Badge label="Selected" variant="brand" /> : null}
-            </button>
-          );
-        })}
       </Modal>
 
       <Modal

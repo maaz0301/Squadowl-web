@@ -68,7 +68,7 @@ export default function ProfilePage() {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteText, setDeleteText] = useState('');
-  const deleteConfirmed = deleteText.trim().toLowerCase() === 'delete';
+  const deleteConfirmed = deleteText.trim() === 'DELETE';
 
   const plan = getPlanDefinition(user?.planTier ?? 'coach');
 
@@ -373,14 +373,14 @@ export default function ProfilePage() {
             This permanently deletes your account, login and profile. This cannot be undone.
           </p>
           <Input
-            label="Type delete to confirm"
+            label="Type DELETE to confirm"
             value={deleteText}
             onChange={(e) => setDeleteText(e.target.value)}
             autoComplete="off"
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            placeholder="delete"
+            placeholder="DELETE"
             disabled={deletingAccount}
             autoFocus
           />

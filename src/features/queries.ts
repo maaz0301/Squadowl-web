@@ -2260,6 +2260,16 @@ export function useLeaveSeasonMutation() {
   });
 }
 
+/** Deletes an athlete from the guardian's My Athletes list (guardian_remove_athlete RPC). */
+export function useRemoveGuardianAthleteMutation() {
+  const qc = useQueryClient();
+  const userId = useAuthStore((s) => s.session?.user?.id);
+  return useMutation({
+    mutationFn: (athleteId: string) => getDataSource().removeGuardianAthlete(athleteId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.guardianRosters(userId) }),
+  });
+}
+
 const familyContactsKey = (athleteId: string) => ['athletes', athleteId, 'familyContacts'] as const;
 
 export function useFamilyContactsQuery(athleteId: string | undefined) {

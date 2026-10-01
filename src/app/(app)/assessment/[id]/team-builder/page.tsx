@@ -474,6 +474,7 @@ export default function TeamBuilderPage() {
       message: `"${label}" will be permanently deleted.`,
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     if (selectedResultId === resultId) setSelectedResultId(null);

@@ -9737,6 +9737,14 @@ export class SupabaseDataSource implements DataSource {
     if (error) throw new Error(error.message);
   }
 
+  async removeGuardianAthlete(athleteId: string): Promise<void> {
+    // User-scoped client, like leaveSeason: a guardian has no staff tenant, and the
+    // RPC authorizes against the athlete itself.
+    const supabase = getSupabase();
+    const { error } = await supabase.rpc('guardian_remove_athlete', { p_athlete_id: athleteId });
+    if (error) throw new Error(error.message);
+  }
+
   // One statement, authorized per tryout/season instead of per leaf row — the nested
   // PostgREST embed this replaces made RLS run on every evaluation score and every
   // RSVP row, which blew the statement timeout (57014) for coaches and guardians

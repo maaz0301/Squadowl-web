@@ -151,6 +151,7 @@ export default function FeedbackReportsPage() {
       message: `Are you sure you want to remove ${who}'s feedback? This can't be undone${report.attachments.length > 0 ? ', and its attachments will be deleted too.' : '.'}`,
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
 

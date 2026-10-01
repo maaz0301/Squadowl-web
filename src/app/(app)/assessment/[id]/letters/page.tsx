@@ -167,6 +167,7 @@ export default function LettersPage() {
       message: `"${t.name}" will be removed. Letters already sent from it stay on the players' cards.`,
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {
@@ -483,6 +484,7 @@ export default function LettersPage() {
                         message: 'The record comes off the player’s card. It does not recall an email already delivered.',
                         confirmLabel: 'Delete',
                         destructive: true,
+                        requireText: 'DELETE',
                       });
                       if (!ok) return;
                       try {

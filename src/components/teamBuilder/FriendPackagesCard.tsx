@@ -215,6 +215,7 @@ export function FriendPackagesCard({ tryout, disabled }: Props) {
       message: terms.t(`"${pkg.name}" will no longer be kept together when you generate teams. The players stay on the roster.`),
       confirmLabel: 'Delete',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {

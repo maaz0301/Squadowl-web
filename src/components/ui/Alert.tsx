@@ -22,7 +22,7 @@ interface ConfirmOptions {
   allowWhileViewingAs?: boolean;
   /**
    * When set, the confirm button stays disabled until the user types this word
-   * (case-insensitive) — for deletes that can't be undone.
+   * exactly as written (case-sensitive) — for deletes that can't be undone.
    */
   requireText?: string;
 }
@@ -133,7 +133,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
             <Button
               label={dialog?.mode === 'confirm' ? (dialog.confirmLabel ?? 'Confirm') : 'OK'}
               variant={dialog?.destructive ? 'danger' : 'primary'}
-              disabled={!!dialog?.requireText && typed.trim().toLowerCase() !== dialog.requireText.toLowerCase()}
+              disabled={!!dialog?.requireText && typed.trim() !== dialog.requireText}
               onClick={() => close(true)}
             />
           </ModalFooter>

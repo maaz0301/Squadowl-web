@@ -251,6 +251,7 @@ export default function PlayerHubPage() {
       message: `Remove ${name} from this athlete's family contacts?`,
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {
@@ -266,6 +267,7 @@ export default function PlayerHubPage() {
       message: `Unlink ${player.guardianName || player.guardianEmail || 'this guardian'}'s account from ${playerDisplayName(player)}? They will no longer be able to view this athlete.`,
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {
@@ -546,6 +548,7 @@ export default function PlayerHubPage() {
                   message: terms.t('Are you sure you want to delete this player? This cannot be undone.'),
                   confirmLabel: 'Delete',
                   destructive: true,
+                  requireText: 'DELETE',
                 });
                 if (!ok) return;
                 await deletePlayer.mutateAsync(playerId);

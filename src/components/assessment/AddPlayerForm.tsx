@@ -262,6 +262,7 @@ export function AddPlayerForm({
       message: terms.t(`Remove ${name} from this player's family contacts?`),
       confirmLabel: 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {

@@ -67,6 +67,7 @@ export default function OrganizationMembersPage() {
       message,
       confirmLabel: member.role === 'guardian' ? 'Revoke' : 'Remove',
       destructive: true,
+      requireText: 'DELETE',
     });
     if (!ok) return;
     try {
