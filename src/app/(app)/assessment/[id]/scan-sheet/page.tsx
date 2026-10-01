@@ -14,6 +14,7 @@ import {
   buildScoreImportRows,
   guessIdentityMapping,
   guessMeasureMapping,
+  validateImportSetup,
   type IdentityMapping,
   type MeasureMapping,
 } from '@/lib/scoreImport';
@@ -56,6 +57,12 @@ export default function ScanSheetPage() {
   const ready = rows.filter((r) => r.errors.length === 0);
   const skipped = rows.filter((r) => r.errors.length > 0);
   const mappedMeasures = measures.filter((m) => mapping[m.key] != null).length;
+  const issues = useMemo(
+    () => (sheet ? validateImportSetup(sheet.headers, identity, mapping, measures) : []),
+    [sheet, identity, mapping, measures],
+  );
+  const blocked = issues.some((i) => i.level === 'error');
+  const cellWarnings = rows.filter((r) => r.errors.length === 0 && r.warnings.length > 0).length;
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading evaluation..." />;
   if (tryoutQuery.isError || !tryout) {
@@ -202,10 +209,23 @@ export default function ScanSheetPage() {
             </div>
           </div>
 
+          {issues.length > 0 ? (
+            <Card className="flex flex-col gap-1.5">
+              <span className="font-bold" style={{ color: colors.ink }}>Check before importing</span>
+              {issues.map((i, n) => (
+                <span key={n} className="text-sm" style={{ color: i.level === 'error' ? colors.danger : colors.inkMuted }}>
+                  {i.level === 'error' ? 'Fix: ' : 'Note: '}{i.message}
+                </span>
+              ))}
+            </Card>
+          ) : null}
+
           <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>Preview</span>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge label={`${ready.length} ready`} />
-              {skipped.length > 0 ? <Badge label={`${skipped.length} left out`} /> : null}
+              <Badge label={`${ready.length} ready`} variant="success" />
+              {skipped.length > 0 ? <Badge label={`${skipped.length} left out`} variant="danger" /> : null}
+              {cellWarnings > 0 ? <Badge label={`${cellWarnings} with skipped cells`} variant="warning" /> : null}
             </div>
             {rows.slice(0, PREVIEW_ROWS).map((r) => {
               const bad = r.errors.length > 0;
@@ -239,7 +259,7 @@ export default function ScanSheetPage() {
           <Button
             label={`Import ${ready.length} ${(ready.length === 1 ? terms.player : terms.players).toLowerCase()}`}
             loading={importScores.isPending}
-            disabled={ready.length === 0 || mappedMeasures === 0}
+            disabled={blocked || ready.length === 0 || mappedMeasures === 0}
             onClick={save}
           />
         </div>

@@ -7,6 +7,7 @@ import {
   guessIdentityMapping,
   guessMeasureMapping,
   parseMeasureValue,
+  validateImportSetup,
 } from '@/lib/scoreImport';
 
 const measure = (over: Partial<CustomRubric>): CustomRubric =>
@@ -83,5 +84,32 @@ describe('buildScoreImportRows', () => {
     const ident = guessIdentityMapping(parsed.headers);
     const rows = buildScoreImportRows(parsed, roster, ident, guessMeasureMapping(parsed.headers, measures, ident), measures);
     expect(rows[0].scores).toEqual({ skate: 5 });
+  });
+});
+
+describe('validateImportSetup', () => {
+  const m = [measure({ key: 'a', label: 'Speed' }), measure({ key: 'b', label: 'Shot' })];
+  const msgs = (i: ReturnType<typeof validateImportSetup>, level: 'error' | 'warning') =>
+    i.filter((x) => x.level === level).map((x) => x.message);
+
+  it('passes a clean mapping', () => {
+    const issues = validateImportSetup(['Name', 'Speed', 'Shot'], { fullName: 0 }, { a: 1, b: 2 }, m);
+    expect(issues).toEqual([]);
+  });
+  it('blocks when no player column or no measure is chosen', () => {
+    const issues = validateImportSetup(['A', 'B'], {}, { a: null, b: null }, m);
+    expect(msgs(issues, 'error')).toHaveLength(2);
+  });
+  it('blocks a column assigned twice', () => {
+    const issues = validateImportSetup(['Name', 'Score'], { fullName: 0 }, { a: 1, b: 1 }, m);
+    expect(msgs(issues, 'error')[0]).toMatch(/assigned more than once/);
+  });
+  it('warns about blank and repeated headings and unmapped measures', () => {
+    const issues = validateImportSetup(['Name', '', 'Speed', 'speed'], { fullName: 0 }, { a: 1, b: null }, m);
+    expect(msgs(issues, 'error')).toEqual([]);
+    expect(msgs(issues, 'warning').join(' ')).toMatch(/no heading/);
+    expect(msgs(issues, 'warning').join(' ')).toMatch(/Not in this file: Shot/);
+    const dup = validateImportSetup(['Name', 'Speed', 'speed'], { fullName: 0 }, { a: 1, b: 2 }, m);
+    expect(msgs(dup, 'warning').join(' ')).toMatch(/share the heading/);
   });
 });
