@@ -23,7 +23,6 @@ const PAGE_SIZE = 25;
 const ROLE_TABS = [
   { key: 'all', label: 'All' },
   { key: 'coach', label: 'Coach' },
-  { key: 'assessor', label: 'Assessor' },
   { key: 'guardian', label: 'Guardian' },
 ];
 
