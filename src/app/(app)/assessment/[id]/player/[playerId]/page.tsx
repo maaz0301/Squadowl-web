@@ -369,15 +369,16 @@ export default function PlayerHubPage() {
 
   return (
     <>
-      {/* The round arrow in the header below is easy to miss and the page
-          above it only offers "All evaluations", so say outright where it goes. */}
+      {/* The page above only offers "All evaluations", so say outright where
+          this goes: back to the evaluation the player is on. It is the only back
+          control here, so it is sized to be found. */}
       <button
         type="button"
         onClick={() => router.push(href('roster'))}
-        className="mb-2 inline-flex items-center gap-1.5 text-sm font-semibold"
-        style={{ color: colors.inkMuted }}
+        className="mb-3 inline-flex items-center gap-2 py-1 text-base font-bold"
+        style={{ color: colors.ink }}
       >
-        <svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+        <svg width={22} height={22} viewBox="0 0 24 24" fill="none">
           <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
         </svg>
         Back to {tryout.name}
@@ -385,8 +386,6 @@ export default function PlayerHubPage() {
       <PageHeader
         title={playerDisplayName(player)}
         subtitle={`#${player.jersey ?? '—'} · ${player.pos ?? '—'}`}
-        showBack
-        backHref={href('roster')}
         right={
           <>
             <Button label={terms.t('Score Player')} onClick={() => router.push(href(`score/${playerId}`))} />
