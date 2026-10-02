@@ -309,7 +309,13 @@ export default function ScorePage() {
   }, [workingScores, setValue]);
 
   useEffect(() => {
-    return () => clearWorkingScores();
+    return () => {
+      // Re-arm the seeding above: effects can run again on the same mount (React
+      // strict mode, fast refresh), and without this the emptied store would be
+      // pushed into the form, leaving a saved score blank.
+      workingScoresSyncedRef.current = false;
+      clearWorkingScores();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -391,7 +397,8 @@ export default function ScorePage() {
   const isEditing = !!evalId;
   const firstUnscoredIdx = SESSIONS.findIndex((s) => !scoredSessions.has(s) && !isServerScored(s));
 
-  const onSubmit = handleSubmit(async (data) => {
+  // `closeAfter` leaves the scoring screen once saved, instead of moving on to the next session.
+  const submit = (closeAfter: boolean) => handleSubmit(async (data) => {
     try {
       setSaving(true);
       if (autoSaveTimeoutRef.current) {
@@ -424,7 +431,7 @@ export default function ScorePage() {
       if (playerId) markSessionCompleted(playerId, data.session);
 
       const currentIdx = SESSIONS.indexOf(data.session);
-      if (currentIdx !== -1 && currentIdx < SESSIONS.length - 1) {
+      if (!closeAfter && currentIdx !== -1 && currentIdx < SESSIONS.length - 1) {
         const nextSess = SESSIONS[currentIdx + 1];
         setParams({ evalId: scoredSessions.get(nextSess) || null, session: nextSess });
       } else {
@@ -437,6 +444,8 @@ export default function ScorePage() {
       setSaving(false);
     }
   });
+  const onSubmit = submit(false);
+  const onSaveAndClose = submit(true);
 
   // Assessors only (see useCompleteAssessing): ends their session and takes the
   // evaluation off their hub; the owner / coach / team manager keeps every score.
@@ -601,6 +610,7 @@ export default function ScorePage() {
           Overall: {overall > 0 ? overall.toFixed(1) : '—'}
         </p>
         <Button label={isEditing ? 'Save & Continue' : 'Done'} onClick={onSubmit} loading={saving} size="lg" />
+        <Button label="Save & Close" variant="secondary" onClick={onSaveAndClose} disabled={saving} />
         {canComplete ? (
           <Button
             label="Complete Assessing"

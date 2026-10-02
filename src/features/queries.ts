@@ -917,6 +917,9 @@ export function useSaveEvaluationMutation(tryoutId: string) {
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId), refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId), refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.profile, refetchType: 'none' });
+      // The player card's history and season-over-season read this; without it the card shows "not scored" until reloaded.
+      qc.invalidateQueries({ queryKey: ['athleteHistory'] });
+      qc.invalidateQueries({ queryKey: ['playerProfile'] });
       // An assessor's roster counts "scored" off this, not off evals they can't read.
       qc.invalidateQueries({ queryKey: ['sessionProgress', tryoutId] });
     },
