@@ -20,6 +20,8 @@
 -- They remove the athlete from the team for everyone, which only the primary
 -- guardian may do. An extra guardian leaving is guardian_remove_athlete below,
 -- which drops only their own link. athlete_shares stay primary-guardian only.
+-- When the primary guardian removes a player, their family contacts are deleted
+-- with it (and the links to connected family members, which cascade).
 --
 -- NOT APPLIED. Review, then apply with the rest of the migrations.
 
@@ -510,6 +512,9 @@ begin
        set guardian_user_id = null,
            guardian_email = null
      where id = p_athlete_id;
+    -- The primary guardian removing the player takes the family contacts with
+    -- them; links to connected family members go too (contact_id cascades).
+    delete from public.athlete_family_contacts where athlete_id = p_athlete_id;
     return;
   end if;
 

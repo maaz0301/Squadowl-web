@@ -323,6 +323,7 @@ export default function SettingsPage() {
       <TermsEditor
         key={JSON.stringify(tryout.settings.customLabels ?? {})}
         value={tryout.settings.customLabels}
+        sport={tryout.sport}
         saving={updateTryout.isPending}
         onSave={async (customLabels) => {
           await updateTryout.mutateAsync({

@@ -39,7 +39,7 @@ export default function ResultsPage() {
         {sorted.length > 0 ? (
           <span className="ml-auto flex gap-2">
             <Badge label={`${skaters.length} Skaters`} variant="brand" />
-            <Badge label={`${goalies.length} Goalies`} variant="info" />
+            {tryout.sport === 'Skating' ? null : <Badge label={`${goalies.length} Goalies`} variant="info" />}
           </span>
         ) : null}
       </div>

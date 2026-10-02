@@ -13,10 +13,13 @@ import { useThemeColors } from '@/theme/ThemeProvider';
  */
 export function TermsEditor({
   value,
+  sport: evalSport,
   saving,
   onSave,
 }: {
   value?: CustomLabels;
+  /** The evaluation's sport. The sport-name rename only applies to Hockey, so other sports don't show it. */
+  sport?: string;
   saving: boolean;
   onSave: (labels: CustomLabels) => Promise<void>;
 }) {
@@ -70,13 +73,15 @@ export function TermsEditor({
         placeholder="e.g. Skate Ontario #"
         maxLength={LABEL_MAX_LENGTH}
       />
-      <Input
-        label={`Sport name (default: ${DEFAULT_TERMS.sport})`}
-        value={sport}
-        onChange={(e) => setSport(e.target.value)}
-        placeholder="e.g. Skating"
-        maxLength={LABEL_MAX_LENGTH}
-      />
+      {!evalSport || evalSport === DEFAULT_TERMS.sport ? (
+        <Input
+          label={`Sport name (default: ${DEFAULT_TERMS.sport})`}
+          value={sport}
+          onChange={(e) => setSport(e.target.value)}
+          placeholder="e.g. Skating"
+          maxLength={LABEL_MAX_LENGTH}
+        />
+      ) : null}
       <div className="flex gap-2">
         <Button label="Save" loading={saving} disabled={!dirty} onClick={() => save({ player, jersey, sport })} />
         <Button label="Reset to defaults" variant="ghost" onClick={reset} />

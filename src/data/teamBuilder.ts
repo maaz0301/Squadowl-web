@@ -834,7 +834,7 @@ export function mockAiPlayerSummary(tryout: Tryout, playerId: string) {
   const overall = evals.length ? weightedOverallAcrossEvals(evals, categories, weights) : 0;
 
   return {
-    summary: `${playerDisplayName(player)} shows ${overall >= 4 ? 'strong' : overall >= 3 ? 'solid' : 'developing'} overall performance as a ${player.pos ?? 'player'}.`,
+    summary: `${playerDisplayName(player)} shows ${overall >= 4 ? 'strong' : overall >= 3 ? 'solid' : 'developing'} overall performance${player.pos?.trim() ? ` as a ${player.pos.trim()}` : ''}.`,
     key_strengths: latest?.strengths?.split(',').map((s) => s.trim()).filter(Boolean) ?? [
       'Competitive drive',
       'Coachability',
@@ -842,7 +842,12 @@ export function mockAiPlayerSummary(tryout: Tryout, playerId: string) {
     key_growth: latest?.improve?.split(',').map((s) => s.trim()).filter(Boolean) ?? [
       'Consistency under pressure',
     ],
-    role_fit: player.pos === 'GTL' ? 'Starting goalie candidate' : `${player.pos ?? 'Forward'} depth`,
+    role_fit:
+      player.pos === 'GTL'
+        ? 'Starting goalie candidate'
+        : player.pos?.trim()
+          ? `${player.pos.trim()} depth`
+          : 'Roster depth',
     confidence: evals.length >= 2 ? 0.85 : evals.length === 1 ? 0.65 : 0.3,
     trend: evals.length >= 2 ? ('improving' as const) : evals.length === 1 ? ('steady' as const) : ('insufficient_data' as const),
   };
