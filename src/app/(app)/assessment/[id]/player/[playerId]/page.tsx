@@ -42,6 +42,7 @@ import { describeInvite, useInviteFamilyContact } from '@/features/useInviteFami
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition } from '@/data/rubrics';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
+import { PlayerProfileSection } from '@/components/player/PlayerProfileSection';
 import { LETTER_KIND_LABELS } from '@/data/letters';
 import { PlanGate } from '@/components/PlanGate';
 import { mockAiPlayerSummary } from '@/data/teamBuilder';
@@ -668,22 +669,14 @@ export default function PlayerHubPage() {
             </PlanGate>
           </Card>
 
-          {/* The profile is season-over-season history, which an assessor
-              scores without — they only ever see the assessment in front of
-              them. */}
-          {isAssessorOnly ? null : (
-            <Card className="flex flex-col items-start gap-2">
-              <p className="font-display font-bold" style={{ color: colors.ink }}>{terms.t('Player Profile')}</p>
-              <p className="text-sm" style={{ color: colors.inkMuted }}>
-                View full evaluation history, score trends, and season-over-season comparison.
-              </p>
-              <Button
-                label="View Full Profile"
-                variant="secondary"
-                disabled={!player.athleteId}
-                onClick={() => router.push(`/player/${player.athleteId}`)}
-              />
-            </Card>
+          {/* The whole profile, inline: details, season-over-season and the
+              evaluation history. It is history an assessor scores without —
+              they only ever see the assessment in front of them. */}
+          {isAssessorOnly || !player.athleteId ? null : (
+            <PlayerProfileSection
+              athleteId={player.athleteId}
+              onEditDetails={canAssess ? () => setShowEdit(true) : undefined}
+            />
           )}
 
           {/* Every evaluator's scores, recommendation and notes, with an Edit

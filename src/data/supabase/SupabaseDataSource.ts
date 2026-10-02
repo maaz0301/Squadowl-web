@@ -7693,13 +7693,29 @@ export class SupabaseDataSource implements DataSource {
     }
 
     // 2. Fetch past evaluations across tryouts
-    const { data: tryoutRosterRows } = await supabase
+    // Only evaluations that still exist for this player: one that was deleted
+    // (tryouts.deleted_at) or that the player was taken off (removed_at) is no
+    // longer part of their record, and showing its scores here is the old
+    // evaluation's scoring following the player into a new one.
+    const { data: participantRows } = await supabase
       .from('tryout_participants')
-      .select('id')
-      .eq('athlete_id', athleteId);
+      .select('id, tryout_id')
+      .eq('athlete_id', athleteId)
+      .is('removed_at', null);
+
+    let tryoutRosterRows: { id: string }[] = [];
+    if (participantRows && participantRows.length > 0) {
+      const { data: liveTryouts } = await supabase
+        .from('tryouts')
+        .select('id')
+        .in('id', [...new Set(participantRows.map((p) => p.tryout_id))])
+        .is('deleted_at', null);
+      const liveIds = new Set((liveTryouts ?? []).map((t) => t.id));
+      tryoutRosterRows = participantRows.filter((p) => liveIds.has(p.tryout_id));
+    }
 
     let pastEvaluations: Evaluation[] = [];
-    if (tryoutRosterRows && tryoutRosterRows.length > 0) {
+    if (tryoutRosterRows.length > 0) {
       const rosterIds = tryoutRosterRows.map(r => r.id);
       const { data: evals } = await supabase
         .from('evaluations')

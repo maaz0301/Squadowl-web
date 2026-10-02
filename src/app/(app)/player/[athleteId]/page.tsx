@@ -226,6 +226,7 @@ export default function PlayerProfilePage() {
           assessments={profile.assessments}
           colors={colors}
           exportFileName={slugify(profile.first, profile.last)}
+          viewRecords
         />
       )}
 
