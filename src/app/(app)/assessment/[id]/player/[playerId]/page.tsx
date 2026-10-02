@@ -35,10 +35,10 @@ import {
   useFamilyContactsQuery,
   useAddFamilyContactMutation,
   useRemoveFamilyContactMutation,
-  useLinkFamilyContactGuardianMutation,
   usePlayerLettersQuery,
   useResendPlayerLetterMutation,
 } from '@/features/queries';
+import { describeInvite, useInviteFamilyContact } from '@/features/useInviteFamilyContact';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition } from '@/data/rubrics';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
@@ -48,8 +48,6 @@ import { mockAiPlayerSummary } from '@/data/teamBuilder';
 
 const AI_IDLE_TEXT = 'Generating...';
 const AI_LOADING_TEXTS = ['Gathering data...', 'Ranking evaluations...', 'Analyzing strengths...', 'Finalizing insight...'];
-
-const makeTempPassword = () => Math.random().toString(36).slice(-6) + 'Aa1!';
 
 export default function PlayerHubPage() {
   const id = useAssessmentId();
@@ -106,7 +104,7 @@ export default function PlayerHubPage() {
   const familyContactsQuery = useFamilyContactsQuery(player?.athleteId);
   const addFamilyContactMut = useAddFamilyContactMutation(player?.athleteId ?? '');
   const removeFamilyContactMut = useRemoveFamilyContactMutation(player?.athleteId ?? '');
-  const linkContactGuardianMut = useLinkFamilyContactGuardianMutation();
+  const inviteContact = useInviteFamilyContact();
   const [showAddContact, setShowAddContact] = useState(false);
   const [contactName, setContactName] = useState('');
   const [contactRelationship, setContactRelationship] = useState('');
@@ -325,53 +323,20 @@ export default function PlayerHubPage() {
     }
   };
 
-  // Invites a family contact to the guardian portal: creates their login if
-  // they have none (the email carries a temporary password) or re-uses the one
-  // they have, and connects it to this athlete. When the athlete has no
-  // guardian yet the contact becomes it; otherwise they are connected as an
-  // additional guardian beside the existing one, which is left as it is.
+  // Invites a family contact to the guardian portal and connects them to this
+  // athlete — see useInviteFamilyContact for how the athlete's single guardian
+  // slot and additional guardians are handled.
   const inviteFamilyContact = async (contact: { id: string; name: string; email?: string }) => {
-    const email = contact.email?.trim();
-    if (!email || !player.athleteId) return;
+    if (!contact.email?.trim() || !player.athleteId) return;
     setInvitingContactId(contact.id);
     try {
-      let userId: string | undefined;
-      let tempPassword: string | undefined;
-      try {
-        const member = await inviteMut.mutateAsync({ email, role: 'guardian' });
-        userId = member.userId;
-      } catch (error) {
-        if (!(error instanceof Error && error.message?.includes('User not found'))) throw error;
-        tempPassword = makeTempPassword();
-        const created = await createAndInviteMut.mutateAsync({
-          email,
-          password: tempPassword,
-          name: contact.name || 'Guardian',
-          role: 'guardian',
-        });
-        userId = created.userId;
-      }
-
-      const slotFree =
-        !player.linkedGuardianId &&
-        (!player.guardianEmail || player.guardianEmail.toLowerCase() === email.toLowerCase());
-      const alreadyLinked = !!userId && player.linkedGuardianId === userId;
-      let connected = slotFree || alreadyLinked;
-      if (userId && slotFree) {
-        await linkGuardianMut.mutateAsync({ guardianId: userId, tryoutId: id!, playerId: player.athleteId });
-      } else if (userId && !alreadyLinked) {
-        connected = await linkContactGuardianMut.mutateAsync({ contactId: contact.id, userId });
-      }
-
-      const sent = tempPassword
-        ? `An account was created for ${email} and an email was sent with their temporary password:\n\n${tempPassword}`
-        : `An invitation was sent to ${email}.`;
-      await alert(
-        'Invite Sent',
-        connected
-          ? `${sent}\n\nThey are now connected to ${playerDisplayName(player)}.`
-          : `${sent}\n\nThey could not be connected to ${playerDisplayName(player)} yet. The update that lets several family members share one athlete has not been applied.`,
-      );
+      const result = await inviteContact(contact, {
+        athleteId: player.athleteId,
+        linkedGuardianId: player.linkedGuardianId,
+        guardianEmail: player.guardianEmail,
+        tryoutId: id,
+      });
+      if (result) await alert('Invite Sent', describeInvite(result, contact.name, playerDisplayName(player)));
     } catch (e) {
       await alert('Invite Failed', e instanceof Error ? e.message : 'Could not invite this contact.');
     } finally {

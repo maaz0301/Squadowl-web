@@ -16,6 +16,8 @@ import { POSITION_OPTIONS_BY_SPORT } from '@/data/positions';
 export interface ExtraFamilyContact {
   name: string;
   email: string;
+  /** Marked with the Invite toggle: create their login and connect them once the player is saved. */
+  invite?: boolean;
 }
 
 interface Props {
@@ -43,6 +45,12 @@ interface Props {
    * three-step path of save, reopen the profile, invite from there.
    */
   showInvite?: boolean;
+  /**
+   * Show the Invite toggle on each additional family member, for a form whose
+   * caller will invite and connect them once the player is saved. Implied by
+   * `showInvite`.
+   */
+  showContactInvite?: boolean;
   /**
    * Names what saving does where it also mails the player — a coach shouldn't
    * have to discover from the confirmation that "Save Player" sent an invite.
@@ -109,6 +117,7 @@ export function AddPlayerForm({
   sport,
   onSubmit,
   showInvite,
+  showContactInvite,
   submitLabel,
   showFamilyContacts = true,
   labels,
@@ -531,9 +540,20 @@ export function AddPlayerForm({
                       {c.name && c.email ? (
                         <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p>
                       ) : null}
-                      <p className="truncate text-[11px] italic" style={{ color: colors.inkFaint }}>{terms.t('Not saved yet — added when you save the player.')}</p>
+                      <p className="truncate text-[11px] italic" style={{ color: colors.inkFaint }}>{terms.t(c.invite ? 'Not saved yet — added and invited when you save the player.' : 'Not saved yet — added when you save the player.')}</p>
                     </div>
-                    <Button label="Remove" variant="ghost" size="sm" onClick={() => removeFamilyContact(i)} />
+                    <div className="flex shrink-0 items-center gap-1">
+                      {showInvite || showContactInvite ? (
+                        <InviteToggle
+                          email={c.email}
+                          marked={!!c.invite}
+                          onToggle={() =>
+                            setFamilyContacts((prev) => prev.map((x, k) => (k === i ? { ...x, invite: !x.invite } : x)))
+                          }
+                        />
+                      ) : null}
+                      <Button label="Remove" variant="ghost" size="sm" onClick={() => removeFamilyContact(i)} />
+                    </div>
                   </div>
                 ))}
               </div>

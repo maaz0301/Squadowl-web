@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useIsMutating } from '@tanstack/react-query';
 
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
+import { useInviteSavedFamilyContacts } from '@/features/useInviteFamilyContact';
 import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { DummyDataModal } from '@/components/DummyDataModal';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
@@ -59,6 +60,7 @@ export default function RosterPage() {
   const colors = useThemeColors();
   const router = useRouter();
   const { alert, confirm } = useAlert();
+  const inviteSavedContacts = useInviteSavedFamilyContacts();
   const tryoutQuery = useTryoutQuery(id);
   const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   // A team someone else owns is run on that team's plan, not the viewer's own.
@@ -86,7 +88,7 @@ export default function RosterPage() {
   const setActiveAssessor = useSessionStore((s) => s.setActiveAssessor);
   const setCurrentPlayer = useSessionStore((s) => s.setCurrentPlayer);
   const user = useUser();
-  const { canAssess } = usePermissions();
+  const { canAssess, canManageTeam } = usePermissions();
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showTools, setShowTools] = useState(false);
@@ -260,11 +262,17 @@ export default function RosterPage() {
       const contacts = (extraFamilyContacts ?? []).filter((c) => c.name.trim() || c.email.trim());
       if (player.athleteId && contacts.length > 0) {
         try {
-          await Promise.all(
+          const saved = await Promise.all(
             contacts.map((c) =>
               getDataSource().addFamilyContact(player.athleteId!, { name: c.name || c.email, email: c.email || undefined }),
             ),
           );
+          const lines = await inviteSavedContacts(
+            { athleteId: player.athleteId, guardianEmail: data.guardianEmail || undefined, tryoutId: id },
+            `${data.first} ${data.last}`.trim(),
+            saved.map((contact, i) => ({ contact, invite: contacts[i].invite })),
+          );
+          if (lines.length > 0) await alert('Family Invites', lines.join('\n\n'));
         } catch (e) {
           await alert(
             'Family Members Not Saved',
@@ -674,6 +682,7 @@ export default function RosterPage() {
           sport={tryout.sport}
           labels={tryout.settings.customLabels}
           showFamilyContacts={canAssess}
+          showContactInvite={canManageTeam && !isAssessorOnly}
           onSubmit={submitAddPlayer}
           submitLabel={`Save ${terms.player} & Send Invite`}
         />

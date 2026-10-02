@@ -97,6 +97,7 @@ import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
+import { useInviteSavedFamilyContacts } from '@/features/useInviteFamilyContact';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { getDataSource } from '@/data';
@@ -152,6 +153,7 @@ export default function TeamDetailPage() {
   };
   const searchParams = useSearchParams();
   const { alert, confirm } = useAlert();
+  const inviteSavedContacts = useInviteSavedFamilyContacts();
   const teamsQuery = useTeamsQuery();
   const tryoutSummariesQuery = useTryoutSummariesQuery(false);
   const dummyBlockedTiers = useDummyDataBlockedTiers();
@@ -306,9 +308,10 @@ export default function TeamDetailPage() {
       return;
     }
     const contacts = (extraFamilyContacts ?? []).filter((c) => c.name.trim() || c.email.trim());
+    let savedContacts: Awaited<ReturnType<ReturnType<typeof getDataSource>['addFamilyContact']>>[] = [];
     if (athleteId && contacts.length > 0) {
       try {
-        await Promise.all(
+        savedContacts = await Promise.all(
           contacts.map((c) =>
             getDataSource().addFamilyContact(athleteId, { name: c.name || c.email, email: c.email || undefined }),
           ),
@@ -336,6 +339,16 @@ export default function TeamDetailPage() {
       );
     } finally {
       setInvitingAthleteId(null);
+    }
+    // After the guardian's own invite, so who the athlete's primary guardian is
+    // has settled before an additional family member is connected beside it.
+    if (savedContacts.length > 0) {
+      const lines = await inviteSavedContacts(
+        { athleteId, guardianEmail: data.guardianEmail || undefined },
+        `${data.first} ${data.last}`.trim(),
+        savedContacts.map((contact, i) => ({ contact, invite: contacts[i].invite })),
+      );
+      if (lines.length > 0) await alert('Family Invites', lines.join('\n\n'));
     }
   };
 

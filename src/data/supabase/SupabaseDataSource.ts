@@ -7953,6 +7953,7 @@ export class SupabaseDataSource implements DataSource {
       playerEmail: athleteRow.player_email ?? undefined,
       guardianName: athleteRow.guardian_name ?? undefined,
       guardianEmail: athleteRow.guardian_email ?? undefined,
+      linkedGuardianId: athleteRow.guardian_user_id ?? undefined,
       guardianPhone: athleteRow.guardian_phone ?? undefined,
       pastSeasons,
       teams,

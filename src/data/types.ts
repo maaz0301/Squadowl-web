@@ -926,6 +926,8 @@ export interface PlayerProfile {
   guardianName?: string;
   guardianEmail?: string;
   guardianPhone?: string;
+  /** The guardian's linked login, when the athlete has one. */
+  linkedGuardianId?: string;
   pastSeasons: { seasonId: string; seasonName: string; teamName: string }[];
   /** Every team this athlete is currently rostered on (from Teams, not just self-reported text). */
   teams: { teamId: string; teamName: string }[];
