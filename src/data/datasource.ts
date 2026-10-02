@@ -537,6 +537,10 @@ export interface DataSource {
   linkFamilyContactGuardian(contactId: string, userId: string): Promise<boolean>;
   /** Ids of the family contacts already connected to the athlete's guardian portal. */
   listConnectedFamilyContactIds(athleteId: string): Promise<string[]>;
+  /** Which team calendars are attached to which: `viewerTeamId`'s calendar also shows `sourceTeamId`'s events. */
+  listTeamCalendarLinks(): Promise<{ viewerTeamId: string; sourceTeamId: string }[]>;
+  /** Attach (or disconnect) `sourceTeamId`'s calendar on `viewerTeamId`. Display only; no events are copied. */
+  setTeamCalendarLink(viewerTeamId: string, sourceTeamId: string, attached: boolean): Promise<void>;
 
   // Player selection letters — the offer / roster-decision letters a coach
   // sends when a tryout is decided. Templates are account-wide and reusable;

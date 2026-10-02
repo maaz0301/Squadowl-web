@@ -1314,10 +1314,11 @@ export function useShareLinkMutation(tryoutId: string) {
 }
 
 // ---- Phase 3: Seasons ----
-export function useSeasonsQuery() {
+export function useSeasonsQuery(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.seasons,
     queryFn: () => getDataSource().listSeasons(),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -2306,6 +2307,27 @@ export function useConnectedFamilyContactIdsQuery(athleteId: string | undefined)
     queryKey: [...familyContactsKey(athleteId ?? ''), 'connected'],
     queryFn: () => getDataSource().listConnectedFamilyContactIds(athleteId!),
     enabled: !!athleteId,
+  });
+}
+
+export const teamCalendarLinksKey = ['team-calendar-links'] as const;
+
+/** Which team calendars are attached to which other teams. */
+export function useTeamCalendarLinksQuery() {
+  return useQuery({
+    queryKey: teamCalendarLinksKey,
+    queryFn: () => getDataSource().listTeamCalendarLinks(),
+  });
+}
+
+export function useSetTeamCalendarLinkMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ viewerTeamId, sourceTeamId, attached }: { viewerTeamId: string; sourceTeamId: string; attached: boolean }) =>
+      getDataSource().setTeamCalendarLink(viewerTeamId, sourceTeamId, attached),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: teamCalendarLinksKey });
+    },
   });
 }
 

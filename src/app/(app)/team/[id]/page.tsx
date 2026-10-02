@@ -52,6 +52,8 @@ import {
   useTeamRosterInvitesMutation,
   useSeasonSummariesQuery,
   useSeasonQuery,
+  useSeasonsQuery,
+  useTeamCalendarLinksQuery,
   useChatUnreadCount,
   useSeasonRealtimeSync,
   useAddTeamEventMutation,
@@ -91,6 +93,7 @@ import { HubEventCard } from '@/components/teamHub/HubEventCard';
 import { TeamStatusTiles } from '@/components/teamHub/TeamStatusTiles';
 import { AddToCalendar } from '@/components/AddToCalendar';
 import { MonthCalendar } from '@/components/MonthCalendar';
+import { groupCalendarTeams, linkedEvents } from '@/lib/teamCalendars';
 import { EventDiscussion } from '@/components/EventDiscussion';
 import { MapLink, MapLocationHint } from '@/components/MapLink';
 import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
@@ -212,10 +215,12 @@ export default function TeamDetailPage() {
   const [tab, setTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'schedule');
   const [openRsvpEventId, setOpenRsvpEventId] = useState<string | null>(null);
   // The event Team Status, RSVPs and the action row are pointed at.
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // Arriving from the Calendar page with ?event= opens that event straight away.
+  const focusEventId = searchParams.get('event');
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(focusEventId);
   // Whether the selected event's details are showing under its card.
   const [eventDetailsOpen, setEventDetailsOpen] = useState(true);
-  const [showAllEvents, setShowAllEvents] = useState(false);
+  const [showAllEvents, setShowAllEvents] = useState(!!focusEventId);
   const [rsvpSearch, setRsvpSearch] = useState('');
   const [availabilityTarget, setAvailabilityTarget] = useState<{
     eventId: string;
@@ -370,6 +375,10 @@ export default function TeamDetailPage() {
   // it. That read used to stand in front of the schedule before the season's
   // own read had even started.
   const seasonsQuery = useSeasonSummariesQuery();
+  // Calendars of other teams attached to this one. The full seasons are only read when some are.
+  const calendarLinksQuery = useTeamCalendarLinksQuery();
+  const hasAttachedCalendars = (calendarLinksQuery.data ?? []).some((l) => l.viewerTeamId === id);
+  const allSeasonsQuery = useSeasonsQuery({ enabled: hasAttachedCalendars && tab === 'calendar' });
   const teamSeasonId = (seasonsQuery.data ?? []).find((s) => s.teamId === id)?.id;
   const seasonQuery = useSeasonQuery(teamSeasonId);
   /** Badges the Chat tab, so a coach on the hub can see the team has written. */
@@ -897,6 +906,8 @@ export default function TeamDetailPage() {
     }
   };
 
+  // Calendars of other teams attached to this one (Calendar page): shown beside its own events.
+  const attachedCalendars = linkedEvents(id, groupCalendarTeams(allSeasonsQuery.data ?? []), calendarLinksQuery.data ?? []);
   const teamSeason = seasonQuery.data;
   const today = new Date().toISOString().split('T')[0];
   // Both the "Upcoming" stat tile/tab badge and the Schedule tab itself stay
@@ -904,7 +915,9 @@ export default function TeamDetailPage() {
   const upcomingEvents = [...(teamSeason?.events ?? [])]
     .filter((e) => e.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const scheduleEvents = upcomingEvents;
+  // An event opened from the Calendar page stays reachable even once it is past.
+  const focusedPast = (teamSeason?.events ?? []).filter((e) => e.id === focusEventId && e.date < today);
+  const scheduleEvents = [...upcomingEvents, ...focusedPast].sort((a, b) => a.date.localeCompare(b.date));
   // The hub leads with the next three; "View All" opens every upcoming event.
   const shownEvents = showAllEvents ? scheduleEvents : scheduleEvents.slice(0, 3);
   const selectedEvent = shownEvents.find((e) => e.id === selectedEventId) ?? shownEvents[0];
@@ -1454,8 +1467,9 @@ export default function TeamDetailPage() {
             </p>
           ) : (
             <MonthCalendar
-              events={seasonQuery.data?.events ?? []}
+              events={[...(seasonQuery.data?.events ?? []), ...attachedCalendars.events]}
               teamName={team?.name}
+              teamNameFor={(ev) => attachedCalendars.teamByEvent.get(ev.id)}
               onAddEvent={canEditTeam ? (date) => openEventModal('Event', date) : undefined}
             />
           )}

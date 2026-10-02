@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 import { AddToCalendar } from '@/components/AddToCalendar';
@@ -18,6 +19,7 @@ export function MonthCalendar({
   events,
   teamName,
   teamNameFor,
+  eventHref,
   onAddEvent,
 }: {
   events: SeasonEvent[];
@@ -25,6 +27,8 @@ export function MonthCalendar({
   /** For a calendar that mixes several teams: which team an event belongs to. Shown on each event. */
   teamNameFor?: (event: SeasonEvent) => string | undefined;
   /** When given, a selected day offers "Add event on <date>" and hands the date back. */
+  /** Where an event's full details are, when it can be opened (the team's schedule, for the all-teams calendar). */
+  eventHref?: (event: SeasonEvent) => string | undefined;
   onAddEvent?: (date: string) => void;
 }) {
   const colors = useThemeColors();
@@ -150,6 +154,15 @@ export function MonthCalendar({
                 <MapLink location={ev.location} label={ev.title} size="sm" />
                 <AddToCalendar event={ev} teamName={teamNameFor?.(ev) ?? teamName} size="sm" />
                 <Badge label={ev.type} />
+                {eventHref?.(ev) ? (
+                  <Link
+                    href={eventHref(ev)!}
+                    className="rounded-md border px-2.5 py-1 text-xs font-bold transition-[filter] hover:brightness-110"
+                    style={{ borderColor: colors.primary, color: colors.primary }}
+                  >
+                    View event ›
+                  </Link>
+                ) : null}
               </span>
             </Card>
           ))}

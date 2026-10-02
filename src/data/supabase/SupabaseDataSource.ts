@@ -9796,6 +9796,34 @@ export class SupabaseDataSource implements DataSource {
     return ((data ?? []) as Row[]).map((r) => r.contact_id as string).filter(Boolean);
   }
 
+  async listTeamCalendarLinks(): Promise<{ viewerTeamId: string; sourceTeamId: string }[]> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.from('team_calendar_links').select('viewer_team_id, source_team_id');
+    // An extra on top of each team's own calendar: where the table is missing or unreadable, show none.
+    if (error) return [];
+    return ((data ?? []) as Row[]).map((r) => ({
+      viewerTeamId: r.viewer_team_id as string,
+      sourceTeamId: r.source_team_id as string,
+    }));
+  }
+
+  async setTeamCalendarLink(viewerTeamId: string, sourceTeamId: string, attached: boolean): Promise<void> {
+    const { supabase } = await this.ctx();
+    const { error } = attached
+      ? await supabase
+          .from('team_calendar_links')
+          .upsert(
+            { viewer_team_id: viewerTeamId, source_team_id: sourceTeamId },
+            { onConflict: 'viewer_team_id,source_team_id', ignoreDuplicates: true },
+          )
+      : await supabase
+          .from('team_calendar_links')
+          .delete()
+          .eq('viewer_team_id', viewerTeamId)
+          .eq('source_team_id', sourceTeamId);
+    if (error) throw new Error(error.message);
+  }
+
   async removeFamilyContact(id: string): Promise<void> {
     const { supabase } = await this.ctx();
     // .select().single() so a DELETE an RLS policy silently drops (matches zero
