@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 
+import { Icon, type IconName } from '@/components/Icons';
 import { Button, useAlert } from '@/components/ui';
 import {
   useAddEventCommentMutation,
@@ -15,6 +16,15 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i;
+const kindOf = (f: { name: string; contentType: string }): 'video' | 'image' | 'info' =>
+  f.contentType.startsWith('video/') || VIDEO_EXT.test(f.name)
+    ? 'video'
+    : f.contentType.startsWith('image/') || IMAGE_EXT.test(f.name)
+      ? 'image'
+      : 'info';
+
 const formatSize = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
@@ -22,7 +32,8 @@ const formatSize = (bytes: number) =>
  * Comments and files for one event. Everyone who can see the event can read
  * and post comments (a guardian speaks for their athlete); only `canManage`
  * users (coaches) attach or remove files, and can remove any comment.
- * Collapsed until opened so an event list doesn't fire two reads per card.
+ * Shown under the selected event only, so it reads its counts straight away: four
+ * indicators (video, info, picture, comments) show what has been added.
  */
 export function EventDiscussion({
   seasonId,
@@ -42,8 +53,8 @@ export function EventDiscussion({
   const [draft, setDraft] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const comments = useEventCommentsQuery(eventId, { enabled: open });
-  const files = useEventFilesQuery(eventId, { enabled: open });
+  const comments = useEventCommentsQuery(eventId, { enabled: true });
+  const files = useEventFilesQuery(eventId, { enabled: true });
   const addComment = useAddEventCommentMutation(eventId);
   const deleteComment = useDeleteEventCommentMutation(eventId);
   const upload = useUploadEventFileMutation(seasonId, eventId);
@@ -85,24 +96,48 @@ export function EventDiscussion({
     }
   };
 
-  const commentCount = comments.data?.length;
-  const fileCount = files.data?.length;
-  const summary =
-    commentCount == null && fileCount == null ? 'Comments & files' : `Comments (${commentCount ?? 0}) · Files (${fileCount ?? 0})`;
+  const counts = { video: 0, info: 0, image: 0 };
+  for (const f of files.data ?? []) counts[kindOf(f)] += 1;
+  const indicators: { key: string; icon: IconName; label: string; count: number | undefined }[] = [
+    { key: 'video', icon: 'video', label: 'Video', count: files.data ? counts.video : undefined },
+    { key: 'info', icon: 'info', label: 'Info', count: files.data ? counts.info : undefined },
+    { key: 'image', icon: 'image', label: 'Photo', count: files.data ? counts.image : undefined },
+    { key: 'comments', icon: 'chat', label: 'Comments', count: comments.data?.length },
+  ];
 
   const box = { borderColor: colors.border, backgroundColor: colors.tile };
 
   return (
     <div className="mt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="text-sm font-semibold"
-        style={{ color: colors.primary }}
-      >
-        {open ? 'Hide comments & files' : summary}
-      </button>
+      <p className="mb-2 text-xs font-bold" style={{ color: colors.primary }}>
+        Comments &amp; files
+      </p>
+      <div className="flex gap-2">
+        {indicators.map((i) => {
+          const has = (i.count ?? 0) > 0;
+          return (
+            <button
+              key={i.key}
+              type="button"
+              onClick={() => setOpen((o) => !o)}
+              aria-expanded={open}
+              title={`${i.label}${i.count == null ? '' : `: ${i.count}`}`}
+              className="flex h-[52px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl border px-1 transition-[filter] hover:brightness-110"
+              style={{
+                backgroundColor: has ? 'rgba(255,107,43,0.12)' : colors.tile,
+                borderColor: has ? colors.primary : colors.border,
+                color: has ? colors.primary : colors.inkMuted,
+              }}
+            >
+              <span className="flex items-center gap-1 text-xs font-bold">
+                <Icon name={i.icon} size={14} color="currentColor" />
+                {i.count ?? '–'}
+              </span>
+              <span className="max-w-full truncate text-[10px] font-medium">{i.label}</span>
+            </button>
+          );
+        })}
+      </div>
 
       {open ? (
         <div className="mt-2 flex flex-col gap-4">

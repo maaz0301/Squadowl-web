@@ -18,18 +18,21 @@ function dateParts(iso: string) {
 
 /**
  * One upcoming event: date block, venue, "title · time", who's invited, type
- * tag. Selecting it points Team Status, RSVPs and the action row at it, shown
- * by the orange left edge.
+ * tag. Selecting it opens Team Status, RSVPs, comments and the action row right
+ * under it (the orange left edge marks it); the arrow collapses them again.
  */
 export function HubEventCard({
   event,
   selected,
+  expanded,
   playerCount,
   evaluatorCount,
   onSelect,
 }: {
   event: SeasonEvent;
   selected: boolean;
+  /** The event's details are open under the card; the arrow points down to them, and up once they are showing. */
+  expanded: boolean;
   playerCount: number;
   evaluatorCount: number;
   onSelect: () => void;
@@ -46,7 +49,7 @@ export function HubEventCard({
     <button
       type="button"
       onClick={onSelect}
-      aria-pressed={selected}
+      aria-expanded={expanded}
       className="flex w-full items-center gap-3 rounded-2xl border py-3 pr-3 pl-2.5 text-left transition-[filter] hover:brightness-110"
       style={{
         backgroundColor: s.panelBg,
@@ -101,7 +104,7 @@ export function HubEventCard({
 
       <span className="flex flex-col items-end gap-2 self-stretch justify-between">
         <Badge label={event.type} variant={event.type === 'Game' ? 'brand' : 'info'} />
-        <Icon name="chevronRight" size={16} color={colors.inkMuted} strokeWidth={2.5} />
+        <Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={16} color={colors.inkMuted} strokeWidth={2.5} />
       </span>
     </button>
   );

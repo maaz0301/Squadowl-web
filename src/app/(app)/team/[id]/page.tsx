@@ -213,6 +213,8 @@ export default function TeamDetailPage() {
   const [openRsvpEventId, setOpenRsvpEventId] = useState<string | null>(null);
   // The event Team Status, RSVPs and the action row are pointed at.
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // Whether the selected event's details are showing under its card.
+  const [eventDetailsOpen, setEventDetailsOpen] = useState(true);
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [rsvpSearch, setRsvpSearch] = useState('');
   const [availabilityTarget, setAvailabilityTarget] = useState<{
@@ -1210,7 +1212,7 @@ export default function TeamDetailPage() {
               Loading events...
             </p>
           ) : (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+            <div className="grid grid-cols-1 gap-6">
               <div>
                 <HubSectionLabel
                   icon="calendar"
@@ -1229,48 +1231,26 @@ export default function TeamDetailPage() {
                   </Card>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    {shownEvents.map((ev) => (
-                      <HubEventCard
-                        key={ev.id}
-                        event={ev}
-                        selected={selectedEvent?.id === ev.id}
-                        playerCount={playerCount}
-                        evaluatorCount={evaluatorCount}
-                        onSelect={() => {
-                          setSelectedEventId(ev.id);
-                          setOpenRsvpEventId(null);
-                          setRsvpSearch('');
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {selectedEvent ? (
-                  <div className="mt-3">
-                    <AddToCalendar event={selectedEvent} teamName={team?.name} variant="row" />
-                  </div>
-                ) : null}
-
-                <div className="mt-6">
-                  <HubSectionLabel icon="calendar" label="Season Hub" />
-                  {canEditTeam ? (
-                  <button
-                    type="button"
-                    onClick={() => openEventModal('Event')}
-                    className="flex h-[50px] w-full items-center gap-3 rounded-2xl px-3 text-left text-base font-bold text-white shadow-[0_4px_14px_rgba(255,107,43,0.4)] transition-[filter] hover:brightness-110"
-                    style={{ backgroundColor: colors.primary }}
-                  >
-                    <Icon name="calendarPlus" size={22} color="#ffffff" />
-                    <span className="flex-1">+ Event</span>
-                    <Icon name="chevronRight" size={18} color="#ffffff" strokeWidth={2.5} />
-                  </button>
-                  ) : null}
-                </div>
-              </div>
-
-              {selectedEvent
-                ? (() => {
+                    {shownEvents.map((ev) => {
+                      const open = selectedEvent?.id === ev.id && eventDetailsOpen;
+                      return (
+                        <div key={ev.id} className="flex flex-col gap-3">
+                          <HubEventCard
+                            event={ev}
+                            selected={selectedEvent?.id === ev.id}
+                            expanded={open}
+                            playerCount={playerCount}
+                            evaluatorCount={evaluatorCount}
+                            onSelect={() => {
+                              // The selected event's arrow shows and hides its details;
+                              // picking another event opens that one's.
+                              setEventDetailsOpen(selectedEvent?.id === ev.id ? !eventDetailsOpen : true);
+                              setSelectedEventId(ev.id);
+                              setOpenRsvpEventId(null);
+                              setRsvpSearch('');
+                            }}
+                          />
+                          {open ? ((() => {
                     const ev = selectedEvent;
                     const rsvp = rsvpSummary(ev);
                     const expanded = openRsvpEventId === ev.id;
@@ -1296,7 +1276,7 @@ export default function TeamDetailPage() {
                           }}
                           trailing={
                             <Icon
-                              name={expanded ? 'chevronUp' : 'chevronRight'}
+                              name={expanded ? 'chevronUp' : 'chevronDown'}
                               size={16}
                               color={colors.primary}
                               strokeWidth={2.5}
@@ -1409,26 +1389,36 @@ export default function TeamDetailPage() {
                         </div>
                       </div>
                     );
-                  })()
-                : (
-                  // selectedEvent is only undefined when shownEvents is empty
-                  // (it falls back to shownEvents[0] otherwise), so this is the
-                  // true "no events yet" state — without it the lg:grid-cols-2
-                  // track on the left still reserved this column's width, just
-                  // with nothing in it, which read as a broken layout on a wide
-                  // screen rather than an empty one.
-                  <div>
-                    <HubSectionLabel icon="barChart" label="Team Status" />
-                    <Card className="flex flex-col items-center gap-1 py-8 text-center">
-                      <span className="font-bold" style={{ color: colors.ink }}>
-                        Nothing to show yet
-                      </span>
-                      <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
-                        Add an event and RSVP counts, plus a quick way to set them per player, will show up here.
-                      </span>
-                    </Card>
+                  })()) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
+
+                {selectedEvent ? (
+                  <div className="mt-3">
+                    <AddToCalendar event={selectedEvent} teamName={team?.name} variant="row" />
+                  </div>
+                ) : null}
+
+                <div className="mt-6">
+                  <HubSectionLabel icon="calendar" label="Season Hub" />
+                  {canEditTeam ? (
+                  <button
+                    type="button"
+                    onClick={() => openEventModal('Event')}
+                    className="flex h-[50px] w-full items-center gap-3 rounded-2xl px-3 text-left text-base font-bold text-white shadow-[0_4px_14px_rgba(255,107,43,0.4)] transition-[filter] hover:brightness-110"
+                    style={{ backgroundColor: colors.primary }}
+                  >
+                    <Icon name="calendarPlus" size={22} color="#ffffff" />
+                    <span className="flex-1">+ Event</span>
+                    <Icon name="chevronRight" size={18} color="#ffffff" strokeWidth={2.5} />
+                  </button>
+                  ) : null}
+                </div>
+              </div>
+
             </div>
           )}
         </div>
