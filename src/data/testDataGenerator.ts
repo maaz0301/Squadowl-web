@@ -51,6 +51,7 @@ export const POSITIONS_BY_SPORT: Record<Sport, string[]> = {
   Lacrosse: ['A', 'M', 'M', 'D', 'G'],
   Baseball: ['P', 'C', '2B', 'SS', 'CF', 'RF'],
   Cricket: ['OB', 'MB', 'FIN', 'FB', 'SB', 'AR', 'WK'],
+  Skating: ['Skater'],
   Other: ['FWD', 'DEF', 'GTL', 'Other'],
 };
 

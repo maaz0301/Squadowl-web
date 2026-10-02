@@ -27,7 +27,6 @@ import {
 } from '@/components/ui';
 import { isAtPlayerLimit, playerRoom } from '@/data/plans';
 import { useCanUseDummyData } from '@/features/useCanUseDummyData';
-import { isInPositionGroup, rosterPositionGroups } from '@/data/positions';
 import { playerDisplayName } from '@/data/rubrics';
 import { getDataSource } from '@/data';
 import type { AddPlayerForm as AddPlayerFormValues } from '@/data/types';
@@ -140,17 +139,11 @@ export default function RosterPage() {
     return ids;
   }, [tryoutQuery.data?.evals, isAssessorOnly, sessionProgressQuery.data]);
 
-  const positionGroups = useMemo(
-    () => (tryoutQuery.data ? rosterPositionGroups(tryoutQuery.data.sport, tryoutQuery.data.roster) : []),
-    [tryoutQuery.data],
-  );
-  // The filter is remembered across assessments, so a hockey one can leave
-  // "Goalies" selected on a basketball roster that has no such category.
-  const activeGroup = positionGroups.find((g) => `pos:${g.key}` === rosterFilter);
+  // Every sport gets the same three filters. The filter is remembered across
+  // assessments, so a position filter saved before they were removed falls back
+  // to All instead of leaving the roster filtered by something with no chip.
   const activeFilter: RosterFilter =
-    rosterFilter === 'all' || rosterFilter === 'scored' || rosterFilter === 'unscored' || activeGroup
-      ? rosterFilter
-      : 'all';
+    rosterFilter === 'all' || rosterFilter === 'scored' || rosterFilter === 'unscored' ? rosterFilter : 'all';
 
   const filteredRoster = useMemo(() => {
     if (!tryoutQuery.data) return [];
@@ -163,13 +156,8 @@ export default function RosterPage() {
       case 'unscored':
         result = roster.filter((p) => !scoredIds.has(p.id));
         break;
-      case 'all':
+      default:
         result = roster;
-        break;
-      default: {
-        const group = positionGroups.find((g) => `pos:${g.key}` === activeFilter);
-        result = group ? roster.filter((p) => isInPositionGroup(group, p.pos)) : roster;
-      }
     }
     const search = playerSearch.trim().toLowerCase();
     if (search) {
@@ -199,7 +187,7 @@ export default function RosterPage() {
       });
     }
     return result;
-  }, [tryoutQuery.data, activeFilter, playerSearch, rosterSort, scoredIds, positionGroups]);
+  }, [tryoutQuery.data, activeFilter, playerSearch, rosterSort, scoredIds]);
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading roster..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -507,14 +495,6 @@ export default function RosterPage() {
               {(['all', 'scored', 'unscored'] as const).map((f) => (
                 <Chip key={f} label={f} active={activeFilter === f} onClick={() => setRosterFilter(f)} />
               ))}
-              {positionGroups.map((g) => (
-                <Chip
-                  key={g.key}
-                  label={g.label}
-                  active={activeFilter === `pos:${g.key}`}
-                  onClick={() => setRosterFilter(`pos:${g.key}`)}
-                />
-              ))}
             </div>
           </div>
 
@@ -550,9 +530,7 @@ export default function RosterPage() {
           message={
             playerSearch.trim()
               ? terms.t(`No players match "${playerSearch.trim()}".`)
-              : activeGroup && activeFilter !== 'all'
-                ? terms.t(`No players under ${activeGroup.label}. Try a different filter.`)
-                : `No ${activeFilter} players. Try a different filter.`
+              : `No ${activeFilter} players. Try a different filter.`
           }
           actionLabel={playerSearch.trim() ? 'Clear search' : 'Show all'}
           onAction={() => {

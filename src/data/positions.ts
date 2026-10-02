@@ -107,6 +107,7 @@ export const POSITION_OPTIONS_BY_SPORT: Record<Sport, PositionOption[]> = {
     { code: 'WK', label: 'Wicket-Keeper (WK)' },
     { code: 'CAP', label: 'Captain' },
   ],
+  Skating: [],
   Other: [],
 };
 
@@ -179,6 +180,7 @@ export const POSITION_GROUPS_BY_SPORT: Record<Sport, PositionGroup[]> = {
     { key: 'all-rounders', label: 'All-Rounder', codes: ['AR'] },
     { key: 'wicket-keepers', label: 'Wicket-Keeper', codes: ['WK'] },
   ],
+  Skating: [],
   Other: [],
 };
 
