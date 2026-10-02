@@ -529,6 +529,12 @@ export interface DataSource {
     contact: { name: string; relationship?: string; email?: string; phone?: string },
   ): Promise<import('./types').FamilyContact>;
   removeFamilyContact(id: string): Promise<void>;
+  /**
+   * Connect the login behind a family contact to the athlete, so the contact
+   * sees them in the guardian portal. Resolves false when the database update
+   * that supports several guardians per athlete is not deployed yet.
+   */
+  linkFamilyContactGuardian(contactId: string, userId: string): Promise<boolean>;
 
   // Player selection letters — the offer / roster-decision letters a coach
   // sends when a tryout is decided. Templates are account-wide and reusable;

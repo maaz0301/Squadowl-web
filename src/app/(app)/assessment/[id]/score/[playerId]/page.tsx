@@ -280,15 +280,38 @@ export default function ScorePage() {
       const shouldPreserve = !isPlayerChanged && !isSessionChanged;
       lastLoadedRef.current = { playerId, evalId: evalId ?? undefined, session: currentSession };
       loadEvalData(evalId, currentSession, shouldPreserve);
+    } else if (!lastPlayerId && evalId) {
+      // First time this screen has the assessment's data. The form's defaults
+      // were built at mount, which is before the data arrives on a cold load,
+      // so an evaluation being edited rendered blank until a session chip was
+      // toggled away and back. Load it now, unless the user already typed.
+      const untouched = !previousFormRef.current || previousFormRef.current === JSON.stringify(getValues());
+      if (untouched) loadEvalData(evalId, currentSession, false);
+      else lastLoadedRef.current = { playerId, evalId, session: currentSession };
     } else {
       lastLoadedRef.current = { playerId, evalId: evalId ?? undefined, session: currentSession };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tryoutQuery.data, playerId, evalId, currentSession]);
 
+  // workingScores lives in a store that outlives this screen, so on arrival it
+  // still holds whichever player was scored last. Seed it from this form's own
+  // defaults instead of pushing the stale scores into this player's form, and
+  // empty it again on the way out so the next player starts clean.
+  const workingScoresSyncedRef = useRef(false);
   useEffect(() => {
+    if (!workingScoresSyncedRef.current) {
+      workingScoresSyncedRef.current = true;
+      setWorkingScores(getValues('scores') ?? {});
+      return;
+    }
     setValue('scores', workingScores);
   }, [workingScores, setValue]);
+
+  useEffect(() => {
+    return () => clearWorkingScores();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const currentFormRef = useRef<{
     form: ScoreForm;

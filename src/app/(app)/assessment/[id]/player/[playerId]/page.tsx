@@ -35,6 +35,7 @@ import {
   useFamilyContactsQuery,
   useAddFamilyContactMutation,
   useRemoveFamilyContactMutation,
+  useLinkFamilyContactGuardianMutation,
   usePlayerLettersQuery,
   useResendPlayerLetterMutation,
 } from '@/features/queries';
@@ -47,6 +48,8 @@ import { mockAiPlayerSummary } from '@/data/teamBuilder';
 
 const AI_IDLE_TEXT = 'Generating...';
 const AI_LOADING_TEXTS = ['Gathering data...', 'Ranking evaluations...', 'Analyzing strengths...', 'Finalizing insight...'];
+
+const makeTempPassword = () => Math.random().toString(36).slice(-6) + 'Aa1!';
 
 export default function PlayerHubPage() {
   const id = useAssessmentId();
@@ -103,11 +106,13 @@ export default function PlayerHubPage() {
   const familyContactsQuery = useFamilyContactsQuery(player?.athleteId);
   const addFamilyContactMut = useAddFamilyContactMutation(player?.athleteId ?? '');
   const removeFamilyContactMut = useRemoveFamilyContactMutation(player?.athleteId ?? '');
+  const linkContactGuardianMut = useLinkFamilyContactGuardianMutation();
   const [showAddContact, setShowAddContact] = useState(false);
   const [contactName, setContactName] = useState('');
   const [contactRelationship, setContactRelationship] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
+  const [invitingContactId, setInvitingContactId] = useState<string | null>(null);
 
   // Letters sent to this player from the Letters tool — composing a new one
   // lives there (it needs the template picker across the whole roster), so
@@ -320,6 +325,60 @@ export default function PlayerHubPage() {
     }
   };
 
+  // Invites a family contact to the guardian portal: creates their login if
+  // they have none (the email carries a temporary password) or re-uses the one
+  // they have, and connects it to this athlete. When the athlete has no
+  // guardian yet the contact becomes it; otherwise they are connected as an
+  // additional guardian beside the existing one, which is left as it is.
+  const inviteFamilyContact = async (contact: { id: string; name: string; email?: string }) => {
+    const email = contact.email?.trim();
+    if (!email || !player.athleteId) return;
+    setInvitingContactId(contact.id);
+    try {
+      let userId: string | undefined;
+      let tempPassword: string | undefined;
+      try {
+        const member = await inviteMut.mutateAsync({ email, role: 'guardian' });
+        userId = member.userId;
+      } catch (error) {
+        if (!(error instanceof Error && error.message?.includes('User not found'))) throw error;
+        tempPassword = makeTempPassword();
+        const created = await createAndInviteMut.mutateAsync({
+          email,
+          password: tempPassword,
+          name: contact.name || 'Guardian',
+          role: 'guardian',
+        });
+        userId = created.userId;
+      }
+
+      const slotFree =
+        !player.linkedGuardianId &&
+        (!player.guardianEmail || player.guardianEmail.toLowerCase() === email.toLowerCase());
+      const alreadyLinked = !!userId && player.linkedGuardianId === userId;
+      let connected = slotFree || alreadyLinked;
+      if (userId && slotFree) {
+        await linkGuardianMut.mutateAsync({ guardianId: userId, tryoutId: id!, playerId: player.athleteId });
+      } else if (userId && !alreadyLinked) {
+        connected = await linkContactGuardianMut.mutateAsync({ contactId: contact.id, userId });
+      }
+
+      const sent = tempPassword
+        ? `An account was created for ${email} and an email was sent with their temporary password:\n\n${tempPassword}`
+        : `An invitation was sent to ${email}.`;
+      await alert(
+        'Invite Sent',
+        connected
+          ? `${sent}\n\nThey are now connected to ${playerDisplayName(player)}.`
+          : `${sent}\n\nThey could not be connected to ${playerDisplayName(player)} yet. The update that lets several family members share one athlete has not been applied.`,
+      );
+    } catch (e) {
+      await alert('Invite Failed', e instanceof Error ? e.message : 'Could not invite this contact.');
+    } finally {
+      setInvitingContactId(null);
+    }
+  };
+
   const aiNotice = aiError ? (
     <div className="mt-3 rounded-xl p-3" style={{ backgroundColor: colors.tile }}>
       <p className="font-bold" style={{ color: colors.ink }}>
@@ -345,6 +404,19 @@ export default function PlayerHubPage() {
 
   return (
     <>
+      {/* The round arrow in the header below is easy to miss and the page
+          above it only offers "All evaluations", so say outright where it goes. */}
+      <button
+        type="button"
+        onClick={() => router.push(href('roster'))}
+        className="mb-2 inline-flex items-center gap-1.5 text-sm font-semibold"
+        style={{ color: colors.inkMuted }}
+      >
+        <svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+          <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
+        </svg>
+        Back to {tryout.name}
+      </button>
       <PageHeader
         title={playerDisplayName(player)}
         subtitle={`#${player.jersey ?? '—'} · ${player.pos ?? '—'}`}
@@ -451,13 +523,24 @@ export default function PlayerHubPage() {
                         {c.email ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p> : null}
                         {c.phone ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.phone}</p> : null}
                       </div>
-                      <Button
-                        label="Remove"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => confirmRemoveContact(c.id, c.name)}
-                        loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
-                      />
+                      <div className="flex shrink-0 items-center gap-1">
+                        {c.email && isCoachHere ? (
+                          <Button
+                            label="Invite"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => inviteFamilyContact(c)}
+                            loading={invitingContactId === c.id}
+                          />
+                        ) : null}
+                        <Button
+                          label="Remove"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => confirmRemoveContact(c.id, c.name)}
+                          loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>

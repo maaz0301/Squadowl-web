@@ -2301,6 +2301,13 @@ export function useRemoveFamilyContactMutation(athleteId: string) {
   });
 }
 
+export function useLinkFamilyContactGuardianMutation() {
+  return useMutation({
+    mutationFn: ({ contactId, userId }: { contactId: string; userId: string }) =>
+      getDataSource().linkFamilyContactGuardian(contactId, userId),
+  });
+}
+
 // ---- Player selection letters ----
 
 const letterTemplatesKey = ['letterTemplates'] as const;

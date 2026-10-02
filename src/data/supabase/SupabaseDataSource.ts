@@ -9709,6 +9709,20 @@ export class SupabaseDataSource implements DataSource {
     return this.rowToFamilyContact(unwrap(res) as Row);
   }
 
+  async linkFamilyContactGuardian(contactId: string, userId: string): Promise<boolean> {
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('link_family_contact_guardian', {
+      p_contact_id: contactId,
+      p_user_id: userId,
+    });
+    if (!error) return true;
+    if (error.code === 'PGRST202' || error.code === '42883') {
+      console.log('link_family_contact_guardian() not deployed, a family contact cannot be connected yet.');
+      return false;
+    }
+    throw unwrapError(error);
+  }
+
   async removeFamilyContact(id: string): Promise<void> {
     const { supabase } = await this.ctx();
     // .select().single() so a DELETE an RLS policy silently drops (matches zero
