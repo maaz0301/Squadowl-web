@@ -7,7 +7,7 @@ import { useForm, Controller, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { AddPlayerFormSchema, type AddPlayerForm as AddPlayerFormType, type Athlete, type Sport } from '@/data/types';
-import { Avatar, Button, FormLock, Input, Modal, PhoneField, Select, Spinner, Textarea, YearField, useAlert } from '@/components/ui';
+import { Avatar, Button, FormLock, Input, Modal, PhoneField, Select, Spinner, Textarea, BirthDateField, useAlert } from '@/components/ui';
 import { useAthletesQuery, useFamilyContactsQuery, useRemoveFamilyContactMutation } from '@/features/queries';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { POSITION_OPTIONS_BY_SPORT } from '@/data/positions';
@@ -173,6 +173,7 @@ export function AddPlayerForm({
       pos: defaultValues?.pos || (positionOptions.length > 0 ? '' : 'FWD'),
       shoots: defaultValues?.shoots || '',
       yearOfBirth: defaultValues?.yearOfBirth || '',
+      dateOfBirth: defaultValues?.dateOfBirth || '',
       positionTryingOutFor: defaultValues?.positionTryingOutFor || '',
       playerEmail: defaultValues?.playerEmail || '',
       guardianName: defaultValues?.guardianName || '',
@@ -212,6 +213,7 @@ export function AddPlayerForm({
     setValue('first', a.first);
     setValue('last', a.last);
     setValue('yearOfBirth', a.yearOfBirth || '');
+    setValue('dateOfBirth', a.dateOfBirth || '');
     setValue('playerEmail', a.playerEmail || '');
     setValue('guardianName', a.guardianName || '');
     setValue('guardianEmail', a.guardianEmail || '');
@@ -414,7 +416,16 @@ export function AddPlayerForm({
             control={control}
             name="yearOfBirth"
             render={({ field, fieldState }) => (
-              <YearField label="Year of Birth" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+              <BirthDateField
+                label="Date of Birth"
+                year={field.value}
+                dateOfBirth={watch('dateOfBirth') ?? ''}
+                onChange={({ year, dateOfBirth }) => {
+                  field.onChange(year);
+                  setValue('dateOfBirth', dateOfBirth);
+                }}
+                error={fieldState.error?.message}
+              />
             )}
           />
           <Controller

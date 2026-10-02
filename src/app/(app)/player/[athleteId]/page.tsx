@@ -15,6 +15,7 @@ import {
 import { usePermissions } from '@/state/authStore';
 import { describeInvite, useInviteFamilyContact } from '@/features/useInviteFamilyContact';
 import { playerDisplayName } from '@/data/rubrics';
+import { formatBirth } from '@/lib/birthDate';
 import type { ThemeColors } from '@/theme/tokens';
 
 function Row({ label, value, colors }: { label: string; value?: string; colors: ThemeColors }) {
@@ -147,7 +148,7 @@ export default function PlayerProfilePage() {
           <Row label="All Teams" value={profile.teams.map((t) => t.teamName).join(', ')} colors={colors} />
         ) : null}
         <Row label="Position" value={profile.currentPosition} colors={colors} />
-        <Row label="Year of Birth" value={profile.yearOfBirth} colors={colors} />
+        <Row label="Date of Birth" value={formatBirth(profile.dateOfBirth, profile.yearOfBirth)} colors={colors} />
         <Row label="Player Email" value={profile.playerEmail} colors={colors} />
         <Row label="Guardian" value={profile.guardianName} colors={colors} />
         <Row label="Guardian Email" value={profile.guardianEmail} colors={colors} />

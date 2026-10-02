@@ -99,6 +99,7 @@ import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
 import { useInviteSavedFamilyContacts } from '@/features/useInviteFamilyContact';
 import { PlayerFamilyContactsCard } from '@/components/assessment/PlayerFamilyContactsCard';
+import { formatBirth } from '@/lib/birthDate';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { getDataSource } from '@/data';
@@ -556,6 +557,7 @@ export default function TeamDetailPage() {
         jersey: viewingRosterEntry.jersey ?? '',
         pos: viewingRosterEntry.pos ?? '',
         yearOfBirth: viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : '',
+        dateOfBirth: viewingRosterEntry.dateOfBirth ?? '',
         playerEmail: viewingRosterEntry.playerEmail ?? viewingFullPlayer?.playerEmail ?? '',
         guardianName: viewingRosterEntry.guardianName ?? viewingFullPlayer?.guardianName ?? '',
         guardianEmail: viewingRosterEntry.guardianEmail ?? viewingFullPlayer?.guardianEmail ?? '',
@@ -2488,8 +2490,8 @@ export default function TeamDetailPage() {
                 Details
               </span>
               <PlayerDetailRow
-                label="Year of Birth"
-                value={viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined}
+                label="Date of Birth"
+                value={formatBirth(viewingRosterEntry.dateOfBirth, viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined) || undefined}
                 colors={colors}
               />
               <PlayerDetailRow

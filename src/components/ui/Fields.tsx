@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { MONTHS, buildDateOfBirth, daysInMonth, splitDateOfBirth, withYear } from '@/lib/birthDate';
 import { FieldShell, useFieldStyle } from './Input';
 import { COUNTRY_CODES } from './countryCodes';
 
@@ -161,6 +162,104 @@ export function YearField({ label, value, onChange, placeholder = 'Select year',
           </option>
         ))}
       </select>
+    </FieldShell>
+  );
+}
+
+interface BirthDateFieldProps {
+  label?: string;
+  /** The year of birth, "YYYY" — always kept, whether or not the full date is known. */
+  year?: string;
+  /** The full date, "YYYY-MM-DD", or '' while the month or day is not chosen. */
+  dateOfBirth?: string;
+  onChange: (value: { year: string; dateOfBirth: string }) => void;
+  error?: string;
+}
+
+/**
+ * Year, month and day of birth. The year alone is still a complete answer (the
+ * month and day are optional); choosing all three records the full date.
+ */
+export function BirthDateField({ label, year = '', dateOfBirth = '', onChange, error }: BirthDateFieldProps) {
+  const fieldStyle = useFieldStyle(error);
+  const parts = splitDateOfBirth(dateOfBirth);
+  // A month and day picked before the date was complete live only here until
+  // all three are set, so choosing them in any order does not lose the first.
+  const [pending, setPending] = useState<{ month: string; day: string }>({ month: parts.month, day: parts.day });
+  const month = parts.month || pending.month;
+  const day = parts.day || pending.day;
+
+  const years = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const list: number[] = [];
+    for (let y = currentYear; y >= 1950; y--) list.push(y);
+    return list;
+  }, []);
+  const dayCount = year && month ? daysInMonth(Number(year), Number(month)) : 31;
+
+  const emit = (nextYear: string, nextMonth: string, nextDay: string) => {
+    const fixed = withYear({ year, month: nextMonth, day: nextDay }, nextYear);
+    setPending({ month: fixed.month, day: fixed.day });
+    onChange({ year: nextYear, dateOfBirth: buildDateOfBirth(nextYear, fixed.month, fixed.day) });
+  };
+
+  const arrow =
+    "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238fa3c8' stroke-width='2.5' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>\")";
+  const selectStyle = {
+    ...fieldStyle,
+    backgroundImage: arrow,
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'right 12px center',
+    backgroundSize: '16px',
+  } as const;
+  const selectClass = `${CONTROL} cursor-pointer appearance-none pr-9`;
+
+  return (
+    <FieldShell label={label} error={error}>
+      <div className="grid grid-cols-[1.1fr_1.4fr_0.9fr] gap-2">
+        <select
+          aria-label="Year of birth"
+          value={year}
+          onChange={(e) => emit(e.target.value, month, day)}
+          className={selectClass}
+          style={selectStyle}
+        >
+          <option value="">Year</option>
+          {years.map((y) => (
+            <option key={y} value={String(y)}>
+              {y}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Month of birth"
+          value={month}
+          onChange={(e) => emit(year, e.target.value, day)}
+          className={selectClass}
+          style={selectStyle}
+        >
+          <option value="">Month</option>
+          {MONTHS.map((m, i) => (
+            <option key={m} value={String(i + 1)}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Day of birth"
+          value={day}
+          onChange={(e) => emit(year, month, e.target.value)}
+          className={selectClass}
+          style={selectStyle}
+        >
+          <option value="">Day</option>
+          {Array.from({ length: dayCount }, (_, i) => (
+            <option key={i + 1} value={String(i + 1)}>
+              {i + 1}
+            </option>
+          ))}
+        </select>
+      </div>
     </FieldShell>
   );
 }

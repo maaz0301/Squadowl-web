@@ -43,6 +43,7 @@ import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/feature
 import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition } from '@/data/rubrics';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
 import { PlayerProfileSection } from '@/components/player/PlayerProfileSection';
+import { formatBirth } from '@/lib/birthDate';
 import { LETTER_KIND_LABELS } from '@/data/letters';
 import { PlanGate } from '@/components/PlanGate';
 import { mockAiPlayerSummary } from '@/data/teamBuilder';
@@ -409,7 +410,7 @@ export default function PlayerHubPage() {
               #{player.jersey ?? '—'} · {player.pos ?? '—'}
             </span>
             {player.registrationSource === 'qr' ? <Badge label="QR Registered" variant="info" /> : null}
-            {player.yearOfBirth ? <Badge label={`Born ${player.yearOfBirth}`} /> : null}
+            {player.yearOfBirth ? <Badge label={`Born ${formatBirth(player.dateOfBirth, player.yearOfBirth)}`} /> : null}
             {player.playerEmail ? (
               <span className="break-words text-sm" style={{ color: colors.inkMuted }}>{player.playerEmail}</span>
             ) : null}
