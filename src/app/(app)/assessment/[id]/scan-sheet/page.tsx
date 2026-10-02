@@ -9,19 +9,25 @@ import { useImportScanScoresMutation, useTryoutQuery } from '@/features/queries'
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { useTerms } from '@/lib/terms';
 import { parseRosterFile, type ParsedSheet } from '@/lib/rosterImport';
+import { parsePdfFile } from '@/lib/pdfTable';
+import { ImportReviewModal } from '@/components/assessment/ImportReviewModal';
 import {
   IDENTITY_FIELDS,
   buildScoreImportRows,
   guessIdentityMapping,
   guessMeasureMapping,
+  headingMatches,
   validateImportSetup,
   type IdentityMapping,
   type MeasureMapping,
+  type RowResolutions,
+  type ScoreImportRow,
 } from '@/lib/scoreImport';
 
 const SESSION_NAME = 'Excel Import';
 const PREVIEW_ROWS = 10;
-const ACCEPT = '.csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods';
+const ACCEPT = '.csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods,.pdf';
+const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
 
 const columnLabel = (header: string, index: number) => (header.trim() ? header.trim() : `Column ${index + 1}`);
 
@@ -45,6 +51,8 @@ export default function ScanSheetPage() {
   const [mapping, setMapping] = useState<MeasureMapping>({});
   const [reading, setReading] = useState(false);
   const [savedCount, setSavedCount] = useState<number | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   const tryout = tryoutQuery.data;
   const terms = useTerms(tryout?.settings.customLabels);
@@ -63,6 +71,12 @@ export default function ScanSheetPage() {
   );
   const blocked = issues.some((i) => i.level === 'error');
   const cellWarnings = rows.filter((r) => r.errors.length === 0 && r.warnings.length > 0).length;
+  const conflicts = rows.filter((r) => r.conflict).length;
+  // Anything the file did not say outright is put in front of the coach before saving.
+  const needsReview =
+    conflicts > 0 ||
+    cellWarnings > 0 ||
+    (sheet ? headingMatches(sheet.headers, measures, mapping).some((m) => m.kind === 'close') : false);
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading evaluation..." />;
   if (tryoutQuery.isError || !tryout) {
@@ -79,7 +93,7 @@ export default function ScanSheetPage() {
     if (!picked) return;
     setReading(true);
     try {
-      const parsed = await parseRosterFile(picked, sheetName);
+      const parsed = isPdf(picked) ? await parsePdfFile(picked) : await parseRosterFile(picked, sheetName);
       const ident = guessIdentityMapping(parsed.headers);
       setFile(picked);
       setSheet(parsed);
@@ -88,23 +102,38 @@ export default function ScanSheetPage() {
     } catch (e) {
       await alert(
         'Could Not Read That File',
-        `${e instanceof Error ? e.message : 'Unknown error'}\n\nCSV and Excel files can be read; a PDF cannot.`,
+        `${e instanceof Error ? e.message : 'Unknown error'}\n\nCSV, Excel and text-based PDF files can be read. A scanned (image) PDF cannot.`,
       );
     } finally {
       setReading(false);
     }
   };
 
-  const save = async () => {
-    const scores = ready.flatMap((r) =>
+  const saveRows = async (toSave: ScoreImportRow[]) => {
+    const importable = toSave.filter((r) => r.errors.length === 0 && r.player);
+    const scores = importable.flatMap((r) =>
       Object.entries(r.scores).map(([rubricKey, value]) => ({ playerId: r.player!.id, rubricKey, value })),
     );
     try {
       await importScores.mutateAsync({ tryoutId: id!, scores, session: SESSION_NAME });
-      setSavedCount(ready.length);
+      setReviewing(false);
+      setSavedCount(importable.length);
     } catch (e) {
       await alert('Import Failed', e instanceof Error ? e.message : 'Nothing was saved. Try again.');
     }
+  };
+
+  /** Import was pressed: through the review window when anything was guessed, straight away when not. */
+  const startImport = () => (needsReview ? setReviewing(true) : void saveRows(rows));
+
+  /** The coach's choices in the window: rebuild the rows with them, then save exactly those. */
+  const confirmReview = (resolutions: RowResolutions) =>
+    void saveRows(buildScoreImportRows(sheet!, tryout.roster, identity, mapping, measures, resolutions));
+
+  const dropFile = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    void readFile(e.dataTransfer.files?.[0]);
   };
 
   const select = (value: number | null | undefined, onChange: (i: number | null) => void) => (
@@ -139,7 +168,7 @@ export default function ScanSheetPage() {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader title="Import Scores from Excel" showBack backHref={href('roster')} />
+      <PageHeader title="Import Scores from a File" showBack backHref={href('roster')} />
       <input ref={fileRef} type="file" accept={ACCEPT} className="hidden" onChange={(e) => void readFile(e.target.files?.[0])} />
 
       {measures.length === 0 ? (
@@ -158,14 +187,29 @@ export default function ScanSheetPage() {
           <Button label="View Results" onClick={() => router.push(href('results'))} />
         </Card>
       ) : !sheet ? (
-        <Card accent className="flex flex-col items-start gap-2">
-          <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>Import results from a file</span>
-          <span style={{ color: colors.inkMuted }}>
-            Choose an Excel or CSV file with one row per {terms.player.toLowerCase()}. You will match its columns to this evaluation&apos;s{' '}
-            {measures.length} {measures.length === 1 ? 'measure' : 'measures'} before anything is saved.
-          </span>
-          <Button label="Choose File" loading={reading} onClick={() => fileRef.current?.click()} />
-        </Card>
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={dropFile}
+        >
+          <Card
+            accent
+            className="flex flex-col items-start gap-2"
+            style={dragging ? { outline: `2px dashed ${colors.primary}`, outlineOffset: 2 } : undefined}
+          >
+            <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+              Drop results here, or choose a file
+            </span>
+            <span style={{ color: colors.inkMuted }}>
+              Drop an Excel, CSV or PDF file with one row per {terms.player.toLowerCase()}. You will match its columns to this evaluation&apos;s{' '}
+              {measures.length} {measures.length === 1 ? 'measure' : 'measures'} and check any names that did not match before anything is saved.
+            </span>
+            <Button label="Choose File" loading={reading} onClick={() => fileRef.current?.click()} />
+          </Card>
+        </div>
       ) : (
         <div className="flex flex-col gap-5">
           <Card className="flex flex-wrap items-center justify-between gap-2">
@@ -257,13 +301,33 @@ export default function ScanSheetPage() {
             Saved as the &quot;{SESSION_NAME}&quot; session. Importing again replaces that session&apos;s scores for the same {terms.players.toLowerCase()}.
           </p>
           <Button
-            label={`Import ${ready.length} ${(ready.length === 1 ? terms.player : terms.players).toLowerCase()}`}
+            label={
+              needsReview
+                ? 'Review and import'
+                : `Import ${ready.length} ${(ready.length === 1 ? terms.player : terms.players).toLowerCase()}`
+            }
             loading={importScores.isPending}
-            disabled={blocked || ready.length === 0 || mappedMeasures === 0}
-            onClick={save}
+            disabled={blocked || (ready.length === 0 && conflicts === 0) || mappedMeasures === 0}
+            onClick={startImport}
           />
         </div>
       )}
+
+      {reviewing && sheet ? (
+        <ImportReviewModal
+          visible
+          headers={sheet.headers}
+          measures={measures}
+          mapping={mapping}
+          onMappingChange={(key, column) => setMapping((prev) => ({ ...prev, [key]: column }))}
+          rows={rows}
+          roster={tryout.roster}
+          importing={importScores.isPending}
+          playerLabel={terms.player}
+          onClose={() => setReviewing(false)}
+          onConfirm={confirmReview}
+        />
+      ) : null}
     </div>
   );
 }

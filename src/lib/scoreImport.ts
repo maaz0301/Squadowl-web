@@ -48,6 +48,63 @@ export function guessIdentityMapping(headers: string[]): IdentityMapping {
   return mapping;
 }
 
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** Edit distance between two strings: insert, delete, replace or swap two neighbours, each costing 1. */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a) return b.length;
+  if (!b) return a.length;
+  let beforePrev: number[] = [];
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        row[j] = Math.min(row[j], beforePrev[j - 2] + 1);
+      }
+    }
+    beforePrev = prev;
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * How alike two names or headings are, 0 (nothing) to 1 (the same once case and
+ * punctuation are ignored). Word order is ignored too, so "Crow, Catherine"
+ * reads as "Catherine Crow", and a one-letter slip ("Catherin Crow") still scores high.
+ */
+export function similarity(a: string, b: string): number {
+  const x = squash(a);
+  const y = squash(b);
+  if (!x || !y) return 0;
+  const sorted = (t: string) => t.split(' ').sort().join(' ');
+  const ratio = (m: string, n: string) => 1 - editDistance(m, n) / Math.max(m.length, n.length);
+  return Math.max(ratio(x, y), ratio(sorted(x), sorted(y)));
+}
+
+export interface PlayerSuggestion {
+  player: Player;
+  /** 0-1, see similarity(). */
+  score: number;
+}
+
+/** Below this a roster name is not offered as a possible match at all. */
+const SUGGEST_FLOOR = 0.6;
+/** At or above this the best suggestion is pre-selected in the review window (still confirmed by the coach). */
+export const SUGGEST_PRESELECT = 0.8;
+
+/** The roster players whose names are closest to `label`, best first. */
+export function suggestPlayers(label: string, roster: Player[], limit = 3): PlayerSuggestion[] {
+  return roster
+    .map((player) => ({ player, score: similarity(label, `${player.first} ${player.last}`) }))
+    .filter((s) => s.score >= SUGGEST_FLOOR)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
 /** Best guess at which column holds each measure: exact label/key first, then loose. */
 export function guessMeasureMapping(
   headers: string[],
@@ -72,8 +129,46 @@ export function guessMeasureMapping(
       }
     }
   }
+  // Last, a close spelling ("Skatting" for "Skating"): only for what is still unmatched,
+  // and only a clear winner, so a heading is never pulled onto a measure it merely resembles.
+  for (const measure of measures) {
+    if (mapping[measure.key] != null) continue;
+    let best = -1;
+    let bestScore = 0;
+    let runnerUp = 0;
+    normalized.forEach((h, i) => {
+      if (taken.has(i) || h === '') return;
+      const score = Math.max(similarity(h, measure.label), similarity(h, measure.key));
+      if (score > bestScore) {
+        runnerUp = bestScore;
+        bestScore = score;
+        best = i;
+      } else if (score > runnerUp) runnerUp = score;
+    });
+    if (best !== -1 && bestScore >= 0.8 && bestScore - runnerUp >= 0.1) {
+      mapping[measure.key] = best;
+      taken.add(best);
+    }
+  }
   for (const m of measures) mapping[m.key] ??= null;
   return mapping;
+}
+
+export type HeadingMatchKind = 'exact' | 'close' | 'missing';
+
+/** For the review window: how each measure's column was found, so a close spelling can be confirmed. */
+export function headingMatches(
+  headers: string[],
+  measures: CustomRubric[],
+  mapping: MeasureMapping,
+): { measure: CustomRubric; header: string | null; kind: HeadingMatchKind }[] {
+  return measures.map((measure) => {
+    const index = mapping[measure.key];
+    if (index == null) return { measure, header: null, kind: 'missing' as const };
+    const header = headers[index] ?? '';
+    const exact = normalizeHeader(header) === normalizeHeader(measure.label) || normalizeHeader(header) === normalizeHeader(measure.key);
+    return { measure, header, kind: exact ? ('exact' as const) : ('close' as const) };
+  });
 }
 
 const YES = new Set(['yes', 'y', 'true', '1', 'pass', 'effective']);
@@ -175,8 +270,18 @@ export function validateImportSetup(
   return issues;
 }
 
+/** A coach's decision about a row whose player could not be matched on its own. */
+export type RowResolution = { playerId: string } | 'skip';
+export type RowResolutions = Record<number, RowResolution>;
+
 export interface ScoreImportRow {
   line: number;
+  /** Why this row needs a decision: no roster player matches it, or several do. */
+  conflict?: 'unmatched' | 'ambiguous';
+  /** Closest roster names for an unmatched row, best first. */
+  suggestions: PlayerSuggestion[];
+  /** The coach chose to leave this row out (so it is not a conflict any more). */
+  skipped?: boolean;
   /** The name/jersey as written in the file, for the preview. */
   label: string;
   player: Player | null;
@@ -201,6 +306,7 @@ export function buildScoreImportRows(
   identity: IdentityMapping,
   mapping: MeasureMapping,
   measures: CustomRubric[],
+  resolutions: RowResolutions = {},
 ): ScoreImportRow[] {
   const cell = (cells: string[], index: number | null | undefined) => (index == null ? '' : (cells[index] ?? '').trim());
 
@@ -237,15 +343,30 @@ export function buildScoreImportRows(
     const errors: string[] = [];
     const warnings: string[] = [];
     let player: Player | null = null;
+    let conflict: ScoreImportRow['conflict'];
+    let skipped = false;
+    const asWritten = full || `${first} ${last}`.trim();
 
-    if (!nameKey && !jersey) {
+    const decision = resolutions[line];
+    if (decision === 'skip') {
+      skipped = true;
+      errors.push('Left out');
+    } else if (decision) {
+      player = roster.find((p) => p.id === decision.playerId) ?? null;
+      if (!player) errors.push('The chosen player is no longer on the roster');
+    } else if (!nameKey && !jersey) {
       errors.push('No player name or jersey number in this row');
     } else {
       let matches = nameKey ? (byName.get(nameKey) ?? []) : [];
       if (matches.length === 0 && jersey) matches = byJersey.get(jersey) ?? [];
       if (matches.length === 1) player = matches[0];
-      else if (matches.length > 1) errors.push('More than one player matches, add a jersey number');
-      else errors.push('No player on the roster matches this row');
+      else if (matches.length > 1) {
+        conflict = 'ambiguous';
+        errors.push('More than one player matches, add a jersey number');
+      } else {
+        conflict = 'unmatched';
+        errors.push('No player on the roster matches this row');
+      }
     }
 
     if (player) {
@@ -265,6 +386,10 @@ export function buildScoreImportRows(
     if (player && errors.length === 0 && Object.keys(scores).length === 0) errors.push('No scores to import in this row');
 
     const label = full || `${first} ${last}`.trim() || (jersey ? `#${jersey}` : `Row ${line}`);
-    return { line, label, player, scores, errors, warnings };
+    const suggestions =
+      conflict === 'unmatched' || conflict === 'ambiguous'
+        ? suggestPlayers(asWritten || label, roster)
+        : [];
+    return { line, conflict, suggestions, skipped, label, player, scores, errors, warnings };
   });
 }

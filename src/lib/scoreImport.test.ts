@@ -113,3 +113,90 @@ describe('validateImportSetup', () => {
     expect(msgs(dup, 'warning').join(' ')).toMatch(/share the heading/);
   });
 });
+
+describe('similarity and suggestions', () => {
+  it('scores close spellings high and unrelated names low', async () => {
+    const { similarity } = await import('@/lib/scoreImport');
+    expect(similarity('Catherine Crow', 'catherine  crow')).toBe(1);
+    expect(similarity('Crow, Catherine', 'Catherine Crow')).toBe(1);
+    expect(similarity('Catherin Crow', 'Catherine Crow')).toBeGreaterThan(0.9);
+    // Two letters swapped is one slip, not two.
+    expect(similarity('Maaz Kahn', 'Maaz Khan')).toBeGreaterThanOrEqual(0.8);
+    expect(similarity('Zoe Park', 'Catherine Crow')).toBeLessThan(0.5);
+  });
+
+  it('suggests the closest roster players, best first, and none for a stranger', async () => {
+    const { suggestPlayers } = await import('@/lib/scoreImport');
+    const roster = [player('1', 'Catherine', 'Crow'), player('2', 'Catherine', 'Crowe'), player('3', 'Zoe', 'Park')];
+    expect(suggestPlayers('Katherine Crow', roster).map((s) => s.player.id)).toEqual(['1', '2']);
+    expect(suggestPlayers('Quentin Vega', roster)).toEqual([]);
+  });
+});
+
+describe('fuzzy heading match', () => {
+  it('matches a close spelling to the measure, but not a vague resemblance', () => {
+    const measures = [measure({ key: 'skating', label: 'Skating' }), measure({ key: 'shooting', label: 'Shooting' })];
+    const headers = ['Name', 'Skatting', 'Shoot'];
+    const m = guessMeasureMapping(headers, measures, guessIdentityMapping(headers));
+    expect(m.skating).toBe(1);
+    // "Shoot" is picked up by the existing loose pass, so it is still mapped.
+    expect(m.shooting).toBe(2);
+  });
+
+  it('leaves a measure unmapped when two headings are equally close', () => {
+    const measures = [measure({ key: 'skating', label: 'Skating' })];
+    const headers = ['Name', 'Skatinx', 'Skatiny'];
+    expect(guessMeasureMapping(headers, measures, guessIdentityMapping(headers)).skating).toBeNull();
+  });
+
+  it('reports how each measure was matched', async () => {
+    const { headingMatches } = await import('@/lib/scoreImport');
+    const measures = [measure({ key: 'a', label: 'Skating' }), measure({ key: 'b', label: 'Passing' }), measure({ key: 'c', label: 'Edge' })];
+    const found = headingMatches(['Name', 'Skatting', 'passing'], measures, { a: 1, b: 2, c: null });
+    expect(found.map((f) => f.kind)).toEqual(['close', 'exact', 'missing']);
+  });
+});
+
+describe('resolving rows the match could not place', () => {
+  const roster = [player('1', 'Catherine', 'Crow'), player('2', 'Delphine', 'Lavoie')];
+  const measures = [measure({ key: 'skating', label: 'Skating' })];
+  const data = sheet(['Name', 'Skating'], [
+    ['Catherin Crow', '4'],
+    ['Quentin Vega', '3'],
+    ['Delphine Lavoie', '5'],
+  ]);
+  const ident = { fullName: 0 };
+  const map = { skating: 1 };
+
+  it('flags unmatched rows as conflicts with suggestions', () => {
+    const rows = buildScoreImportRows(data, roster, ident, map, measures);
+    expect(rows[0].conflict).toBe('unmatched');
+    expect(rows[0].suggestions[0].player.id).toBe('1');
+    expect(rows[1].conflict).toBe('unmatched');
+    expect(rows[1].suggestions).toEqual([]);
+    expect(rows[2].conflict).toBeUndefined();
+    expect(rows[2].errors).toEqual([]);
+  });
+
+  it('imports a row once the coach picks the player, and drops one they skip', () => {
+    const rows = buildScoreImportRows(data, roster, ident, map, measures, { 2: { playerId: '1' }, 3: 'skip' });
+    expect(rows[0].player?.id).toBe('1');
+    expect(rows[0].errors).toEqual([]);
+    expect(rows[0].scores).toEqual({ skating: 4 });
+    expect(rows[1].skipped).toBe(true);
+    expect(rows[1].errors).toEqual(['Left out']);
+    expect(rows[1].conflict).toBeUndefined();
+  });
+
+  it('still refuses the same player twice after a pick', () => {
+    const rows = buildScoreImportRows(
+      sheet(['Name', 'Skating'], [['Catherine Crow', '4'], ['Catherin Crow', '5']]),
+      roster,
+      ident,
+      map,
+      measures,
+      { 3: { playerId: '1' } },
+    );
+    expect(rows[1].errors.join(' ')).toMatch(/Same player as row/);
+  });
+});

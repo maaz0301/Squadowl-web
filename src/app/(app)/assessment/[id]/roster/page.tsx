@@ -321,8 +321,8 @@ export default function RosterPage() {
       go: () => router.push(href('roster-library')),
     },
     {
-      label: 'Import Scores from Excel',
-      desc: 'Import results from a spreadsheet and assign its columns to your measures.',
+      label: 'Import Scores from a File',
+      desc: 'Drop in results from Excel, CSV or PDF, match its columns to your measures and check any names that did not match.',
       go: () => router.push(href('scan-sheet')),
     },
     {
