@@ -535,6 +535,8 @@ export interface DataSource {
    * that supports several guardians per athlete is not deployed yet.
    */
   linkFamilyContactGuardian(contactId: string, userId: string): Promise<boolean>;
+  /** Ids of the family contacts already connected to the athlete's guardian portal. */
+  listConnectedFamilyContactIds(athleteId: string): Promise<string[]>;
 
   // Player selection letters — the offer / roster-decision letters a coach
   // sends when a tryout is decided. Templates are account-wide and reusable;

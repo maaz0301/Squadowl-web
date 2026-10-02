@@ -9724,6 +9724,17 @@ export class SupabaseDataSource implements DataSource {
     throw unwrapError(error);
   }
 
+  async listConnectedFamilyContactIds(athleteId: string): Promise<string[]> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase
+      .from('athlete_guardian_links')
+      .select('contact_id')
+      .eq('athlete_id', athleteId);
+    // A badge, not a gate: where the table is missing or unreadable, show none.
+    if (error) return [];
+    return ((data ?? []) as Row[]).map((r) => r.contact_id as string).filter(Boolean);
+  }
+
   async removeFamilyContact(id: string): Promise<void> {
     const { supabase } = await this.ctx();
     // .select().single() so a DELETE an RLS policy silently drops (matches zero

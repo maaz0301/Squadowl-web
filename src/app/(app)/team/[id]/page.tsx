@@ -98,6 +98,7 @@ import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
 import { useInviteSavedFamilyContacts } from '@/features/useInviteFamilyContact';
+import { PlayerFamilyContactsCard } from '@/components/assessment/PlayerFamilyContactsCard';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { getDataSource } from '@/data';
@@ -2524,6 +2525,16 @@ export default function TeamDetailPage() {
                 colors={colors}
               />
             </Card>
+
+            {canManageTeam || canAssess ? (
+              <PlayerFamilyContactsCard
+                athleteId={viewingRosterEntry.athleteId}
+                athleteName={`${viewingRosterEntry.first} ${viewingRosterEntry.last}`.trim()}
+                linkedGuardianId={viewingRosterEntry.linkedGuardianId ?? viewingFullPlayer?.linkedGuardianId}
+                guardianEmail={viewingRosterEntry.guardianEmail ?? viewingFullPlayer?.guardianEmail}
+                canInvite={canManageTeam}
+              />
+            ) : null}
 
             {viewingRosterEntry.canViewMedical ? (
               <Card className="flex flex-col gap-2">
