@@ -17,10 +17,13 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 export function MonthCalendar({
   events,
   teamName,
+  teamNameFor,
   onAddEvent,
 }: {
   events: SeasonEvent[];
   teamName?: string;
+  /** For a calendar that mixes several teams: which team an event belongs to. Shown on each event. */
+  teamNameFor?: (event: SeasonEvent) => string | undefined;
   /** When given, a selected day offers "Add event on <date>" and hands the date back. */
   onAddEvent?: (date: string) => void;
 }) {
@@ -133,6 +136,11 @@ export function MonthCalendar({
                 <span className="block truncate font-bold" style={{ color: colors.ink }}>
                   {ev.title}
                 </span>
+                {teamNameFor?.(ev) ? (
+                  <span className="block truncate text-xs font-semibold" style={{ color: colors.primary }}>
+                    {teamNameFor(ev)}
+                  </span>
+                ) : null}
                 <span className="block text-sm" style={{ color: colors.inkMuted }}>
                   {ev.startTime ?? '—'} ·{' '}
                   {ev.location ? <MapLink location={ev.location} label={ev.title} size="sm" variant="inline" /> : 'TBD'}
@@ -140,7 +148,7 @@ export function MonthCalendar({
               </span>
               <span className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
                 <MapLink location={ev.location} label={ev.title} size="sm" />
-                <AddToCalendar event={ev} teamName={teamName} size="sm" />
+                <AddToCalendar event={ev} teamName={teamNameFor?.(ev) ?? teamName} size="sm" />
                 <Badge label={ev.type} />
               </span>
             </Card>
