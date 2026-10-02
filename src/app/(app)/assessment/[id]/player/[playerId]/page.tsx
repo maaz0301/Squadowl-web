@@ -38,9 +38,12 @@ import {
   usePlayerLettersQuery,
   useResendPlayerLetterMutation,
 } from '@/features/queries';
+import { describeInvite, useInviteFamilyContact } from '@/features/useInviteFamilyContact';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition } from '@/data/rubrics';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
+import { PlayerProfileSection } from '@/components/player/PlayerProfileSection';
+import { formatBirth } from '@/lib/birthDate';
 import { LETTER_KIND_LABELS } from '@/data/letters';
 import { PlanGate } from '@/components/PlanGate';
 import { mockAiPlayerSummary } from '@/data/teamBuilder';
@@ -103,11 +106,13 @@ export default function PlayerHubPage() {
   const familyContactsQuery = useFamilyContactsQuery(player?.athleteId);
   const addFamilyContactMut = useAddFamilyContactMutation(player?.athleteId ?? '');
   const removeFamilyContactMut = useRemoveFamilyContactMutation(player?.athleteId ?? '');
+  const inviteContact = useInviteFamilyContact();
   const [showAddContact, setShowAddContact] = useState(false);
   const [contactName, setContactName] = useState('');
   const [contactRelationship, setContactRelationship] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
+  const [invitingContactId, setInvitingContactId] = useState<string | null>(null);
 
   // Letters sent to this player from the Letters tool — composing a new one
   // lives there (it needs the template picker across the whole roster), so
@@ -320,6 +325,27 @@ export default function PlayerHubPage() {
     }
   };
 
+  // Invites a family contact to the guardian portal and connects them to this
+  // athlete — see useInviteFamilyContact for how the athlete's single guardian
+  // slot and additional guardians are handled.
+  const inviteFamilyContact = async (contact: { id: string; name: string; email?: string }) => {
+    if (!contact.email?.trim() || !player.athleteId) return;
+    setInvitingContactId(contact.id);
+    try {
+      const result = await inviteContact(contact, {
+        athleteId: player.athleteId,
+        linkedGuardianId: player.linkedGuardianId,
+        guardianEmail: player.guardianEmail,
+        tryoutId: id,
+      });
+      if (result) await alert('Invite Sent', describeInvite(result, contact.name, playerDisplayName(player)));
+    } catch (e) {
+      await alert('Invite Failed', e instanceof Error ? e.message : 'Could not invite this contact.');
+    } finally {
+      setInvitingContactId(null);
+    }
+  };
+
   const aiNotice = aiError ? (
     <div className="mt-3 rounded-xl p-3" style={{ backgroundColor: colors.tile }}>
       <p className="font-bold" style={{ color: colors.ink }}>
@@ -345,11 +371,23 @@ export default function PlayerHubPage() {
 
   return (
     <>
+      {/* The page above only offers "All evaluations", so say outright where
+          this goes: back to the evaluation the player is on. It is the only back
+          control here, so it is sized to be found. */}
+      <button
+        type="button"
+        onClick={() => router.push(href('roster'))}
+        className="mb-3 inline-flex items-center gap-2 py-1 text-base font-bold"
+        style={{ color: colors.ink }}
+      >
+        <svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+          <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
+        </svg>
+        Back to {tryout.name}
+      </button>
       <PageHeader
         title={playerDisplayName(player)}
         subtitle={`#${player.jersey ?? '—'} · ${player.pos ?? '—'}`}
-        showBack
-        backHref={href('roster')}
         right={
           <>
             <Button label={terms.t('Score Player')} onClick={() => router.push(href(`score/${playerId}`))} />
@@ -372,7 +410,7 @@ export default function PlayerHubPage() {
               #{player.jersey ?? '—'} · {player.pos ?? '—'}
             </span>
             {player.registrationSource === 'qr' ? <Badge label="QR Registered" variant="info" /> : null}
-            {player.yearOfBirth ? <Badge label={`Born ${player.yearOfBirth}`} /> : null}
+            {player.yearOfBirth ? <Badge label={`Born ${formatBirth(player.dateOfBirth, player.yearOfBirth)}`} /> : null}
             {player.playerEmail ? (
               <span className="break-words text-sm" style={{ color: colors.inkMuted }}>{player.playerEmail}</span>
             ) : null}
@@ -451,13 +489,24 @@ export default function PlayerHubPage() {
                         {c.email ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p> : null}
                         {c.phone ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.phone}</p> : null}
                       </div>
-                      <Button
-                        label="Remove"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => confirmRemoveContact(c.id, c.name)}
-                        loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
-                      />
+                      <div className="flex shrink-0 items-center gap-1">
+                        {c.email && isCoachHere ? (
+                          <Button
+                            label="Invite"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => inviteFamilyContact(c)}
+                            loading={invitingContactId === c.id}
+                          />
+                        ) : null}
+                        <Button
+                          label="Remove"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => confirmRemoveContact(c.id, c.name)}
+                          loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -621,22 +670,14 @@ export default function PlayerHubPage() {
             </PlanGate>
           </Card>
 
-          {/* The profile is season-over-season history, which an assessor
-              scores without — they only ever see the assessment in front of
-              them. */}
-          {isAssessorOnly ? null : (
-            <Card className="flex flex-col items-start gap-2">
-              <p className="font-display font-bold" style={{ color: colors.ink }}>{terms.t('Player Profile')}</p>
-              <p className="text-sm" style={{ color: colors.inkMuted }}>
-                View full evaluation history, score trends, and season-over-season comparison.
-              </p>
-              <Button
-                label="View Full Profile"
-                variant="secondary"
-                disabled={!player.athleteId}
-                onClick={() => router.push(`/player/${player.athleteId}`)}
-              />
-            </Card>
+          {/* The whole profile, inline: details, season-over-season and the
+              evaluation history. It is history an assessor scores without —
+              they only ever see the assessment in front of them. */}
+          {isAssessorOnly || !player.athleteId ? null : (
+            <PlayerProfileSection
+              athleteId={player.athleteId}
+              onEditDetails={canAssess ? () => setShowEdit(true) : undefined}
+            />
           )}
 
           {/* Every evaluator's scores, recommendation and notes, with an Edit

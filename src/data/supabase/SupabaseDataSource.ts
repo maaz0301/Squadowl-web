@@ -1218,6 +1218,7 @@ export class SupabaseDataSource implements DataSource {
       guardianPhone: a.guardian_phone ?? undefined,
       linkedGuardianId: a.guardian_user_id ?? undefined,
       yearOfBirth: a.year_of_birth != null ? String(a.year_of_birth) : undefined,
+      dateOfBirth: a.date_of_birth ?? undefined,
       currentPosition: a.default_position ?? undefined,
       currentTeam: p.current_team ?? undefined,
       currentLevel: p.current_level ?? undefined,
@@ -1270,6 +1271,7 @@ export class SupabaseDataSource implements DataSource {
       firstName: r.first_name,
       lastName: r.last_name,
       yearOfBirth: r.year_of_birth != null ? String(r.year_of_birth) : undefined,
+      dateOfBirth: r.date_of_birth ?? undefined,
       positionTryingOutFor: r.position_trying_out_for ?? undefined,
       playerEmail: r.player_email ?? undefined,
       guardianName: r.guardian_name,
@@ -2446,6 +2448,7 @@ export class SupabaseDataSource implements DataSource {
       jersey: r.jersey ?? undefined,
       pos: r.position ?? undefined,
       yearOfBirth: a.year_of_birth ?? undefined,
+      dateOfBirth: a.date_of_birth ?? undefined,
       playerEmail: a.player_email ?? undefined,
       guardianEmail: a.guardian_email ?? undefined,
       guardianName: a.guardian_name ?? undefined,
@@ -2626,6 +2629,7 @@ export class SupabaseDataSource implements DataSource {
         ? await this.createAthlete(callerAccountId!, fields)
         : await this.createAthleteForOwner({ teamId }, fields);
     }
+    await this.saveDateOfBirth(athleteId, form.dateOfBirth || undefined);
     await this.addTeamRosterPlayers(teamId, [{ athleteId, jersey: form.jersey, pos: form.pos }]);
     return { athleteId };
   }
@@ -2640,8 +2644,26 @@ export class SupabaseDataSource implements DataSource {
    * the owner/RPC dance _addManualTeamPlayer needs for creating a brand new
    * athlete row.
    */
+  /**
+   * Save a player's full date of birth. Kept apart from the rest of the athlete's
+   * fields on purpose: the create paths go through server functions that name
+   * their columns, and a failure here (the column not deployed yet, say) must never
+   * cost the coach the player they were saving, so it is logged rather than thrown.
+   * `undefined` means "not given", '' clears it.
+   */
+  private async saveDateOfBirth(athleteId: string, dateOfBirth: string | null | undefined): Promise<void> {
+    if (dateOfBirth === undefined || !athleteId) return;
+    const { supabase } = await this.ctx();
+    const { error } = await supabase
+      .from('athletes')
+      .update({ date_of_birth: dateOfBirth || null })
+      .eq('id', athleteId);
+    if (error) console.warn('Could not save the date of birth:', error.message);
+  }
+
   async updateTeamRosterPlayer(teamId: string, athleteId: string, form: AddPlayerForm): Promise<void> {
     const { supabase } = await this.ctx();
+    await this.saveDateOfBirth(athleteId, form.dateOfBirth);
 
     const athletePatch: Row = {
       first_name: form.first,
@@ -4198,6 +4220,7 @@ export class SupabaseDataSource implements DataSource {
         : await this.createAthleteForOwner({ tryoutId }, fields);
       guard.wrote = true;
     }
+    await this.saveDateOfBirth(athleteId, form.dateOfBirth || undefined);
     const participant = unwrap(
       await supabase
         .from('tryout_participants')
@@ -4321,6 +4344,12 @@ export class SupabaseDataSource implements DataSource {
         }
         throw unwrapError(error);
       }
+    }
+    if (updates.dateOfBirth !== undefined) {
+      const part = (
+        await supabase.from('tryout_participants').select('athlete_id').eq('id', playerId).maybeSingle()
+      ).data as Row | null;
+      if (part?.athlete_id) await this.saveDateOfBirth(part.athlete_id as string, updates.dateOfBirth);
     }
     return this.fetchPlayer(playerId);
   }
@@ -5487,6 +5516,14 @@ export class SupabaseDataSource implements DataSource {
         .select()
         .single(),
     ) as Row;
+    if (form.dateOfBirth) {
+      const { error } = await supabase
+        .from('registrations')
+        .update({ date_of_birth: form.dateOfBirth })
+        .eq('id', row.id);
+      if (error) console.warn('Could not save the date of birth:', error.message);
+      else row.date_of_birth = form.dateOfBirth;
+    }
     return this.rowToRegistration(row);
   }
 
@@ -5539,6 +5576,7 @@ export class SupabaseDataSource implements DataSource {
       ownerAccountId && ownerAccountId !== accountId
         ? await this.createAthleteForOwner({ tryoutId }, fields)
         : await this.createAthlete(accountId, fields);
+    await this.saveDateOfBirth(athleteId, reg.date_of_birth ?? undefined);
     const participant = unwrap(
       await supabase
         .from('tryout_participants')
@@ -5597,6 +5635,7 @@ export class SupabaseDataSource implements DataSource {
       ownerAccountId && ownerAccountId !== accountId
         ? await this.createAthleteForOwner({ teamId }, fields)
         : await this.createAthlete(accountId, fields);
+    await this.saveDateOfBirth(athleteId, reg.date_of_birth ?? undefined);
     const rows = await this.addTeamRosterPlayers(teamId, [
       { athleteId, pos: reg.position_trying_out_for || undefined },
     ]);
@@ -5706,6 +5745,10 @@ export class SupabaseDataSource implements DataSource {
         )
         .select('id'),
     );
+    // The bulk athlete create names its columns, so the full date of birth a
+    // registration carries is copied across here, only for the ones that have it.
+    const withDate = placed.filter(({ reg }) => !!reg.date_of_birth);
+    await mapPool(withDate, 8, ({ reg, athleteId }) => this.saveDateOfBirth(athleteId, reg.date_of_birth as string));
   }
 
   /**
@@ -7615,6 +7658,7 @@ export class SupabaseDataSource implements DataSource {
         first: a.first_name ?? '',
         last: a.last_name ?? '',
         yearOfBirth: a.year_of_birth != null ? String(a.year_of_birth) : undefined,
+        dateOfBirth: a.date_of_birth ?? undefined,
         playerEmail: a.player_email ?? undefined,
         guardianName: a.guardian_name ?? undefined,
         guardianEmail: a.guardian_email ?? undefined,
@@ -7693,13 +7737,29 @@ export class SupabaseDataSource implements DataSource {
     }
 
     // 2. Fetch past evaluations across tryouts
-    const { data: tryoutRosterRows } = await supabase
+    // Only evaluations that still exist for this player: one that was deleted
+    // (tryouts.deleted_at) or that the player was taken off (removed_at) is no
+    // longer part of their record, and showing its scores here is the old
+    // evaluation's scoring following the player into a new one.
+    const { data: participantRows } = await supabase
       .from('tryout_participants')
-      .select('id')
-      .eq('athlete_id', athleteId);
+      .select('id, tryout_id')
+      .eq('athlete_id', athleteId)
+      .is('removed_at', null);
+
+    let tryoutRosterRows: { id: string }[] = [];
+    if (participantRows && participantRows.length > 0) {
+      const { data: liveTryouts } = await supabase
+        .from('tryouts')
+        .select('id')
+        .in('id', [...new Set(participantRows.map((p) => p.tryout_id))])
+        .is('deleted_at', null);
+      const liveIds = new Set((liveTryouts ?? []).map((t) => t.id));
+      tryoutRosterRows = participantRows.filter((p) => liveIds.has(p.tryout_id));
+    }
 
     let pastEvaluations: Evaluation[] = [];
-    if (tryoutRosterRows && tryoutRosterRows.length > 0) {
+    if (tryoutRosterRows.length > 0) {
       const rosterIds = tryoutRosterRows.map(r => r.id);
       const { data: evals } = await supabase
         .from('evaluations')
@@ -7900,7 +7960,7 @@ export class SupabaseDataSource implements DataSource {
       supabase
         .from('athletes')
         .select(
-          'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, guardian_user_id, default_position, year_of_birth, about, medical_info, account_id',
+          'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, guardian_user_id, default_position, year_of_birth, date_of_birth, about, medical_info, account_id',
         )
         .eq('id', athleteId)
         .maybeSingle(),
@@ -7948,11 +8008,13 @@ export class SupabaseDataSource implements DataSource {
       currentLevel: mostRecent?.current_level ?? undefined,
       jersey: mostRecent?.jersey ?? undefined,
       yearOfBirth: athleteRow.year_of_birth != null ? String(athleteRow.year_of_birth) : undefined,
+      dateOfBirth: athleteRow.date_of_birth ?? undefined,
       aboutChild: athleteRow.about ?? undefined,
       medicalInfo: canViewMedical ? (athleteRow.medical_info ?? undefined) : undefined,
       playerEmail: athleteRow.player_email ?? undefined,
       guardianName: athleteRow.guardian_name ?? undefined,
       guardianEmail: athleteRow.guardian_email ?? undefined,
+      linkedGuardianId: athleteRow.guardian_user_id ?? undefined,
       guardianPhone: athleteRow.guardian_phone ?? undefined,
       pastSeasons,
       teams,
@@ -9707,6 +9769,59 @@ export class SupabaseDataSource implements DataSource {
     }
 
     return this.rowToFamilyContact(unwrap(res) as Row);
+  }
+
+  async linkFamilyContactGuardian(contactId: string, userId: string): Promise<boolean> {
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('link_family_contact_guardian', {
+      p_contact_id: contactId,
+      p_user_id: userId,
+    });
+    if (!error) return true;
+    if (error.code === 'PGRST202' || error.code === '42883') {
+      console.log('link_family_contact_guardian() not deployed, a family contact cannot be connected yet.');
+      return false;
+    }
+    throw unwrapError(error);
+  }
+
+  async listConnectedFamilyContactIds(athleteId: string): Promise<string[]> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase
+      .from('athlete_guardian_links')
+      .select('contact_id')
+      .eq('athlete_id', athleteId);
+    // A badge, not a gate: where the table is missing or unreadable, show none.
+    if (error) return [];
+    return ((data ?? []) as Row[]).map((r) => r.contact_id as string).filter(Boolean);
+  }
+
+  async listTeamCalendarLinks(): Promise<{ viewerTeamId: string; sourceTeamId: string }[]> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.from('team_calendar_links').select('viewer_team_id, source_team_id');
+    // An extra on top of each team's own calendar: where the table is missing or unreadable, show none.
+    if (error) return [];
+    return ((data ?? []) as Row[]).map((r) => ({
+      viewerTeamId: r.viewer_team_id as string,
+      sourceTeamId: r.source_team_id as string,
+    }));
+  }
+
+  async setTeamCalendarLink(viewerTeamId: string, sourceTeamId: string, attached: boolean): Promise<void> {
+    const { supabase } = await this.ctx();
+    const { error } = attached
+      ? await supabase
+          .from('team_calendar_links')
+          .upsert(
+            { viewer_team_id: viewerTeamId, source_team_id: sourceTeamId },
+            { onConflict: 'viewer_team_id,source_team_id', ignoreDuplicates: true },
+          )
+      : await supabase
+          .from('team_calendar_links')
+          .delete()
+          .eq('viewer_team_id', viewerTeamId)
+          .eq('source_team_id', sourceTeamId);
+    if (error) throw new Error(error.message);
   }
 
   async removeFamilyContact(id: string): Promise<void> {

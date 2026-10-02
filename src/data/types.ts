@@ -37,6 +37,7 @@ export const SPORTS = [
   'Lacrosse',
   'Baseball',
   'Cricket',
+  'Skating',
   'Other',
 ] as const;
 
@@ -144,6 +145,8 @@ export const AthleteSchema = z.object({
   first: z.string(),
   last: z.string(),
   yearOfBirth: z.string().optional(),
+  /** Full date of birth, "YYYY-MM-DD", when known; the year above always accompanies it. */
+  dateOfBirth: z.string().optional(),
   /** The player's own address, separate from their guardian's — either can be invited. */
   playerEmail: z.string().optional(),
   guardianName: z.string().optional(),
@@ -193,6 +196,8 @@ export const PlayerSchema = z.object({
   guardianPhone: z.string().optional(),
   linkedGuardianId: z.string().optional(),
   yearOfBirth: z.string().optional(),
+  /** Full date of birth, "YYYY-MM-DD", when known; the year above always accompanies it. */
+  dateOfBirth: z.string().optional(),
   currentPosition: z.string().optional(),
   currentTeam: z.string().optional(),
   currentLevel: z.string().optional(),
@@ -233,6 +238,8 @@ export const RegistrationSchema = z.object({
   firstName: z.string(),
   lastName: z.string(),
   yearOfBirth: z.string().optional(),
+  /** Full date of birth, "YYYY-MM-DD", when known; the year above always accompanies it. */
+  dateOfBirth: z.string().optional(),
   positionTryingOutFor: z.string().optional(),
   playerEmail: z.string().optional(),
   guardianName: z.string(),
@@ -383,6 +390,7 @@ export const TeamRosterPlayerSchema = z.object({
   jersey: z.string().optional(),
   pos: z.string().optional(),
   yearOfBirth: z.number().optional(),
+  dateOfBirth: z.string().optional(),
   /**
    * Invite addresses, carried on the roster row itself. The team screen used to
    * dig these out of the full assessment read; "Send Invites" needs them for
@@ -608,6 +616,8 @@ export const AddPlayerFormSchema = z.object({
   pos: z.string().optional(),
   shoots: z.string().optional(),
   yearOfBirth: z.string().optional(),
+  /** Full date of birth, "YYYY-MM-DD", when known; the year above always accompanies it. */
+  dateOfBirth: z.string().optional(),
   positionTryingOutFor: z.string().optional(),
   playerEmail: z
     .string()
@@ -635,6 +645,8 @@ export const RegistrationSubmitSchema = z.object({
   firstName: z.string().min(1, 'First name is required'),
   lastName: z.string().min(1, 'Last name is required'),
   yearOfBirth: z.string().optional(),
+  /** Full date of birth, "YYYY-MM-DD", when known; the year above always accompanies it. */
+  dateOfBirth: z.string().optional(),
   positionTryingOutFor: z.string().optional(),
   playerEmail: z
     .string()
@@ -919,6 +931,8 @@ export interface PlayerProfile {
   currentLevel?: string;
   jersey?: string;
   yearOfBirth?: string;
+  /** Full date of birth, "YYYY-MM-DD", when known. */
+  dateOfBirth?: string;
   aboutChild?: string;
   /** Omitted by the server entirely unless `canViewMedical` is true — never sent to a viewer who shouldn't have it. */
   medicalInfo?: string;
@@ -926,6 +940,8 @@ export interface PlayerProfile {
   guardianName?: string;
   guardianEmail?: string;
   guardianPhone?: string;
+  /** The guardian's linked login, when the athlete has one. */
+  linkedGuardianId?: string;
   pastSeasons: { seasonId: string; seasonName: string; teamName: string }[];
   /** Every team this athlete is currently rostered on (from Teams, not just self-reported text). */
   teams: { teamId: string; teamName: string }[];

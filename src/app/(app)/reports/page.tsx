@@ -7,11 +7,15 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Card, CardGridSkeleton, EmptyState, ErrorState, PageHeader, Spinner } from '@/components/ui';
 import { HomePanel, PanelRow } from '@/components/home/HomePanel';
 import { NavPending } from '@/components/NavPending';
+import { useState } from 'react';
+
 import { useTryoutsQuery, useTryoutSummariesQuery } from '@/features/queries';
 import { useSessionStore } from '@/state/sessionStore';
 import { usePermissions, useUser } from '@/state/authStore';
 import {
   buildReportSummary,
+  listReportRubrics,
+  topPerformersByRubric,
   REPORT_RECOMMENDATIONS,
   type EvaluationReportRow,
   type ReportRecommendation,
@@ -56,6 +60,20 @@ export default function ReportsPage() {
   const scoresReady = !!fullData;
   const scoresFailed = tryoutsQuery.isError && !scoresReady;
   const summary = buildReportSummary(fullData ?? []);
+
+  // Top performers can be ranked on the overall score or on any one measure.
+  const [leaderFocus, setLeaderFocus] = useState('overall');
+  const rubricOptions = listReportRubrics(fullData ?? []);
+  const focusRubric = rubricOptions.find((r) => r.key === leaderFocus);
+  const leaders = focusRubric
+    ? topPerformersByRubric(fullData ?? [], focusRubric.key).map((p) => ({ ...p, unit: p.unit }))
+    : summary.topPerformers.map((p) => ({ ...p, unit: undefined as string | undefined }));
+  const leaderValue = (n: number, unit?: string) =>
+    !focusRubric
+      ? score(n)
+      : unit
+        ? `${Number.isInteger(n) ? n : n.toFixed(2).replace(/0$/, '')} ${unit}`
+        : n.toFixed(1);
 
   // Until the scores arrive the list is built from the light read: same cards,
   // same buttons, no progress figures.
@@ -210,7 +228,25 @@ export default function ReportsPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-2">
-              {summary.topPerformers.map((p, i) => (
+              <select
+                aria-label="Rank top performers by"
+                value={focusRubric ? focusRubric.key : 'overall'}
+                onChange={(e) => setLeaderFocus(e.target.value)}
+                className="rounded-md border px-2 py-2 text-sm font-semibold"
+                style={{ backgroundColor: colors.tile, borderColor: colors.border, color: colors.ink }}
+              >
+                <option value="overall">Top overall performers</option>
+                {rubricOptions.length > 0 ? (
+                  <optgroup label="Top in a measure">
+                    {rubricOptions.map((r) => (
+                      <option key={r.key} value={r.key}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </select>
+              {leaders.map((p, i) => (
                 <Link
                   key={`${p.evaluationId}-${p.playerId}`}
                   href={`/assessment/${p.evaluationId}/player/${p.playerId}`}
@@ -236,7 +272,7 @@ export default function ReportsPage() {
                         {p.pos ? ` · ${p.pos}` : ''}
                       </span>
                     </span>
-                    <Badge label={score(p.overall)} variant="brand" />
+                    <Badge label={leaderValue(p.overall, p.unit)} variant="brand" />
                     <NavPending />
                   </PanelRow>
                 </Link>

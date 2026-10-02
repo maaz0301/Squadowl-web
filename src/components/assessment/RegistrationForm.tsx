@@ -3,7 +3,7 @@
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RegistrationSubmitSchema, type RegistrationSubmit } from '@/data/types';
-import { Button, Input, PhoneField, Textarea, YearField } from '@/components/ui';
+import { BirthDateField, Button, Input, PhoneField, Textarea } from '@/components/ui';
 
 interface Props {
   loading?: boolean;
@@ -13,12 +13,13 @@ interface Props {
 }
 
 export function RegistrationForm({ loading, full, onSubmit }: Props) {
-  const { control, handleSubmit } = useForm<RegistrationSubmit>({
+  const { control, handleSubmit, watch, setValue } = useForm<RegistrationSubmit>({
     resolver: zodResolver(RegistrationSubmitSchema),
     defaultValues: {
       firstName: '',
       lastName: '',
       yearOfBirth: '',
+      dateOfBirth: '',
       positionTryingOutFor: '',
       playerEmail: '',
       guardianName: '',
@@ -55,7 +56,16 @@ export function RegistrationForm({ loading, full, onSubmit }: Props) {
             control={control}
             name="yearOfBirth"
             render={({ field, fieldState }) => (
-              <YearField label="Year of Birth" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
+              <BirthDateField
+                label="Date of Birth"
+                year={field.value}
+                dateOfBirth={watch('dateOfBirth') ?? ''}
+                onChange={({ year, dateOfBirth }) => {
+                  field.onChange(year);
+                  setValue('dateOfBirth', dateOfBirth);
+                }}
+                error={fieldState.error?.message}
+              />
             )}
           />
         ) : null}

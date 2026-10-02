@@ -44,7 +44,7 @@ export function QuickAccessGrid({ items }: { items: QuickAccessItem[] }) {
         <span className="min-w-0 flex-1 truncate text-sm font-bold" style={{ color: colors.ink }}>
           {item.label}
         </span>
-        <Icon name="chevronRight" size={16} color={colors.inkMuted} strokeWidth={2.5} />
+        <Icon name="chevronDown" size={16} color={colors.inkMuted} strokeWidth={2.5} />
       </div>
       <p className="text-sm" style={{ color: colors.inkMuted }}>
         {item.caption}

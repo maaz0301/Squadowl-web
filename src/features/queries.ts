@@ -917,6 +917,9 @@ export function useSaveEvaluationMutation(tryoutId: string) {
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId), refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId), refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.profile, refetchType: 'none' });
+      // The player card's history and season-over-season read this; without it the card shows "not scored" until reloaded.
+      qc.invalidateQueries({ queryKey: ['athleteHistory'] });
+      qc.invalidateQueries({ queryKey: ['playerProfile'] });
       // An assessor's roster counts "scored" off this, not off evals they can't read.
       qc.invalidateQueries({ queryKey: ['sessionProgress', tryoutId] });
     },
@@ -1314,10 +1317,11 @@ export function useShareLinkMutation(tryoutId: string) {
 }
 
 // ---- Phase 3: Seasons ----
-export function useSeasonsQuery() {
+export function useSeasonsQuery(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.seasons,
     queryFn: () => getDataSource().listSeasons(),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -2297,6 +2301,46 @@ export function useRemoveFamilyContactMutation(athleteId: string) {
     mutationFn: (id: string) => getDataSource().removeFamilyContact(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: familyContactsKey(athleteId) });
+    },
+  });
+}
+
+export function useConnectedFamilyContactIdsQuery(athleteId: string | undefined) {
+  return useQuery({
+    queryKey: [...familyContactsKey(athleteId ?? ''), 'connected'],
+    queryFn: () => getDataSource().listConnectedFamilyContactIds(athleteId!),
+    enabled: !!athleteId,
+  });
+}
+
+export const teamCalendarLinksKey = ['team-calendar-links'] as const;
+
+/** Which team calendars are attached to which other teams. */
+export function useTeamCalendarLinksQuery() {
+  return useQuery({
+    queryKey: teamCalendarLinksKey,
+    queryFn: () => getDataSource().listTeamCalendarLinks(),
+  });
+}
+
+export function useSetTeamCalendarLinkMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ viewerTeamId, sourceTeamId, attached }: { viewerTeamId: string; sourceTeamId: string; attached: boolean }) =>
+      getDataSource().setTeamCalendarLink(viewerTeamId, sourceTeamId, attached),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: teamCalendarLinksKey });
+    },
+  });
+}
+
+export function useLinkFamilyContactGuardianMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ contactId, userId }: { contactId: string; userId: string }) =>
+      getDataSource().linkFamilyContactGuardian(contactId, userId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['athletes'] });
     },
   });
 }

@@ -10,6 +10,6 @@ export { EmptyState, ErrorState, LoadingState, Skeleton, CardGridSkeleton } from
 export { PageHeader } from './PageHeader';
 export { ThemeToggle } from './ThemeToggle';
 export { ScorePad, ScoreButton } from './ScorePad';
-export { DateField, TimeField, YearField, PhoneField } from './Fields';
+export { BirthDateField, DateField, TimeField, YearField, PhoneField } from './Fields';
 export { AlertProvider, useAlert } from './Alert';
 export { FormLock } from './FormLock';

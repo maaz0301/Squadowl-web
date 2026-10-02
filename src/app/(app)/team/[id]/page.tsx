@@ -52,6 +52,8 @@ import {
   useTeamRosterInvitesMutation,
   useSeasonSummariesQuery,
   useSeasonQuery,
+  useSeasonsQuery,
+  useTeamCalendarLinksQuery,
   useChatUnreadCount,
   useSeasonRealtimeSync,
   useAddTeamEventMutation,
@@ -91,12 +93,16 @@ import { HubEventCard } from '@/components/teamHub/HubEventCard';
 import { TeamStatusTiles } from '@/components/teamHub/TeamStatusTiles';
 import { AddToCalendar } from '@/components/AddToCalendar';
 import { MonthCalendar } from '@/components/MonthCalendar';
+import { groupCalendarTeams, linkedEvents } from '@/lib/teamCalendars';
 import { EventDiscussion } from '@/components/EventDiscussion';
 import { MapLink, MapLocationHint } from '@/components/MapLink';
 import { describeInviteResult, inviteNeedsAttention } from '@/lib/inviteResult';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { PlanGate } from '@/components/PlanGate';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
+import { useInviteSavedFamilyContacts } from '@/features/useInviteFamilyContact';
+import { PlayerFamilyContactsCard } from '@/components/assessment/PlayerFamilyContactsCard';
+import { formatBirth } from '@/lib/birthDate';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { getDataSource } from '@/data';
@@ -152,6 +158,7 @@ export default function TeamDetailPage() {
   };
   const searchParams = useSearchParams();
   const { alert, confirm } = useAlert();
+  const inviteSavedContacts = useInviteSavedFamilyContacts();
   const teamsQuery = useTeamsQuery();
   const tryoutSummariesQuery = useTryoutSummariesQuery(false);
   const dummyBlockedTiers = useDummyDataBlockedTiers();
@@ -208,8 +215,12 @@ export default function TeamDetailPage() {
   const [tab, setTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'schedule');
   const [openRsvpEventId, setOpenRsvpEventId] = useState<string | null>(null);
   // The event Team Status, RSVPs and the action row are pointed at.
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [showAllEvents, setShowAllEvents] = useState(false);
+  // Arriving from the Calendar page with ?event= opens that event straight away.
+  const focusEventId = searchParams.get('event');
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(focusEventId);
+  // Whether the selected event's details are showing under its card.
+  const [eventDetailsOpen, setEventDetailsOpen] = useState(true);
+  const [showAllEvents, setShowAllEvents] = useState(!!focusEventId);
   const [rsvpSearch, setRsvpSearch] = useState('');
   const [availabilityTarget, setAvailabilityTarget] = useState<{
     eventId: string;
@@ -306,9 +317,10 @@ export default function TeamDetailPage() {
       return;
     }
     const contacts = (extraFamilyContacts ?? []).filter((c) => c.name.trim() || c.email.trim());
+    let savedContacts: Awaited<ReturnType<ReturnType<typeof getDataSource>['addFamilyContact']>>[] = [];
     if (athleteId && contacts.length > 0) {
       try {
-        await Promise.all(
+        savedContacts = await Promise.all(
           contacts.map((c) =>
             getDataSource().addFamilyContact(athleteId, { name: c.name || c.email, email: c.email || undefined }),
           ),
@@ -337,6 +349,16 @@ export default function TeamDetailPage() {
     } finally {
       setInvitingAthleteId(null);
     }
+    // After the guardian's own invite, so who the athlete's primary guardian is
+    // has settled before an additional family member is connected beside it.
+    if (savedContacts.length > 0) {
+      const lines = await inviteSavedContacts(
+        { athleteId, guardianEmail: data.guardianEmail || undefined },
+        `${data.first} ${data.last}`.trim(),
+        savedContacts.map((contact, i) => ({ contact, invite: contacts[i].invite })),
+      );
+      if (lines.length > 0) await alert('Family Invites', lines.join('\n\n'));
+    }
   };
 
   const submitManualPlayer = (
@@ -353,6 +375,10 @@ export default function TeamDetailPage() {
   // it. That read used to stand in front of the schedule before the season's
   // own read had even started.
   const seasonsQuery = useSeasonSummariesQuery();
+  // Calendars of other teams attached to this one. The full seasons are only read when some are.
+  const calendarLinksQuery = useTeamCalendarLinksQuery();
+  const hasAttachedCalendars = (calendarLinksQuery.data ?? []).some((l) => l.viewerTeamId === id);
+  const allSeasonsQuery = useSeasonsQuery({ enabled: hasAttachedCalendars && tab === 'calendar' });
   const teamSeasonId = (seasonsQuery.data ?? []).find((s) => s.teamId === id)?.id;
   const seasonQuery = useSeasonQuery(teamSeasonId);
   /** Badges the Chat tab, so a coach on the hub can see the team has written. */
@@ -542,6 +568,7 @@ export default function TeamDetailPage() {
         jersey: viewingRosterEntry.jersey ?? '',
         pos: viewingRosterEntry.pos ?? '',
         yearOfBirth: viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : '',
+        dateOfBirth: viewingRosterEntry.dateOfBirth ?? '',
         playerEmail: viewingRosterEntry.playerEmail ?? viewingFullPlayer?.playerEmail ?? '',
         guardianName: viewingRosterEntry.guardianName ?? viewingFullPlayer?.guardianName ?? '',
         guardianEmail: viewingRosterEntry.guardianEmail ?? viewingFullPlayer?.guardianEmail ?? '',
@@ -879,6 +906,8 @@ export default function TeamDetailPage() {
     }
   };
 
+  // Calendars of other teams attached to this one (Calendar page): shown beside its own events.
+  const attachedCalendars = linkedEvents(id, groupCalendarTeams(allSeasonsQuery.data ?? []), calendarLinksQuery.data ?? []);
   const teamSeason = seasonQuery.data;
   const today = new Date().toISOString().split('T')[0];
   // Both the "Upcoming" stat tile/tab badge and the Schedule tab itself stay
@@ -886,7 +915,9 @@ export default function TeamDetailPage() {
   const upcomingEvents = [...(teamSeason?.events ?? [])]
     .filter((e) => e.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const scheduleEvents = upcomingEvents;
+  // An event opened from the Calendar page stays reachable even once it is past.
+  const focusedPast = (teamSeason?.events ?? []).filter((e) => e.id === focusEventId && e.date < today);
+  const scheduleEvents = [...upcomingEvents, ...focusedPast].sort((a, b) => a.date.localeCompare(b.date));
   // The hub leads with the next three; "View All" opens every upcoming event.
   const shownEvents = showAllEvents ? scheduleEvents : scheduleEvents.slice(0, 3);
   const selectedEvent = shownEvents.find((e) => e.id === selectedEventId) ?? shownEvents[0];
@@ -1194,7 +1225,7 @@ export default function TeamDetailPage() {
               Loading events...
             </p>
           ) : (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+            <div className="grid grid-cols-1 gap-6">
               <div>
                 <HubSectionLabel
                   icon="calendar"
@@ -1213,48 +1244,26 @@ export default function TeamDetailPage() {
                   </Card>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    {shownEvents.map((ev) => (
-                      <HubEventCard
-                        key={ev.id}
-                        event={ev}
-                        selected={selectedEvent?.id === ev.id}
-                        playerCount={playerCount}
-                        evaluatorCount={evaluatorCount}
-                        onSelect={() => {
-                          setSelectedEventId(ev.id);
-                          setOpenRsvpEventId(null);
-                          setRsvpSearch('');
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {selectedEvent ? (
-                  <div className="mt-3">
-                    <AddToCalendar event={selectedEvent} teamName={team?.name} variant="row" />
-                  </div>
-                ) : null}
-
-                <div className="mt-6">
-                  <HubSectionLabel icon="calendar" label="Season Hub" />
-                  {canEditTeam ? (
-                  <button
-                    type="button"
-                    onClick={() => openEventModal('Event')}
-                    className="flex h-[50px] w-full items-center gap-3 rounded-2xl px-3 text-left text-base font-bold text-white shadow-[0_4px_14px_rgba(255,107,43,0.4)] transition-[filter] hover:brightness-110"
-                    style={{ backgroundColor: colors.primary }}
-                  >
-                    <Icon name="calendarPlus" size={22} color="#ffffff" />
-                    <span className="flex-1">+ Event</span>
-                    <Icon name="chevronRight" size={18} color="#ffffff" strokeWidth={2.5} />
-                  </button>
-                  ) : null}
-                </div>
-              </div>
-
-              {selectedEvent
-                ? (() => {
+                    {shownEvents.map((ev) => {
+                      const open = selectedEvent?.id === ev.id && eventDetailsOpen;
+                      return (
+                        <div key={ev.id} className="flex flex-col gap-3">
+                          <HubEventCard
+                            event={ev}
+                            selected={selectedEvent?.id === ev.id}
+                            expanded={open}
+                            playerCount={playerCount}
+                            evaluatorCount={evaluatorCount}
+                            onSelect={() => {
+                              // The selected event's arrow shows and hides its details;
+                              // picking another event opens that one's.
+                              setEventDetailsOpen(selectedEvent?.id === ev.id ? !eventDetailsOpen : true);
+                              setSelectedEventId(ev.id);
+                              setOpenRsvpEventId(null);
+                              setRsvpSearch('');
+                            }}
+                          />
+                          {open ? ((() => {
                     const ev = selectedEvent;
                     const rsvp = rsvpSummary(ev);
                     const expanded = openRsvpEventId === ev.id;
@@ -1280,7 +1289,7 @@ export default function TeamDetailPage() {
                           }}
                           trailing={
                             <Icon
-                              name={expanded ? 'chevronUp' : 'chevronRight'}
+                              name={expanded ? 'chevronUp' : 'chevronDown'}
                               size={16}
                               color={colors.primary}
                               strokeWidth={2.5}
@@ -1393,26 +1402,36 @@ export default function TeamDetailPage() {
                         </div>
                       </div>
                     );
-                  })()
-                : (
-                  // selectedEvent is only undefined when shownEvents is empty
-                  // (it falls back to shownEvents[0] otherwise), so this is the
-                  // true "no events yet" state — without it the lg:grid-cols-2
-                  // track on the left still reserved this column's width, just
-                  // with nothing in it, which read as a broken layout on a wide
-                  // screen rather than an empty one.
-                  <div>
-                    <HubSectionLabel icon="barChart" label="Team Status" />
-                    <Card className="flex flex-col items-center gap-1 py-8 text-center">
-                      <span className="font-bold" style={{ color: colors.ink }}>
-                        Nothing to show yet
-                      </span>
-                      <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
-                        Add an event and RSVP counts, plus a quick way to set them per player, will show up here.
-                      </span>
-                    </Card>
+                  })()) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
+
+                {selectedEvent ? (
+                  <div className="mt-3">
+                    <AddToCalendar event={selectedEvent} teamName={team?.name} variant="row" />
+                  </div>
+                ) : null}
+
+                <div className="mt-6">
+                  <HubSectionLabel icon="calendar" label="Season Hub" />
+                  {canEditTeam ? (
+                  <button
+                    type="button"
+                    onClick={() => openEventModal('Event')}
+                    className="flex h-[50px] w-full items-center gap-3 rounded-2xl px-3 text-left text-base font-bold text-white shadow-[0_4px_14px_rgba(255,107,43,0.4)] transition-[filter] hover:brightness-110"
+                    style={{ backgroundColor: colors.primary }}
+                  >
+                    <Icon name="calendarPlus" size={22} color="#ffffff" />
+                    <span className="flex-1">+ Event</span>
+                    <Icon name="chevronRight" size={18} color="#ffffff" strokeWidth={2.5} />
+                  </button>
+                  ) : null}
+                </div>
+              </div>
+
             </div>
           )}
         </div>
@@ -1448,8 +1467,9 @@ export default function TeamDetailPage() {
             </p>
           ) : (
             <MonthCalendar
-              events={seasonQuery.data?.events ?? []}
+              events={[...(seasonQuery.data?.events ?? []), ...attachedCalendars.events]}
               teamName={team?.name}
+              teamNameFor={(ev) => attachedCalendars.teamByEvent.get(ev.id)}
               onAddEvent={canEditTeam ? (date) => openEventModal('Event', date) : undefined}
             />
           )}
@@ -2474,8 +2494,8 @@ export default function TeamDetailPage() {
                 Details
               </span>
               <PlayerDetailRow
-                label="Year of Birth"
-                value={viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined}
+                label="Date of Birth"
+                value={formatBirth(viewingRosterEntry.dateOfBirth, viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined) || undefined}
                 colors={colors}
               />
               <PlayerDetailRow
@@ -2511,6 +2531,16 @@ export default function TeamDetailPage() {
                 colors={colors}
               />
             </Card>
+
+            {canManageTeam || canAssess ? (
+              <PlayerFamilyContactsCard
+                athleteId={viewingRosterEntry.athleteId}
+                athleteName={`${viewingRosterEntry.first} ${viewingRosterEntry.last}`.trim()}
+                linkedGuardianId={viewingRosterEntry.linkedGuardianId ?? viewingFullPlayer?.linkedGuardianId}
+                guardianEmail={viewingRosterEntry.guardianEmail ?? viewingFullPlayer?.guardianEmail}
+                canInvite={canManageTeam}
+              />
+            ) : null}
 
             {viewingRosterEntry.canViewMedical ? (
               <Card className="flex flex-col gap-2">

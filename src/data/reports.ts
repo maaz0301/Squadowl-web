@@ -1,3 +1,4 @@
+import { getPlayerCategories } from './rubrics';
 import { computePlayerResults } from './scoring';
 import type { Tryout } from './types';
 
@@ -126,4 +127,78 @@ export function buildReportSummary(tryouts: Tryout[], topLimit = 5): ReportSumma
     rows,
     topPerformers: everyone.sort((a, b) => b.overall - a.overall).slice(0, topLimit),
   };
+}
+
+/** One measure (rubric) the leaders can be ranked on. */
+export interface ReportRubricOption {
+  /** Lower-cased label: measures are matched across evaluations by name, since their keys differ per evaluation. */
+  key: string;
+  label: string;
+  unit?: string;
+}
+
+/** A leader on one measure: their average on it across the sessions scored, with where it was scored. */
+export interface RubricLeader extends TopPerformer {
+  unit?: string;
+}
+
+const rubricKey = (label: string) => label.trim().toLowerCase();
+
+/** Every measure that has at least one score, across all the evaluations, alphabetical. */
+export function listReportRubrics(tryouts: Tryout[]): ReportRubricOption[] {
+  const found = new Map<string, ReportRubricOption>();
+  for (const tryout of tryouts) {
+    const scored = new Set<string>();
+    for (const ev of tryout.evals) {
+      for (const [key, value] of Object.entries(ev.scores)) if (value != null && value > 0) scored.add(key);
+    }
+    for (const player of tryout.roster) {
+      for (const cat of getPlayerCategories(tryout.sport, player.pos, tryout.settings.customRubrics)) {
+        for (const sub of cat.subskills) {
+          if (!scored.has(sub.key)) continue;
+          const key = rubricKey(sub.label);
+          if (!found.has(key)) found.set(key, { key, label: sub.label.trim(), unit: sub.unit });
+        }
+      }
+    }
+  }
+  return [...found.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * Who leads on one measure, best first. A player's figure is their average on it
+ * across every session they were scored on, in each evaluation. "Best" follows the
+ * measure's own direction, so the fastest time leads on a time and the highest
+ * score leads on a skill.
+ */
+export function topPerformersByRubric(tryouts: Tryout[], key: string, topLimit = 5): RubricLeader[] {
+  const leaders: (RubricLeader & { lower: boolean })[] = [];
+  for (const tryout of tryouts) {
+    for (const player of tryout.roster) {
+      const sub = getPlayerCategories(tryout.sport, player.pos, tryout.settings.customRubrics)
+        .flatMap((c) => c.subskills)
+        .find((s) => rubricKey(s.label) === key);
+      if (!sub) continue;
+      const values = tryout.evals
+        .filter((e) => e.playerId === player.id)
+        .map((e) => e.scores[sub.key])
+        .filter((v): v is number => v != null && v > 0);
+      if (values.length === 0) continue;
+      leaders.push({
+        playerId: player.id,
+        name: `${player.first} ${player.last}`.trim(),
+        pos: player.pos,
+        evaluationId: tryout.id,
+        evaluationName: tryout.name,
+        overall: Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100,
+        unit: sub.unit,
+        lower: sub.rankingDirection === 'lower_is_better',
+      });
+    }
+  }
+  const lower = leaders.length > 0 && leaders.every((l) => l.lower);
+  return leaders
+    .sort((a, b) => (lower ? a.overall - b.overall : b.overall - a.overall))
+    .slice(0, topLimit)
+    .map(({ lower: _lower, ...leader }) => leader);
 }

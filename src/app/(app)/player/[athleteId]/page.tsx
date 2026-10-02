@@ -13,7 +13,9 @@ import {
   useRemoveFamilyContactMutation,
 } from '@/features/queries';
 import { usePermissions } from '@/state/authStore';
+import { describeInvite, useInviteFamilyContact } from '@/features/useInviteFamilyContact';
 import { playerDisplayName } from '@/data/rubrics';
+import { formatBirth } from '@/lib/birthDate';
 import type { ThemeColors } from '@/theme/tokens';
 
 function Row({ label, value, colors }: { label: string; value?: string; colors: ThemeColors }) {
@@ -42,7 +44,7 @@ export default function PlayerProfilePage() {
   const { athleteId } = useParams<{ athleteId: string }>();
   const colors = useThemeColors();
   const { alert, confirm } = useAlert();
-  const { isGuardian, role, canAssess } = usePermissions();
+  const { isGuardian, role, canAssess, canManageTeam } = usePermissions();
 
   const profileQuery = usePlayerProfileQuery(athleteId);
   const profile = profileQuery.data;
@@ -58,6 +60,27 @@ export default function PlayerProfilePage() {
   const [contactRelationship, setContactRelationship] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
+  const inviteContact = useInviteFamilyContact();
+  const [invitingContactId, setInvitingContactId] = useState<string | null>(null);
+
+  // Coach / team manager only: it creates a login and grants access to the
+  // athlete, which an assessor who merely scores them doesn't get to do.
+  const inviteFamilyContact = async (contact: { id: string; name: string; email?: string }) => {
+    if (!profile || !contact.email?.trim()) return;
+    setInvitingContactId(contact.id);
+    try {
+      const result = await inviteContact(contact, {
+        athleteId: profile.athleteId,
+        linkedGuardianId: profile.linkedGuardianId,
+        guardianEmail: profile.guardianEmail,
+      });
+      if (result) await alert('Invite Sent', describeInvite(result, contact.name, playerDisplayName(profile)));
+    } catch (e) {
+      await alert('Invite Failed', e instanceof Error ? e.message : 'Could not invite this contact.');
+    } finally {
+      setInvitingContactId(null);
+    }
+  };
 
   const submitFamilyContact = async () => {
     if (!contactName.trim()) {
@@ -125,7 +148,7 @@ export default function PlayerProfilePage() {
           <Row label="All Teams" value={profile.teams.map((t) => t.teamName).join(', ')} colors={colors} />
         ) : null}
         <Row label="Position" value={profile.currentPosition} colors={colors} />
-        <Row label="Year of Birth" value={profile.yearOfBirth} colors={colors} />
+        <Row label="Date of Birth" value={formatBirth(profile.dateOfBirth, profile.yearOfBirth)} colors={colors} />
         <Row label="Player Email" value={profile.playerEmail} colors={colors} />
         <Row label="Guardian" value={profile.guardianName} colors={colors} />
         <Row label="Guardian Email" value={profile.guardianEmail} colors={colors} />
@@ -165,13 +188,24 @@ export default function PlayerProfilePage() {
                     {c.email ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.email}</p> : null}
                     {c.phone ? <p className="truncate text-xs" style={{ color: colors.inkMuted }}>{c.phone}</p> : null}
                   </div>
-                  <Button
-                    label="Remove"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => confirmRemoveContact(c.id, c.name)}
-                    loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
-                  />
+                  <div className="flex shrink-0 items-center gap-1">
+                    {c.email && canManageTeam && role !== 'assessor' && !isGuardian ? (
+                      <Button
+                        label="Invite"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => inviteFamilyContact(c)}
+                        loading={invitingContactId === c.id}
+                      />
+                    ) : null}
+                    <Button
+                      label="Remove"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => confirmRemoveContact(c.id, c.name)}
+                      loading={removeFamilyContactMut.isPending && removeFamilyContactMut.variables === c.id}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -193,6 +227,7 @@ export default function PlayerProfilePage() {
           assessments={profile.assessments}
           colors={colors}
           exportFileName={slugify(profile.first, profile.last)}
+          viewRecords
         />
       )}
 

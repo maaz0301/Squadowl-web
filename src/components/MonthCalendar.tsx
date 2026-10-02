@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 import { AddToCalendar } from '@/components/AddToCalendar';
@@ -17,11 +18,17 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 export function MonthCalendar({
   events,
   teamName,
+  teamNameFor,
+  eventHref,
   onAddEvent,
 }: {
   events: SeasonEvent[];
   teamName?: string;
+  /** For a calendar that mixes several teams: which team an event belongs to. Shown on each event. */
+  teamNameFor?: (event: SeasonEvent) => string | undefined;
   /** When given, a selected day offers "Add event on <date>" and hands the date back. */
+  /** Where an event's full details are, when it can be opened (the team's schedule, for the all-teams calendar). */
+  eventHref?: (event: SeasonEvent) => string | undefined;
   onAddEvent?: (date: string) => void;
 }) {
   const colors = useThemeColors();
@@ -133,6 +140,11 @@ export function MonthCalendar({
                 <span className="block truncate font-bold" style={{ color: colors.ink }}>
                   {ev.title}
                 </span>
+                {teamNameFor?.(ev) ? (
+                  <span className="block truncate text-xs font-semibold" style={{ color: colors.primary }}>
+                    {teamNameFor(ev)}
+                  </span>
+                ) : null}
                 <span className="block text-sm" style={{ color: colors.inkMuted }}>
                   {ev.startTime ?? '—'} ·{' '}
                   {ev.location ? <MapLink location={ev.location} label={ev.title} size="sm" variant="inline" /> : 'TBD'}
@@ -140,8 +152,17 @@ export function MonthCalendar({
               </span>
               <span className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
                 <MapLink location={ev.location} label={ev.title} size="sm" />
-                <AddToCalendar event={ev} teamName={teamName} size="sm" />
+                <AddToCalendar event={ev} teamName={teamNameFor?.(ev) ?? teamName} size="sm" />
                 <Badge label={ev.type} />
+                {eventHref?.(ev) ? (
+                  <Link
+                    href={eventHref(ev)!}
+                    className="rounded-md border px-2.5 py-1 text-xs font-bold transition-[filter] hover:brightness-110"
+                    style={{ borderColor: colors.primary, color: colors.primary }}
+                  >
+                    View event ›
+                  </Link>
+                ) : null}
               </span>
             </Card>
           ))}

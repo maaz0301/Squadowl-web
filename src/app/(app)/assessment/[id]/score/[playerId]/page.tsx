@@ -280,15 +280,44 @@ export default function ScorePage() {
       const shouldPreserve = !isPlayerChanged && !isSessionChanged;
       lastLoadedRef.current = { playerId, evalId: evalId ?? undefined, session: currentSession };
       loadEvalData(evalId, currentSession, shouldPreserve);
+    } else if (!lastPlayerId && evalId) {
+      // First time this screen has the assessment's data. The form's defaults
+      // were built at mount, which is before the data arrives on a cold load,
+      // so an evaluation being edited rendered blank until a session chip was
+      // toggled away and back. Load it now, unless the user already typed.
+      const untouched = !previousFormRef.current || previousFormRef.current === JSON.stringify(getValues());
+      if (untouched) loadEvalData(evalId, currentSession, false);
+      else lastLoadedRef.current = { playerId, evalId, session: currentSession };
     } else {
       lastLoadedRef.current = { playerId, evalId: evalId ?? undefined, session: currentSession };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tryoutQuery.data, playerId, evalId, currentSession]);
 
+  // workingScores lives in a store that outlives this screen, so on arrival it
+  // still holds whichever player was scored last. Seed it from this form's own
+  // defaults instead of pushing the stale scores into this player's form, and
+  // empty it again on the way out so the next player starts clean.
+  const workingScoresSyncedRef = useRef(false);
   useEffect(() => {
+    if (!workingScoresSyncedRef.current) {
+      workingScoresSyncedRef.current = true;
+      setWorkingScores(getValues('scores') ?? {});
+      return;
+    }
     setValue('scores', workingScores);
   }, [workingScores, setValue]);
+
+  useEffect(() => {
+    return () => {
+      // Re-arm the seeding above: effects can run again on the same mount (React
+      // strict mode, fast refresh), and without this the emptied store would be
+      // pushed into the form, leaving a saved score blank.
+      workingScoresSyncedRef.current = false;
+      clearWorkingScores();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const currentFormRef = useRef<{
     form: ScoreForm;
@@ -368,7 +397,8 @@ export default function ScorePage() {
   const isEditing = !!evalId;
   const firstUnscoredIdx = SESSIONS.findIndex((s) => !scoredSessions.has(s) && !isServerScored(s));
 
-  const onSubmit = handleSubmit(async (data) => {
+  // `closeAfter` leaves the scoring screen once saved, instead of moving on to the next session.
+  const submit = (closeAfter: boolean) => handleSubmit(async (data) => {
     try {
       setSaving(true);
       if (autoSaveTimeoutRef.current) {
@@ -401,7 +431,7 @@ export default function ScorePage() {
       if (playerId) markSessionCompleted(playerId, data.session);
 
       const currentIdx = SESSIONS.indexOf(data.session);
-      if (currentIdx !== -1 && currentIdx < SESSIONS.length - 1) {
+      if (!closeAfter && currentIdx !== -1 && currentIdx < SESSIONS.length - 1) {
         const nextSess = SESSIONS[currentIdx + 1];
         setParams({ evalId: scoredSessions.get(nextSess) || null, session: nextSess });
       } else {
@@ -414,6 +444,8 @@ export default function ScorePage() {
       setSaving(false);
     }
   });
+  const onSubmit = submit(false);
+  const onSaveAndClose = submit(true);
 
   // Assessors only (see useCompleteAssessing): ends their session and takes the
   // evaluation off their hub; the owner / coach / team manager keeps every score.
@@ -578,6 +610,7 @@ export default function ScorePage() {
           Overall: {overall > 0 ? overall.toFixed(1) : '—'}
         </p>
         <Button label={isEditing ? 'Save & Continue' : 'Done'} onClick={onSubmit} loading={saving} size="lg" />
+        <Button label="Save & Close" variant="secondary" onClick={onSaveAndClose} disabled={saving} />
         {canComplete ? (
           <Button
             label="Complete Assessing"

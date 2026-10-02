@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 
 import { Badge, Button, Modal } from '@/components/ui';
 import type { Registration } from '@/data/types';
+import { formatBirth } from '@/lib/birthDate';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
 type Colors = ReturnType<typeof useThemeColors>;
@@ -97,7 +98,7 @@ export function RegistrationProfileModal({
 
           <Section title={terms.player} colors={colors}>
             <Row label="Name" value={`${r.firstName} ${r.lastName}`} colors={colors} />
-            <Row label="Year of Birth" value={r.yearOfBirth} colors={colors} />
+            <Row label="Date of Birth" value={formatBirth(r.dateOfBirth, r.yearOfBirth)} colors={colors} />
             <Row label="Position" value={r.positionTryingOutFor} colors={colors} />
             <Row label="Current Team" value={r.currentTeam} colors={colors} />
             <Row label="Current Level" value={r.currentLevel} colors={colors} />
