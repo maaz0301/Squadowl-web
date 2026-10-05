@@ -1566,7 +1566,10 @@ async function syncSeasonRosterFromTeam(
       const err = e as { code?: string; message?: string } | undefined;
       const duplicate =
         err?.code === '23505' || /duplicate key value/i.test(err?.message ?? '');
-      if (!duplicate) throw e;
+      // A guardian who left the team stays off the season: that is the state
+      // we want, so the event goes ahead without them.
+      const optedOut = err?.code === 'GUARDIAN_OPTED_OUT';
+      if (!duplicate && !optedOut) throw e;
     } finally {
       onProgress?.(++done, missing.length);
     }

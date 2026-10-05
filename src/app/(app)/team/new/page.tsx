@@ -170,7 +170,12 @@ export default function NewTeamPage() {
         !feeInput.trim() || isNaN(dollars) || dollars <= 0 ? 0 : Math.round(dollars * 100);
     }
 
-    const describe = (e: unknown) => (e instanceof Error ? e.message : 'Unknown error');
+    // Database errors arrive as plain objects with a message, not Error instances.
+    const describe = (e: unknown) => {
+      if (e instanceof Error) return e.message;
+      const m = (e as { message?: unknown } | null)?.message;
+      return typeof m === 'string' && m ? m : 'Unknown error';
+    };
 
     await Promise.all([
       // Events hang off a season, so every team gets one up front — the coach

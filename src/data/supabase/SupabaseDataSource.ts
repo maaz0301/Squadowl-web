@@ -238,6 +238,9 @@ export async function extractFunctionErrorMessage(error: unknown, fallback: stri
   return message;
 }
 
+/** Error code of an enrolment the database skipped because the guardian left the team. */
+export const GUARDIAN_OPTED_OUT = 'GUARDIAN_OPTED_OUT';
+
 const FETCH_PAGE_SIZE = 1000;
 
 /**
@@ -7322,8 +7325,17 @@ export class SupabaseDataSource implements DataSource {
           player_email: player.playerEmail || null,
         })
         .select('*, athletes(*)')
-        .single(),
-    ) as Row;
+        .maybeSingle(),
+    ) as Row | null;
+    // No row back means the database skipped the enrolment: the player's
+    // guardian left this team (guardian_leave_season), and nothing may enrol
+    // them again until a coach removes and re-adds the player on the roster.
+    if (!row) {
+      throw Object.assign(
+        new Error("This player's guardian has left the team. Remove the player from the team roster and add them again to enrol them."),
+        { code: GUARDIAN_OPTED_OUT },
+      );
+    }
     return this.rowToSeasonPlayer(row, []);
   }
 
