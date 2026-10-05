@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Button, Card, ErrorState, Input, LoadingState, Modal, PageHeader, SectionLabel, Spinner, useAlert } from '@/components/ui';
@@ -46,7 +46,9 @@ export default function PlayerProfilePage() {
   const { alert, confirm } = useAlert();
   const { isGuardian, role, canAssess, canManageTeam } = usePermissions();
 
-  const profileQuery = usePlayerProfileQuery(athleteId);
+  // Other athlete records that are the same person, passed in by Search.
+  const also = (useSearchParams().get('also') ?? '').split(',').filter(Boolean);
+  const profileQuery = usePlayerProfileQuery(athleteId, also);
   const profile = profileQuery.data;
 
   // Same extra-family-members feature as the assessment player page, added

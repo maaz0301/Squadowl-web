@@ -118,6 +118,20 @@ export function AddToCalendar({
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Looked up only once the menu is open. Null for anyone who cannot see the
+  // season (or the public RSVP page, which has no session), in which case the
+  // season section simply does not appear.
+  const feedQuery = useQuery({
+    queryKey: ['seasonCalendarFeed', event.id],
+    queryFn: () => getDataSource().getSeasonCalendarFeed(event.id).catch(() => null),
+    enabled: open,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  // The season section arrives after the menu opens and makes it taller, so the
+  // position is measured again when it does, otherwise it can run off the screen.
+  const feedReady = feedQuery.data != null;
+
   useLayoutEffect(() => {
     // Nothing to measure while closed — the menu is unmounted below, so a
     // stale `pos` sitting around until the next open is never read.
@@ -140,7 +154,7 @@ export function AddToCalendar({
     top = Math.max(top, margin);
 
     setPos({ top, left });
-  }, [open]);
+  }, [open, feedReady]);
 
   // Scrolling or resizing invalidates the measured position; closing is the
   // simple, correct response rather than tracking it continuously.
@@ -168,15 +182,6 @@ export function AddToCalendar({
 
   const calendarEvent = toCalendarEvent(event, { teamName });
 
-  // Looked up only once the menu is open. Null for anyone who cannot see the
-  // season (or the public RSVP page, which has no session), in which case the
-  // season section simply does not appear.
-  const feedQuery = useQuery({
-    queryKey: ['seasonCalendarFeed', event.id],
-    queryFn: () => getDataSource().getSeasonCalendarFeed(event.id).catch(() => null),
-    enabled: open,
-    staleTime: 10 * 60 * 1000,
-  });
   const feed = feedQuery.data ?? null;
   const googleUrl = googleCalendarUrl(calendarEvent);
   const outlookPersonalUrl = outlookCalendarUrl(calendarEvent);

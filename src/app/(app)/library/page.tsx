@@ -142,6 +142,7 @@ export default function LibraryPage() {
       title: 'Delete from library',
       message: `Delete "${item.title}"? Everyone who could see it loses access.`,
       confirmLabel: 'Delete',
+      destructive: true,
     });
     if (!ok) return;
     try {
@@ -152,14 +153,9 @@ export default function LibraryPage() {
     }
   };
 
-  const open = (item: LibraryItem) => {
-    if (item.kind === 'note' || isUploadedVideo(item) || videoEmbedUrl(item.url)) {
-      setViewing(item);
-      return;
-    }
-    const target = item.kind === 'file' ? item.fileUrl : (safeExternalUrl(item.url) ?? item.fileUrl);
-    if (target) window.open(target, '_blank', 'noopener,noreferrer');
-  };
+  // Read opens everything in the app: a note's text, a file's preview, a video
+  // or a link, each with its description and a way to open or download it.
+  const open = (item: LibraryItem) => setViewing(item);
 
   const saving = createItem.isPending || updateItem.isPending;
   const isNew = editing === 'new';
@@ -253,7 +249,7 @@ export default function LibraryPage() {
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  label={item.kind === 'note' ? 'Read' : item.kind === 'file' ? 'Open file' : 'Watch / open'}
+                  label="Read"
                   variant="secondary"
                   onClick={() => open(item)}
                 />
@@ -365,14 +361,12 @@ export default function LibraryPage() {
 
 function Viewer({ item }: { item: LibraryItem }) {
   const colors = useThemeColors();
-  if (item.kind === 'note') {
-    return (
-      <p className="whitespace-pre-line text-sm leading-relaxed" style={{ color: colors.ink }}>
-        {item.body}
-      </p>
-    );
-  }
   const embed = videoEmbedUrl(item.url);
+  const external = safeExternalUrl(item.url);
+  const type = item.contentType ?? '';
+  const isImage = type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(item.fileName ?? '');
+  const isPdf = type === 'application/pdf' || /\.pdf$/i.test(item.fileName ?? '');
+  const linkClass = 'inline-block rounded-lg px-3 py-2 text-sm font-semibold';
   return (
     <div className="flex flex-col gap-3">
       {isUploadedVideo(item) && item.fileUrl ? (
@@ -386,22 +380,52 @@ function Viewer({ item }: { item: LibraryItem }) {
           allowFullScreen
         />
       ) : null}
+      {item.kind === 'file' && item.fileUrl && isImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={item.fileUrl} alt={item.title} className="max-h-[60vh] w-full rounded-lg object-contain" />
+      ) : null}
+      {item.kind === 'file' && item.fileUrl && isPdf ? (
+        <iframe src={item.fileUrl} title={item.title} className="h-[60vh] w-full rounded-lg bg-white" />
+      ) : null}
       {item.body ? (
-        <p className="whitespace-pre-line text-sm" style={{ color: colors.inkMuted }}>
+        <p
+          className="whitespace-pre-line text-sm leading-relaxed"
+          style={{ color: item.kind === 'note' ? colors.ink : colors.inkMuted }}
+        >
           {item.body}
         </p>
       ) : null}
-      {safeExternalUrl(item.url) ? (
-        <a
-          href={safeExternalUrl(item.url)!}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm font-semibold underline"
-          style={{ color: colors.primary }}
-        >
-          Open in a new tab
-        </a>
+      {item.fileName ? (
+        <p className="text-xs" style={{ color: colors.inkMuted }}>
+          {item.fileName}
+          {item.fileSize ? ` · ${formatFileSize(item.fileSize)}` : ''}
+        </p>
       ) : null}
+      <div className="flex flex-wrap gap-2">
+        {item.fileUrl && !isUploadedVideo(item) ? (
+          <a
+            href={item.fileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            download={item.fileName}
+            className={linkClass}
+            style={{ background: colors.primary, color: '#fff' }}
+          >
+            {item.kind === 'file' ? 'Open or download file' : 'Open attachment'}
+          </a>
+        ) : null}
+        {external ? (
+          <a
+            href={external}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={linkClass}
+            style={{ border: `1px solid ${colors.primary}`, color: colors.primary }}
+          >
+            Open link in a new tab
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -325,7 +325,7 @@ export interface DataSource {
    */
   getSessionProgress(tryoutId: string): Promise<Record<string, number>>;
   listAthletes(): Promise<Athlete[]>;
-  getPlayerProfile(athleteId: string): Promise<import('./types').PlayerProfile>;
+  getPlayerProfile(athleteId: string, alsoAthleteIds?: string[]): Promise<import('./types').PlayerProfile>;
 
   // Team chat (season-scoped): staff on the season's account plus the guardian
   // of any athlete on its roster share this conversation.

@@ -234,6 +234,7 @@ export default function PlayerReportCardPage() {
       title: 'Delete report card',
       message: `Delete "${c.title}"? Its attached files are deleted too.`,
       confirmLabel: 'Delete',
+      destructive: true,
     });
     if (!ok) return;
     try {
@@ -269,7 +270,11 @@ export default function PlayerReportCardPage() {
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium" style={{ color: colors.ink }}>
                   {c.title}
-                  {editingId === c.id ? <Badge label="Open" variant="info" /> : null}
+                  {editingId === c.id ? (
+                    <span className="ml-2 align-middle">
+                      <Badge label="Open" variant="info" />
+                    </span>
+                  ) : null}
                 </p>
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
                   {new Date(c.updatedAt).toLocaleDateString()} · {c.evalIds.length} evaluation

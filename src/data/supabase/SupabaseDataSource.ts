@@ -8150,12 +8150,13 @@ export class SupabaseDataSource implements DataSource {
     return { participants, tryoutById, teams, assessments };
   }
 
-  async getPlayerProfile(athleteId: string): Promise<PlayerProfile> {
+  async getPlayerProfile(athleteId: string, alsoAthleteIds?: string[]): Promise<PlayerProfile> {
     const { supabase, userId, accountId } = await this.ctx();
 
     // None of these three depend on each other's results — run together
     // instead of as a chain of round trips.
-    const [{ data: athleteRow }, assessmentContext, { data: rosterRows }] = await Promise.all([
+    const ids = [athleteId, ...(alsoAthleteIds ?? []).filter((i) => i && i !== athleteId)];
+    const [{ data: athleteRow }, contexts, { data: rosterRows }] = await Promise.all([
       supabase
         .from('athletes')
         .select(
@@ -8163,8 +8164,8 @@ export class SupabaseDataSource implements DataSource {
         )
         .eq('id', athleteId)
         .maybeSingle(),
-      this.fetchAthleteAssessmentContext(supabase, athleteId),
-      supabase.from('season_roster').select('season_id, seasons(name, team_name)').eq('athlete_id', athleteId),
+      Promise.all(ids.map((id) => this.fetchAthleteAssessmentContext(supabase, id))),
+      supabase.from('season_roster').select('season_id, seasons(name, team_name)').in('athlete_id', ids),
     ]);
     if (!athleteRow) throw new Error('Athlete not found');
 
@@ -8176,7 +8177,14 @@ export class SupabaseDataSource implements DataSource {
     // and goes stale/empty independently of this request.
     const canViewMedical = athleteRow.account_id === accountId || (!!userId && athleteRow.guardian_user_id === userId);
 
-    const { participants, tryoutById, teams, assessments } = assessmentContext;
+    // The same person is sometimes stored as more than one athlete record (an
+    // athlete imported separately into two evaluations gets two). Search folds
+    // those into one result and passes the others in, so this profile shows
+    // every evaluation. Only the first record's own details are shown.
+    const participants = contexts.flatMap((c) => c.participants);
+    const tryoutById = new Map(contexts.flatMap((c) => Array.from(c.tryoutById)));
+    const teams = Array.from(new Map(contexts.flatMap((c) => c.teams).map((t) => [t.teamId, t])).values());
+    const assessments = Array.from(new Map(contexts.flatMap((c) => c.assessments).map((a) => [a.tryoutId, a])).values());
 
     const pastSeasons = (rosterRows || []).map((r) => {
       const s = Array.isArray(r.seasons) ? r.seasons[0] : r.seasons;

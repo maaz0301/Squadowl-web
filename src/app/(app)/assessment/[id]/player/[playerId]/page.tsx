@@ -211,7 +211,7 @@ export default function PlayerHubPage() {
         email: player.guardianEmail!,
         role: 'guardian',
       });
-      await alert('Invite Sent', `Resent invite to ${player.guardianEmail} with a new temporary password.`);
+      await alert('Invite Sent', `Resent the invite to ${player.guardianEmail}. A temporary password is only included if their account has never been used.`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : '';
       if (

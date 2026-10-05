@@ -8,11 +8,15 @@ import { Card, EmptyState, Input, PageHeader, Spinner } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { NavPending } from '@/components/NavPending';
 import { useSearchPlayersQuery, useSeasonsQuery, useTryoutSummariesQuery } from '@/features/queries';
-import { buildSearchIndex, runSearch } from '@/data/search';
+import { buildSearchIndex, runSearch, type SearchPerson } from '@/data/search';
 import { prefetchTryout } from '@/features/prefetch';
 import { useSessionStore } from '@/state/sessionStore';
 
 const PAGE = 25;
+
+/** Other athlete records of the same person, as a comma list for the profile address. */
+const alsoIds = (p: SearchPerson) =>
+  Array.from(new Set(p.evaluations.map((e) => e.athleteId).filter((id): id is string => !!id && id !== p.athleteId))).join(',');
 
 function Row({
   href,
@@ -191,7 +195,7 @@ export default function SearchPage() {
                   // One person on several evaluations opens their profile, which
                   // lines every evaluation up together; a single one still goes
                   // straight to that evaluation's player screen.
-                  href={many ? `/player/${p.athleteId}` : `/assessment/${first.tryoutId}/player/${first.id}`}
+                  href={many ? `/player/${p.athleteId}${alsoIds(p) ? `?also=${alsoIds(p)}` : ''}` : `/assessment/${first.tryoutId}/player/${first.id}`}
                   icon="profile"
                   title={`${p.first} ${p.last}`.trim()}
                   sub={
