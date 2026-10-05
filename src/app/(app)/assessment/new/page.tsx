@@ -568,22 +568,22 @@ function NewAssessmentForm() {
                   value={rubricMinStr}
                   onChange={(e) => setRubricMinStr(e.target.value)}
                   inputMode="decimal"
-                  placeholder={rubricType === 'time' ? '12 (Best)' : '5 (Worst)'}
+                  placeholder={rubricRankingDirection === 'lower_is_better' ? '1 (Best)' : '1 (Worst)'}
                 />
                 <Input
                   label="Max Value"
                   value={rubricMaxStr}
                   onChange={(e) => setRubricMaxStr(e.target.value)}
                   inputMode="decimal"
-                  placeholder={rubricType === 'time' ? '25 (Worst)' : '25 (Best)'}
+                  placeholder={rubricRankingDirection === 'lower_is_better' ? '10 (Worst)' : '10 (Best)'}
                 />
               </div>
 
               <p className="text-xs font-bold italic" style={{ color: colors.primary }}>
                 Score Benchmark Rule:{' '}
                 {rubricRankingDirection === 'lower_is_better'
-                  ? `Min value (${rubricMinStr || '10'}) = 5.0 points (Best)  ·  Max value (${rubricMaxStr || '25'}) = 1.0 points (Worst)`
-                  : `Min value (${rubricMinStr || '5'}) = 1.0 points (Worst)  ·  Max value (${rubricMaxStr || '25'}) = 5.0 points (Best)`}
+                  ? `Min value (${rubricMinStr || '1'}) = 5.0 points (Best)  ·  Max value (${rubricMaxStr || '10'}) = 1.0 points (Worst)`
+                  : `Min value (${rubricMinStr || '1'}) = 1.0 points (Worst)  ·  Max value (${rubricMaxStr || '10'}) = 5.0 points (Best)`}
               </p>
             </div>
           )}

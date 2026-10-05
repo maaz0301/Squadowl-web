@@ -13,6 +13,7 @@ export const ICON_PATHS = {
   chevronDown: 'M6 9l6 6 6-6',
   chevronLeft: 'M15 19l-7-7 7-7',
   archive: 'M21 8v13H3V8M1 3h22v5H1zM10 12h4',
+  library: 'M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 006.5 22H20V2H6.5A2.5 2.5 0 004 4.5v15z',
   calendar: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
   admin: 'M12 2l8 4v6c0 5-3.4 8.7-8 10-4.6-1.3-8-5-8-10V6l8-4z',
   upgrade: 'M12 19V5M5 12l7-7 7 7',

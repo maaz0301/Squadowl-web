@@ -2,6 +2,15 @@ import type { Tryout, ExportFormat } from '@/data/types';
 import { buildTeamBuilderExportRows, formatExportCsv, type TeamBuilderState } from '@/data/teamBuilder';
 import { buildFullResultsCsvRows, buildPlayerFullResults, buildReportDocInfo, buildResultsSummary } from '@/data/resultsExport';
 import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
+import { renderPlayerReportPdf, type PlayerReportPdfInput } from '@/lib/playerReportPdf';
+import {
+  LOGO_BAND,
+  drawLogoStrip,
+  embedLogos,
+  pdfSafe,
+  renderCompactResults,
+  type ReportPdfOptions,
+} from '@/lib/reportPdf';
 import * as XLSX from 'xlsx';
 
 /** Escapes a value for a CSV cell — wraps in quotes and doubles any embedded quotes if needed. */
@@ -46,11 +55,13 @@ function wrapText(text: string, f: PDFFont, size: number, maxWidth: number): str
 }
 
 /**
- * Full printable results report: one page per roster player with a
+ * Full printable results report: by default one page per roster player with a
  * metric/score/rank table (ranked against the whole roster) and every
- * evaluation's raw scores condensed onto a couple of dense lines.
+ * evaluation's raw scores condensed onto a couple of dense lines. With
+ * `playersPerPage` above 1, several players share a page (scores and ranks
+ * only), and `logoUrls` prints a team or organization logo on every page.
  */
-async function renderFullResultsPdf(tryout: Tryout): Promise<string> {
+export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOptions = {}): Promise<string> {
   const docInfo = buildReportDocInfo(tryout);
   const cards = buildPlayerFullResults(tryout);
 
@@ -58,13 +69,28 @@ async function renderFullResultsPdf(tryout: Tryout): Promise<string> {
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  let page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  let y = PAGE_HEIGHT - MARGIN;
+  const logos = await embedLogos(pdfDoc, opts.logoUrls);
+  const perPage = opts.playersPerPage ?? 1;
+  if (perPage !== 1) {
+    renderCompactResults(pdfDoc, { font, bold: fontBold }, docInfo, cards, perPage, logos);
+    return pdfDoc.saveAsBase64();
+  }
+
+  // Where content starts on every page, lower when a logo strip sits above it.
+  const TOP = PAGE_HEIGHT - MARGIN - (logos.length ? LOGO_BAND : 0);
+  const newPage = () => {
+    const p = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+    if (logos.length) drawLogoStrip(p, logos, MARGIN);
+    return p;
+  };
+
+  let page = newPage();
+  let y = TOP;
 
   const ensureSpace = (needed: number) => {
     if (y - needed < MARGIN) {
-      page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      y = PAGE_HEIGHT - MARGIN;
+      page = newPage();
+      y = TOP;
     }
   };
 
@@ -75,7 +101,7 @@ async function renderFullResultsPdf(tryout: Tryout): Promise<string> {
     const size = opts.size ?? 9;
     const f = opts.f ?? font;
     ensureSpace(size + 4);
-    page.drawText(text, { x: opts.x ?? MARGIN, y, size, font: f, color: opts.color ?? BLACK });
+    page.drawText(pdfSafe(text), { x: opts.x ?? MARGIN, y, size, font: f, color: opts.color ?? BLACK });
     y -= opts.gap ?? size + 4;
   };
 
@@ -87,7 +113,7 @@ async function renderFullResultsPdf(tryout: Tryout): Promise<string> {
     const f = opts.f ?? font;
     const x = opts.x ?? MARGIN;
     const maxWidth = opts.maxWidth ?? PAGE_WIDTH - MARGIN - x;
-    for (const line of wrapText(text, f, size, maxWidth)) {
+    for (const line of wrapText(pdfSafe(text), f, size, maxWidth)) {
       drawLine(line, { size, f, color: opts.color, x, gap: opts.gap ?? size + 3 });
     }
   };
@@ -101,12 +127,22 @@ async function renderFullResultsPdf(tryout: Tryout): Promise<string> {
 
   cards.forEach((card, idx) => {
     if (idx > 0) {
-      page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      y = PAGE_HEIGHT - MARGIN;
+      if (opts.continuous) {
+        // Next player starts right below the last, divided by a rule. The
+        // header and score table are kept together, so a player never starts
+        // with a name stranded at the bottom of a page.
+        y -= 6;
+        ensureSpace(120);
+        page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_WIDTH - MARGIN, y }, thickness: 0.75, color: RULE });
+        y -= 18;
+      } else {
+        page = newPage();
+        y = TOP;
+      }
     }
 
-    const meta = `#${card.jersey || '—'} • ${card.pos || '—'} • Shoots ${card.shoots || '—'} • Evals ${card.evalCount}`;
-    page.drawText(card.name, { x: MARGIN, y, size: 15, font: fontBold, color: BLACK });
+    const meta = pdfSafe(`#${card.jersey || '-'} • ${card.pos || '-'} • Shoots ${card.shoots || '-'} • Evals ${card.evalCount}`);
+    page.drawText(pdfSafe(card.name), { x: MARGIN, y, size: 15, font: fontBold, color: BLACK });
     const metaWidth = font.widthOfTextAtSize(meta, 9);
     page.drawText(meta, { x: PAGE_WIDTH - MARGIN - metaWidth, y: y + 3, size: 9, font, color: GRAY });
     y -= 26;
@@ -124,9 +160,9 @@ async function renderFullResultsPdf(tryout: Tryout): Promise<string> {
     const metricRows = [{ label: 'Overall', score: card.overallScore, rank: card.overallRank }, ...card.metrics];
     for (const m of metricRows) {
       ensureSpace(14);
-      page.drawText(m.label, { x: MARGIN, y, size: 9, font, color: BLACK });
-      page.drawText(m.score, { x: scoreX, y, size: 9, font, color: BLACK });
-      page.drawText(m.rank, { x: rankX, y, size: 9, font, color: BLACK });
+      page.drawText(pdfSafe(m.label), { x: MARGIN, y, size: 9, font, color: BLACK });
+      page.drawText(pdfSafe(m.score), { x: scoreX, y, size: 9, font, color: BLACK });
+      page.drawText(pdfSafe(m.rank), { x: rankX, y, size: 9, font, color: BLACK });
       y -= 14;
     }
     y -= 8;
@@ -182,7 +218,11 @@ export function download(fileName: string, content: string, encoding: 'utf8' | '
 }
 
 /** Same three export formats as the app, delivered as a browser download. */
-export async function exportTryoutData(tryout: Tryout, format: ExportFormat): Promise<void> {
+export async function exportTryoutData(
+  tryout: Tryout,
+  format: ExportFormat,
+  pdfOptions?: ReportPdfOptions,
+): Promise<void> {
   const safeName = tryout.name.replace(/\s+/g, '_');
   const fileName = `${safeName}_results.${format}`;
 
@@ -225,7 +265,13 @@ export async function exportTryoutData(tryout: Tryout, format: ExportFormat): Pr
     return;
   }
 
-  download(fileName, await renderFullResultsPdf(tryout), 'base64', 'application/pdf');
+  download(fileName, await renderFullResultsPdf(tryout, pdfOptions), 'base64', 'application/pdf');
+}
+
+/** The player report card as a PDF, delivered as a browser download. */
+export async function exportPlayerReportCard(input: PlayerReportPdfInput): Promise<void> {
+  const safeName = input.card.name.replace(/[^\w]+/g, '_').replace(/^_|_$/g, '') || 'player';
+  download(`${safeName}_report_card.pdf`, await renderPlayerReportPdf(input), 'base64', 'application/pdf');
 }
 
 /** Team-builder style CSV export (roster + assignments). */

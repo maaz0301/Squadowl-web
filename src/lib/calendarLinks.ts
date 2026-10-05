@@ -268,3 +268,32 @@ export function downloadIcs(event: CalendarEvent): void {
   // Revoked on the next tick: revoking synchronously races the click in Safari.
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+// ---------------------------------------------------------------------------
+// Whole-season subscription
+//
+// A single-event copy is a snapshot. Subscribing to the season's feed is what
+// keeps a personal calendar in step: the calendar app re-reads the feed on its
+// own schedule, so events the coach adds, moves or deletes later show up (or
+// disappear) for players, guardians and coaches alike with nothing re-sent.
+// ---------------------------------------------------------------------------
+
+/** https feed URL → webcal://, which Apple Calendar and most desktop clients treat as "subscribe". */
+export function webcalUrl(feedUrl: string): string {
+  return feedUrl.replace(/^https?:/i, 'webcal:');
+}
+
+/** Google Calendar's "add by URL" screen, prefilled with the feed. */
+export function googleSubscribeUrl(feedUrl: string): string {
+  return `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl(feedUrl))}`;
+}
+
+/** Outlook on the web's "subscribe from web" screen, prefilled with the feed. */
+export function outlookSubscribeUrl(
+  feedUrl: string,
+  name: string,
+  flavor: 'live' | 'office' = 'live',
+): string {
+  const host = flavor === 'office' ? 'https://outlook.office.com' : 'https://outlook.live.com';
+  return `${host}/calendar/0/addfromweb?url=${encodeURIComponent(feedUrl)}&name=${encodeURIComponent(name)}`;
+}

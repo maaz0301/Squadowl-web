@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assessmentRoom,
   canUseDummyData,
+  canUseFeature,
   playerRoom,
   teamRoom,
 } from './plans';
@@ -48,5 +49,14 @@ describe('dummy-data plan helpers', () => {
     expect(teamRoom('free', 1, 5)).toBe(0);
     expect(teamRoom('club', 6)).toBe(0);
     expect(teamRoom('club', 6, 3)).toBe(3);
+  });
+});
+
+describe('AI report card comments', () => {
+  it('are on for the Club plan only', () => {
+    expect(canUseFeature('club', 'aiReportComments')).toBe(true);
+    expect(canUseFeature('coach_plus', 'aiReportComments')).toBe(false);
+    expect(canUseFeature('coach', 'aiReportComments')).toBe(false);
+    expect(canUseFeature('free', 'aiReportComments')).toBe(false);
   });
 });

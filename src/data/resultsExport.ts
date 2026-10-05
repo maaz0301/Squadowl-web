@@ -53,6 +53,8 @@ export interface FullResultsEval {
 }
 
 export interface PlayerFullResults {
+  /** The roster entry this card is for (Player.id). */
+  playerId: string;
   name: string;
   jersey: string;
   pos: string;
@@ -304,6 +306,7 @@ export function buildPlayerFullResults(tryout: Tryout): PlayerFullResults[] {
     }));
 
     return {
+      playerId: player.id,
       name: playerDisplayName(player),
       jersey: player.jersey ?? '',
       pos: player.pos ?? '',

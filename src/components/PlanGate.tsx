@@ -28,6 +28,7 @@ const PLAN_REQUIRED: Partial<Record<Feature, PlanTier>> = {
   exports: 'coach',
   teamBuilder: 'coach_plus',
   aiSummaries: 'coach_plus',
+  aiReportComments: 'club',
   shareLinks: 'coach_plus',
   seasonHub: 'coach',
   guardianPortal: 'coach',

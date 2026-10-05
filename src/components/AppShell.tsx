@@ -156,12 +156,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     : isGuardian
     ? [
         { href: '/dashboard', label: 'My Athletes', icon: 'teams' },
+        { href: '/library', label: 'Library', icon: 'library' },
         { href: '/profile', label: 'Profile', icon: 'profile' },
       ]
     : [
         { href: '/dashboard', label: 'Evaluations', icon: 'assessments', match: '/assessment' },
         { href: '/teams', label: 'Teams', icon: 'teams', match: '/team' },
         { href: '/calendar', label: 'Calendar', icon: 'calendar' },
+        { href: '/library', label: 'Library', icon: 'library' },
         { href: '/reports', label: 'Reports', icon: 'barChart' },
         { href: '/search', label: 'Search', icon: 'search' },
         ...(hasGuardianAthletes

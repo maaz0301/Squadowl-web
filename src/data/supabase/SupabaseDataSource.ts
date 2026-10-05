@@ -502,6 +502,8 @@ const FEEDBACK_BUCKET = 'feedback-attachments';
 const EVENT_FILES_BUCKET = 'event-files';
 const FEED_FILES_BUCKET = 'feed-files';
 const ORG_INFO_FILES_BUCKET = 'org-info-files';
+const LIBRARY_FILES_BUCKET = 'library-files';
+const REPORT_CARD_FILES_BUCKET = 'report-card-files';
 
 /** Long enough to open an attachment and look at it; short enough that a copied link goes stale. */
 const FEEDBACK_SIGNED_URL_TTL_SECONDS = 60 * 10;
@@ -3114,12 +3116,12 @@ export class SupabaseDataSource implements DataSource {
     const { supabase } = await this.ctx();
 
     // Read server-side rather than trusting a client-supplied team name — this
-    // is the only place that name reaches an email, and the RPC below already
-    // needs a round trip anyway.
-    const teamRow = (await supabase.from('teams').select('name').eq('id', teamId).maybeSingle()).data as
-      | Row
-      | null;
-    const teamName = teamRow?.name || 'a team';
+    // is the only place that name reaches an email. It runs alongside the invite
+    // RPC rather than before it: the two are independent, and awaiting them in
+    // series made adding a manager visibly slow.
+    const teamNameRead = Promise.resolve(
+      supabase.from('teams').select('name').eq('id', teamId).maybeSingle(),
+    ).then((r) => ((r.data as Row | null)?.name as string | undefined) || 'a team', () => 'a team');
 
     const invite = async () =>
       await supabase.rpc('invite_team_manager_by_email', {
@@ -3144,16 +3146,21 @@ export class SupabaseDataSource implements DataSource {
     // turned into access the moment they sign up with it. The email asks them
     // to create the account; nothing is created for them and no password is sent.
     const newUser = (data as { pending?: boolean } | null)?.pending === true;
-    try {
-      await this.sendEmail('team_manager_invite', email.trim(), {
-        teamName,
-        role,
-        newUser,
-        inviteUrl: `${actualOrigin() ?? 'https://www.tryouthq.ca'}/${newUser ? 'signup' : 'login'}`,
-      });
-    } catch (e) {
-      console.log('Failed to send team manager invite email:', e);
-    }
+    // The invite is already saved, so the caller should not wait on the mail
+    // provider. Send in the background and retry once, since a cold edge
+    // function is the usual reason a first send fails.
+    const inviteUrl = `${actualOrigin() ?? 'https://www.tryouthq.ca'}/${newUser ? 'signup' : 'login'}`;
+    void (async () => {
+      const teamName = await teamNameRead;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await this.sendEmail('team_manager_invite', email.trim(), { teamName, role, newUser, inviteUrl });
+          return;
+        } catch (e) {
+          if (attempt === 1) console.log('Failed to send team manager invite email:', e);
+        }
+      }
+    })();
 
     return this.rowToTeamManager(data);
   }
@@ -3297,7 +3304,7 @@ export class SupabaseDataSource implements DataSource {
     const rows = await fetchAllByIn(
       supabase,
       'tryout_participants',
-      'id, tryout_id, jersey, position, athletes(first_name, last_name)',
+      'id, tryout_id, athlete_id, jersey, position, athletes(first_name, last_name, year_of_birth)',
       'tryout_id',
       [...nameById.keys()],
       PARTICIPANTS_PAGE,
@@ -3309,6 +3316,8 @@ export class SupabaseDataSource implements DataSource {
       const a = (Array.isArray(raw) ? raw[0] : raw) ?? {};
       return {
         id: r.id as string,
+        athleteId: (r.athlete_id as string | null) ?? undefined,
+        yob: a.year_of_birth ?? undefined,
         first: a.first_name ?? '',
         last: a.last_name ?? '',
         jersey: r.jersey ?? undefined,
@@ -3844,7 +3853,7 @@ export class SupabaseDataSource implements DataSource {
     );
   }
 
-  async sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation' | 'tryout_letter', to: string, payload: Record<string, unknown>): Promise<void> {
+  async sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'schedule_digest' | 'schedule_cancel' | 'reminder' | 'registration_confirmation' | 'tryout_letter', to: string, payload: Record<string, unknown>): Promise<void> {
     assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { error } = await supabase.functions.invoke('send-email', {
@@ -6771,10 +6780,163 @@ export class SupabaseDataSource implements DataSource {
     unwrap(await supabase.from('seasons').delete().eq('id', id).select().maybeSingle());
   }
 
+
+  /**
+   * The subscribable calendar feed for the season an event belongs to, or null
+   * when the caller cannot see it. Read through the event, because that is all
+   * most calendar buttons hold. The token is the season's schedule_share_token,
+   * which RLS already shows to anyone who can open the season (coaches,
+   * managers, and the guardians on its roster).
+   */
+  async getSeasonCalendarFeed(eventId: string): Promise<{ url: string; name: string } | null> {
+    const { supabase } = await this.ctx();
+    const { data } = await supabase
+      .from('season_events')
+      .select('seasons(name, team_name, schedule_share_token)')
+      .eq('id', eventId)
+      .maybeSingle();
+    const raw = (data as Row | null)?.seasons;
+    const season = (Array.isArray(raw) ? raw[0] : raw) as Row | undefined;
+    const token = season?.schedule_share_token as string | undefined;
+    const base = APP_CONFIG.supabaseUrl.replace(/\/+$/, '');
+    if (!token || !base) return null;
+    return {
+      url: `${base}/functions/v1/season-calendar-feed?token=${encodeURIComponent(token)}`,
+      name: `${season?.team_name || season?.name || 'Team'} schedule`,
+    };
+  }
+
+  /**
+   * Creates several events in one go (a repeating practice, a full season of
+   * games) and tells everyone once.
+   *
+   * Each event is written exactly as addSeasonEvent writes it, but with its
+   * own schedule email switched off; afterwards a single digest goes to every
+   * invited player and guardian. Before this a 30-event season sent every
+   * guardian 30 separate emails. The digest also carries a subscribe link for
+   * the whole season, so later additions and deletions reach calendars on their
+   * own.
+   */
+  async addSeasonEvents(
+    seasonId: string,
+    forms: CreateEventForm[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<SeasonEvent[]> {
+    if (forms.length === 0) return [];
+    if (forms.length === 1) return [await this.addSeasonEvent(seasonId, forms[0], undefined)];
+
+    // Only the web implementation needs this (it reads the roster per event);
+    // the other ignores it. Read once here rather than once per event.
+    const prefetched = await this.prefetchSeasonForEvents(seasonId);
+
+    const created: SeasonEvent[] = new Array(forms.length);
+    let done = 0;
+    onProgress?.(0, forms.length);
+    await mapPool(forms.map((form, i) => ({ form, i })), 3, async ({ form, i }) => {
+      created[i] = await this.addSeasonEvent(seasonId, form, undefined, {
+        notify: false,
+        season: prefetched,
+      });
+      onProgress?.(++done, forms.length);
+    });
+
+    this.dispatchScheduleDigest(seasonId, created);
+    return created;
+  }
+
+  private reportScheduleEmailFailures(results: PromiseSettledResult<unknown>[], total: number): void {
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) {
+      console.error(
+        `Failed to send ${failed.length}/${total} schedule emails`,
+        (failed[0] as PromiseRejectedResult).reason,
+      );
+    }
+  }
+
+  /** One email per recipient for a batch of new events. Best-effort, off the critical path. */
+  private dispatchScheduleDigest(seasonId: string, events: SeasonEvent[]): void {
+    if (events.length === 0) return;
+    void (async () => {
+      try {
+        const { supabase } = await this.ctx();
+        const [{ data: seasonRow }, recipients] = await Promise.all([
+          supabase
+            .from('seasons')
+            .select('name, team_name, schedule_share_token')
+            .eq('id', seasonId)
+            .maybeSingle(),
+          this.eventRecipientEmails(events[0].id),
+        ]);
+        if (recipients.length === 0) return;
+        const season = seasonRow as Row | null;
+        const payload = {
+          teamName: season?.team_name ?? undefined,
+          seasonName: season?.name ?? undefined,
+          feedToken: season?.schedule_share_token ?? undefined,
+          events: events.map((e) => ({
+            eventId: e.id,
+            title: e.title,
+            date: e.date,
+            startTime: e.startTime,
+            endTime: e.endTime,
+            location: e.location,
+            notes: e.notes,
+          })),
+        };
+        const results = await Promise.allSettled(
+          recipients.map((email) => this.sendEmail('schedule_digest', email, payload)),
+        );
+        this.reportScheduleEmailFailures(results, recipients.length);
+      } catch (e) {
+        console.error('Failed to send the schedule digest', e);
+      }
+    })();
+  }
+
+  /**
+   * Every address that should hear about an event: each invited player's own
+   * and their guardian's. issue_event_rsvp_tokens() already joins through to
+   * both; the plain read is the fallback when it cannot run.
+   */
+  private async eventRecipientEmails(eventId: string): Promise<string[]> {
+    const out = new Set<string>();
+    try {
+      for (const t of await this.issueEventRsvpTokens(eventId)) {
+        if (t.playerEmail) out.add(t.playerEmail);
+        if (t.guardianEmail) out.add(t.guardianEmail);
+      }
+    } catch (e) {
+      console.error('Could not issue RSVP links for this event', e);
+    }
+    if (out.size > 0) return Array.from(out);
+
+    const { supabase } = await this.ctx();
+    const { data } = await supabase
+      .from('event_availability')
+      .select('season_roster(player_email, athletes(guardian_email))')
+      .eq('season_event_id', eventId);
+    for (const item of (data ?? []) as Row[]) {
+      const sr = Array.isArray(item.season_roster) ? item.season_roster[0] : item.season_roster;
+      if (sr?.player_email) out.add(sr.player_email);
+      const a = Array.isArray(sr?.athletes) ? sr.athletes[0] : sr?.athletes;
+      if (a?.guardian_email) out.add(a.guardian_email);
+    }
+    return Array.from(out);
+  }
+
+  /** The season, read once for a batch so each event does not re-read the whole roster. */
+  private async prefetchSeasonForEvents(seasonId: string): Promise<Season | null> {
+    return this.getSeason(seasonId);
+  }
+
   async addSeasonEvent(
     seasonId: string,
     form: CreateEventForm,
     onProgress?: (done: number, total: number) => void,
+    // `notify: false` is for addSeasonEvents, which sends one digest instead;
+    // `season` lets it hand over a roster it already read.
+    opts: { notify?: boolean; season?: Season | null } = {},
   ): Promise<SeasonEvent> {
     const { supabase } = await this.ctx();
     const row = unwrap(
@@ -6799,7 +6961,7 @@ export class SupabaseDataSource implements DataSource {
 
     const eventId = row.id;
 
-    const season = await this.getSeason(seasonId);
+    const season = opts.season !== undefined ? opts.season : await this.getSeason(seasonId);
     if (season) {
       // Which players are invited. An *absent* `playerIds` means "no selection
       // was made" and falls back to the whole season roster; an empty array is
@@ -6851,6 +7013,8 @@ export class SupabaseDataSource implements DataSource {
           throw new Error('Could not invite any players to this event. Please try again.');
         }
       }
+
+      if (opts.notify === false) return this.rowToSeasonEvent(row, {});
 
       // Find all guardians related to the selected players and send them emails.
       // Fanned out through the same bounded pool as the other guardian-email
@@ -7044,7 +7208,42 @@ export class SupabaseDataSource implements DataSource {
 
   async deleteSeasonEvent(_seasonId: string, eventId: string): Promise<void> {
     const { supabase } = await this.ctx();
+
+    // Read what the cancellation needs before the delete: the event row and its
+    // invitees both go with it (event_availability cascades), and the email has
+    // to say which event and reach the people who were invited.
+    const [{ data: eventRow }, recipients] = await Promise.all([
+      supabase
+        .from('season_events')
+        .select('id, title, event_date, start_time, end_time, location, created_at, updated_at, seasons(team_name)')
+        .eq('id', eventId)
+        .maybeSingle(),
+      this.eventRecipientEmails(eventId).catch(() => [] as string[]),
+    ]);
+
     unwrap(await supabase.from('season_events').delete().eq('id', eventId).select().maybeSingle());
+
+    // The delete has landed; telling people is best-effort and never blocks it.
+    const ev = eventRow as Row | null;
+    if (!ev || recipients.length === 0) return;
+    const season = Array.isArray(ev.seasons) ? ev.seasons[0] : ev.seasons;
+    // A calendar only applies a cancellation whose SEQUENCE beats the copy it
+    // holds, and edits raise it with the seconds since creation, so go one past.
+    const sequence = Math.max(0, Math.floor((toMs(ev.updated_at) - toMs(ev.created_at)) / 1000)) + 1;
+    void Promise.allSettled(
+      recipients.map((email) =>
+        this.sendEmail('schedule_cancel', email, {
+          eventId,
+          eventName: ev.title,
+          date: ev.event_date,
+          startTime: ev.start_time,
+          endTime: ev.end_time,
+          location: ev.location,
+          teamName: season?.team_name ?? undefined,
+          sequence,
+        }),
+      ),
+    ).then((results) => this.reportScheduleEmailFailures(results, recipients.length));
   }
 
   /**
@@ -8649,6 +8848,265 @@ export class SupabaseDataSource implements DataSource {
       // bucket is orphaned but harmless, so this doesn't fail the removal.
       if (error) console.warn('Could not remove feedback attachments:', error.message);
     }
+  }
+
+  // ─── Player report cards ─────────────────────────────────────────────────────
+  private async rowToReportCard(supabase: SupabaseClient, r: Row): Promise<import('@/data/types').PlayerReportCard> {
+    const attachments = ((r.attachments ?? []) as import('@/data/types').ReportCardAttachment[]).map((a) => ({ ...a }));
+    const paths = attachments.map((a) => a.path).filter((p): p is string => !!p);
+    if (paths.length) {
+      const { data: signed } = await supabase.storage.from(REPORT_CARD_FILES_BUCKET).createSignedUrls(paths, 3600);
+      const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
+      for (const a of attachments) if (a.path) a.signedUrl = urls.get(a.path) ?? undefined;
+    }
+    return {
+      id: r.id,
+      accountId: r.account_id,
+      athleteId: r.athlete_id,
+      tryoutId: r.tryout_id ?? undefined,
+      title: r.title,
+      evalIds: (r.eval_ids ?? []) as string[],
+      coachComments: r.coach_comments ?? '',
+      aiComments: r.ai_comments ?? '',
+      attachments,
+      createdAt: toMs(r.created_at),
+      updatedAt: toMs(r.updated_at),
+    };
+  }
+
+  async listPlayerReportCards(athleteId: string): Promise<import('@/data/types').PlayerReportCard[]> {
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase.from('player_report_cards').select('*').eq('athlete_id', athleteId).order('created_at', { ascending: false }),
+    ) as Row[];
+    return Promise.all(rows.map((r) => this.rowToReportCard(supabase, r)));
+  }
+
+  async savePlayerReportCard(
+    input: import('@/data/types').PlayerReportCardInput,
+    newFiles: File[] = [],
+  ): Promise<import('@/data/types').PlayerReportCard> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    // The card belongs to the evaluation's account, which for a delegated
+    // manager is not their own.
+    const tryoutRow = unwrap(
+      await supabase.from('tryouts').select('account_id').eq('id', input.tryoutId).single(),
+    ) as Row;
+    const accountId = tryoutRow.account_id as string;
+
+    const uploaded: import('@/data/types').ReportCardAttachment[] = [];
+    try {
+      for (const file of newFiles) {
+        const contentType = file.type || 'application/octet-stream';
+        const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-120) || 'file';
+        // First segment is the account id: the storage policies check staff access against it.
+        const path = `${accountId}/${generateId('rc')}/${safeName}`;
+        const { error } = await supabase.storage.from(REPORT_CARD_FILES_BUCKET).upload(path, file, { contentType, upsert: false });
+        if (error) throw new Error(`Could not upload ${file.name}: ${error.message}`);
+        uploaded.push({
+          kind: contentType.startsWith('video/') ? 'video' : 'file',
+          name: file.name,
+          path,
+          size: file.size,
+          contentType,
+        });
+      }
+    } catch (e) {
+      if (uploaded.length) await supabase.storage.from(REPORT_CARD_FILES_BUCKET).remove(uploaded.map((u) => u.path!));
+      throw e;
+    }
+
+    const fields = {
+      title: input.title.trim() || 'Player Report Card',
+      tryout_id: input.tryoutId,
+      eval_ids: input.evalIds,
+      coach_comments: input.coachComments.trim(),
+      ai_comments: input.aiComments.trim(),
+      attachments: [
+        ...input.attachments.map((a) => ({ kind: a.kind, name: a.name, path: a.path, url: a.url, size: a.size, contentType: a.contentType })),
+        ...uploaded,
+      ],
+    };
+    const query = input.id
+      ? supabase.from('player_report_cards').update(fields).eq('id', input.id)
+      : supabase.from('player_report_cards').insert({ ...fields, account_id: accountId, athlete_id: input.athleteId });
+    const res = await query.select('*').maybeSingle();
+    if (res.error || !res.data) {
+      if (uploaded.length) await supabase.storage.from(REPORT_CARD_FILES_BUCKET).remove(uploaded.map((u) => u.path!));
+      throw new Error(res.error?.message ?? 'You do not have permission to save this report card.');
+    }
+    return this.rowToReportCard(supabase, res.data as Row);
+  }
+
+  async deletePlayerReportCard(card: import('@/data/types').PlayerReportCard): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    const res = await supabase.from('player_report_cards').delete().eq('id', card.id).select('id');
+    if (res.error) throw new Error(res.error.message);
+    if (!res.data?.length) throw new Error('You do not have permission to delete this report card.');
+    const paths = card.attachments.map((a) => a.path).filter((p): p is string => !!p);
+    if (paths.length) await supabase.storage.from(REPORT_CARD_FILES_BUCKET).remove(paths);
+  }
+
+  async generateReportCardComments(
+    tryoutId: string,
+    playerId: string,
+    evalIds: string[],
+  ): Promise<import('@/data/types').AiPlayerSummary> {
+    const tryout = await this.getTryout(tryoutId);
+    if (!tryout) throw new Error('Tryout not found');
+    const chosen = new Set(evalIds);
+    // Only this player's chosen evaluations reach the model, so the comments
+    // describe what the coach is actually showing the family.
+    const scoped = {
+      ...tryout,
+      evals: tryout.evals.filter((e) => e.playerId !== playerId || chosen.has(e.id)),
+    };
+    if (!scoped.evals.some((e) => e.playerId === playerId)) {
+      throw new Error('Select at least one evaluation first.');
+    }
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.functions.invoke('generate-ai-insights', {
+      body: { action: 'summary', tryout: scoped, playerIds: [playerId] },
+    });
+    if (error) {
+      throw new Error(await extractFunctionErrorMessage(error, error.message));
+    }
+    // The function reports expected problems as { error, message } with status 200.
+    if (data?.error) throw new Error(data.message || data.error);
+    return data as import('@/data/types').AiPlayerSummary;
+  }
+
+  // ─── Library ─────────────────────────────────────────────────────────────────
+  private rowToLibraryItem(r: Row, fileUrl?: string): import('@/data/types').LibraryItem {
+    const acct = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
+    return {
+      id: r.id,
+      accountId: r.account_id,
+      accountName: acct?.name ?? undefined,
+      kind: r.kind,
+      title: r.title,
+      body: r.body ?? '',
+      url: r.url ?? undefined,
+      fileName: r.file_name ?? undefined,
+      filePath: r.file_path ?? undefined,
+      fileSize: Number(r.file_size ?? 0),
+      contentType: r.content_type ?? undefined,
+      fileUrl,
+      audience: {
+        coaches: !!r.for_coaches,
+        managers: !!r.for_managers,
+        assessors: !!r.for_assessors,
+        players: !!r.for_players,
+        guardians: !!r.for_guardians,
+      },
+      createdAt: toMs(r.created_at),
+      updatedAt: toMs(r.updated_at),
+    };
+  }
+
+  async listLibraryItems(): Promise<import('@/data/types').LibraryItem[]> {
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase.from('library_items').select('*, accounts(name)').order('created_at', { ascending: false }),
+    ) as Row[];
+    const paths = rows.map((r) => r.file_path as string | null).filter((p): p is string => !!p);
+    const urls = new Map<string, string>();
+    if (paths.length) {
+      const { data: signed } = await supabase.storage.from(LIBRARY_FILES_BUCKET).createSignedUrls(paths, 3600);
+      for (const s of signed ?? []) if (s.path && s.signedUrl) urls.set(s.path, s.signedUrl);
+    }
+    return rows.map((r) => this.rowToLibraryItem(r, r.file_path ? urls.get(r.file_path) : undefined));
+  }
+
+  async createLibraryItem(
+    input: import('@/data/types').LibraryItemInput,
+    file?: File,
+  ): Promise<import('@/data/types').LibraryItem> {
+    assertNotViewingAs();
+    const { supabase, accountId } = await this.ctx();
+    const title = input.title.trim();
+    if (!title) throw new Error('Give the item a title.');
+    if (input.kind === 'note' && !input.body.trim()) throw new Error('A note needs some text.');
+    if ((input.kind === 'link' || (input.kind === 'video' && !file)) && !input.url?.trim()) {
+      throw new Error(input.kind === 'video' ? 'Add a video link or upload a video.' : 'Add the link.');
+    }
+    if (input.kind === 'file' && !file) throw new Error('Choose a file to upload.');
+
+    let upload: { path: string; name: string; size: number; contentType: string } | null = null;
+    if (file) {
+      const contentType = file.type || 'application/octet-stream';
+      const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-120) || 'file';
+      // First segment is the account id: the storage policies check ownership against it.
+      const path = `${accountId}/${generateId('lib')}/${safeName}`;
+      const { error } = await supabase.storage.from(LIBRARY_FILES_BUCKET).upload(path, file, { contentType, upsert: false });
+      if (error) throw new Error(`Could not upload ${file.name}: ${error.message}`);
+      upload = { path, name: file.name, size: file.size, contentType };
+    }
+
+    const inserted = await supabase
+      .from('library_items')
+      .insert({
+        account_id: accountId,
+        kind: input.kind,
+        title,
+        body: input.body.trim(),
+        url: input.url?.trim() || null,
+        file_name: upload?.name ?? null,
+        file_path: upload?.path ?? null,
+        file_size: upload?.size ?? 0,
+        content_type: upload?.contentType ?? null,
+        for_coaches: input.audience.coaches,
+        for_managers: input.audience.managers,
+        for_assessors: input.audience.assessors,
+        for_players: input.audience.players,
+        for_guardians: input.audience.guardians,
+      })
+      .select('*, accounts(name)')
+      .single();
+    if (inserted.error) {
+      // Don't leave an unreachable object behind.
+      if (upload) await supabase.storage.from(LIBRARY_FILES_BUCKET).remove([upload.path]);
+      throw new Error(inserted.error.message);
+    }
+    return this.rowToLibraryItem(inserted.data as Row);
+  }
+
+  async updateLibraryItem(
+    id: string,
+    updates: Partial<import('@/data/types').LibraryItemInput>,
+  ): Promise<import('@/data/types').LibraryItem> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    const patch: Row = {};
+    if (updates.title !== undefined) {
+      if (!updates.title.trim()) throw new Error('Give the item a title.');
+      patch.title = updates.title.trim();
+    }
+    if (updates.body !== undefined) patch.body = updates.body.trim();
+    if (updates.url !== undefined) patch.url = updates.url.trim() || null;
+    if (updates.audience) {
+      patch.for_coaches = updates.audience.coaches;
+      patch.for_managers = updates.audience.managers;
+      patch.for_assessors = updates.audience.assessors;
+      patch.for_players = updates.audience.players;
+      patch.for_guardians = updates.audience.guardians;
+    }
+    const row = await supabase.from('library_items').update(patch).eq('id', id).select('*, accounts(name)').maybeSingle();
+    if (row.error) throw new Error(row.error.message);
+    // RLS hides a row the caller cannot write, so "no row" means no permission.
+    if (!row.data) throw new Error('Only an owner or admin can change the library.');
+    return this.rowToLibraryItem(row.data as Row);
+  }
+
+  async deleteLibraryItem(item: import('@/data/types').LibraryItem): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    const res = await supabase.from('library_items').delete().eq('id', item.id).select('id');
+    if (res.error) throw new Error(res.error.message);
+    if (!res.data?.length) throw new Error('Only an owner or admin can change the library.');
+    if (item.filePath) await supabase.storage.from(LIBRARY_FILES_BUCKET).remove([item.filePath]);
   }
 
   // ─── Team feed & organization info ───────────────────────────────────────────

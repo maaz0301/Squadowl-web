@@ -37,6 +37,7 @@ import {
   useRemoveFamilyContactMutation,
   usePlayerLettersQuery,
   useResendPlayerLetterMutation,
+  usePlayerReportCardsQuery,
 } from '@/features/queries';
 import { describeInvite, useInviteFamilyContact } from '@/features/useInviteFamilyContact';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
@@ -46,6 +47,7 @@ import { PlayerProfileSection } from '@/components/player/PlayerProfileSection';
 import { formatBirth } from '@/lib/birthDate';
 import { LETTER_KIND_LABELS } from '@/data/letters';
 import { PlanGate } from '@/components/PlanGate';
+import { PlayerLetterModal } from '@/components/player/PlayerLetterModal';
 import { mockAiPlayerSummary } from '@/data/teamBuilder';
 
 const AI_IDLE_TEXT = 'Generating...';
@@ -77,6 +79,7 @@ export default function PlayerHubPage() {
   const createAndInviteMut = useCreateAndInviteMemberMutation();
 
   const [showEdit, setShowEdit] = useState(false);
+  const [showLetter, setShowLetter] = useState(false);
   const [showGuardianLink, setShowGuardianLink] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiTextIndex, setAiTextIndex] = useState(0);
@@ -119,6 +122,7 @@ export default function PlayerHubPage() {
   // this card is a read-only history plus the re-send/retry a coach reaches
   // for right from the player they're looking at.
   const playerLettersQuery = usePlayerLettersQuery(id);
+  const reportCardsQuery = usePlayerReportCardsQuery(player?.athleteId);
   const resendLetterMut = useResendPlayerLetterMutation(id!);
   // Filtered against the participant id (`player.id`), not the URL's
   // `playerId` param — that can be the athleteId instead (see the lookup
@@ -521,12 +525,7 @@ export default function PlayerHubPage() {
             <Card className="flex flex-col gap-2">
               <div className="flex items-center justify-between gap-2">
                 <SectionLabel>Letters</SectionLabel>
-                <Button
-                  label="Send a Letter"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => router.push(href('letters'))}
-                />
+                <Button label="Send a Letter" size="sm" variant="ghost" onClick={() => setShowLetter(true)} />
               </div>
               {playerLettersQuery.isLoading ? (
                 <Spinner size={16} />
@@ -583,6 +582,25 @@ export default function PlayerHubPage() {
                   ))}
                 </div>
               )}
+            </Card>
+          ) : null}
+
+          {isCoachHere ? (
+            <Card className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <SectionLabel>Report Card</SectionLabel>
+                <Button
+                  label="Create Report Card"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => router.push(href(`player/${playerId}/report-card`))}
+                />
+              </div>
+              <span style={{ color: colors.inkFaint }}>
+                {(reportCardsQuery.data?.length ?? 0) === 0
+                  ? 'Pick evaluations, add your comments (and AI comments), attach video or files, and print or share it when you sit down with the family.'
+                  : `${reportCardsQuery.data!.length} saved report card${reportCardsQuery.data!.length === 1 ? '' : 's'}. Open the builder to view, edit or print them.`}
+              </span>
             </Card>
           ) : null}
 
@@ -736,6 +754,16 @@ export default function PlayerHubPage() {
           )}
         </div>
       </div>
+
+      {isCoachHere ? (
+        <PlayerLetterModal
+          tryout={tryout}
+          player={player}
+          visible={showLetter}
+          onClose={() => setShowLetter(false)}
+          onOpenTool={() => router.push(href('letters'))}
+        />
+      ) : null}
 
       <Modal visible={showEdit} title={terms.t('Edit Player')} size="lg" onClose={() => setShowEdit(false)} hideDefaultFooter>
         <AddPlayerForm

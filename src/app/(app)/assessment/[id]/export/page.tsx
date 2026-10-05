@@ -3,10 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Button, Card, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
+import { Button, Card, Chip, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
-import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery } from '@/features/queries';
+import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery, useTeamsQuery } from '@/features/queries';
+import { PLAYERS_PER_PAGE_OPTIONS, type PlayersPerPage } from '@/lib/reportPdf';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -27,6 +28,13 @@ export default function ExportPage() {
   const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [playersPerPage, setPlayersPerPage] = useState<PlayersPerPage>(1);
+  const [continuous, setContinuous] = useState(false);
+  const [printLogo, setPrintLogo] = useState(true);
+  // The team's own logo, for club accounts. Looked up here (before the loading
+  // guards below, since it is a hook) from the team this evaluation belongs to.
+  const teamsQuery = useTeamsQuery();
+  const teamLogoUrl = teamsQuery.data?.find((t) => t.id === tryoutQuery.data?.teamId)?.logoUrl;
 
   if (tryoutQuery.isLoading || !id) return <LoadingState />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -38,12 +46,20 @@ export default function ExportPage() {
   const tier = effectiveTier;
   const exportsAllowed = canUseFeature(tier, 'exports') || tier !== 'free';
   const allowedFormats = getPlanDefinition(tier).limits.exports;
+  // Logos on the printed report are a Club-plan touch.
+  const clubMode = tier === 'club';
 
   const handleExport = async (format: ExportFormat) => {
     setIsExporting(format);
     try {
       const { exportTryoutData } = await import('@/lib/exportData');
-      await exportTryoutData(tryout, format);
+      await exportTryoutData(
+        tryout,
+        format,
+        format === 'pdf'
+          ? { playersPerPage, continuous: continuous && playersPerPage === 1, logoUrls: clubMode && printLogo && teamLogoUrl ? [teamLogoUrl] : [] }
+          : undefined,
+      );
       toast(`${format.toUpperCase()} downloaded`, 'success');
     } catch (e) {
       await alert('Export failed', e instanceof Error ? e.message : 'Could not build the export file.');
@@ -103,6 +119,57 @@ export default function ExportPage() {
               />
             ) : null}
           </div>
+          {allowedFormats.includes('pdf') ? (
+            <Card className="flex flex-col gap-3">
+              <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                PDF layout
+              </span>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
+                  Players per page
+                </span>
+                <div className="mt-2 flex flex-wrap">
+                  {PLAYERS_PER_PAGE_OPTIONS.map((n) => (
+                    <Chip
+                      key={n}
+                      label={n === 1 ? '1 (full detail)' : String(n)}
+                      active={playersPerPage === n && !(n === 1 && continuous)}
+                      onClick={() => {
+                        setPlayersPerPage(n);
+                        setContinuous(false);
+                      }}
+                    />
+                  ))}
+                  <Chip
+                    label="Continuous (no gaps)"
+                    active={continuous}
+                    onClick={() => {
+                      setPlayersPerPage(1);
+                      setContinuous(true);
+                    }}
+                  />
+                </div>
+                <span className="text-xs" style={{ color: colors.inkMuted }}>
+                  {continuous
+                    ? 'Players run one after another with no blank space, each with every evaluation listed.'
+                    : playersPerPage === 1
+                    ? 'One player per page, with every evaluation listed.'
+                    : 'Several players per page: scores, ranks and notes. Individual evaluations are left out to keep each card small.'}
+                </span>
+              </div>
+              {clubMode && teamLogoUrl ? (
+                <label className="flex items-center gap-2 text-sm" style={{ color: colors.ink }}>
+                  <input
+                    type="checkbox"
+                    checked={printLogo}
+                    onChange={(e) => setPrintLogo(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  Print the team logo at the top of every page
+                </label>
+              ) : null}
+            </Card>
+          ) : null}
           {!allowedFormats.includes('pdf') ? (
             <Card accent className="flex flex-col gap-2">
               <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>

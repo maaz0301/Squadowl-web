@@ -37,6 +37,7 @@ export const FEATURES: { key: string; label: string; match: RegExp; area: string
   { key: 'team_chat', label: 'Team Chat', match: /^\/(season|team)\/[^/]+\/chat/, area: 'Season & team' },
   { key: 'payments', label: 'Payments', match: /^\/payments(\/|$)/, area: 'Account-wide' },
   { key: 'enterprise_dashboard', label: 'Enterprise Dashboard', match: /^\/enterprise(\/|$)/, area: 'Account-wide' },
+  { key: 'library', label: 'Library', match: /^\/library(\/|$)/, area: 'Account-wide' },
   { key: 'athlete_sharing', label: 'Athlete Sharing', match: /^\/(shared-athletes|share)(\/|$)/, area: 'Account-wide' },
   { key: 'search', label: 'Search', match: /^\/search(\/|$)/, area: 'Account-wide' },
   { key: 'loyalty', label: 'Loyalty Program', match: /^\/loyalty(\/|$)/, area: 'Account-wide' },

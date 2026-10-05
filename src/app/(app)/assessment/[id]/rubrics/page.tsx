@@ -395,22 +395,22 @@ export default function RubricsPage() {
                   value={minValStr}
                   onChange={(e) => setMinValStr(e.target.value)}
                   inputMode="decimal"
-                  placeholder={scoringType === 'time' ? '12 (Best)' : '5 (Worst)'}
+                  placeholder={rankingDirection === 'lower_is_better' ? '1 (Best)' : '1 (Worst)'}
                 />
                 <Input
                   label="Max Value"
                   value={maxValStr}
                   onChange={(e) => setMaxValStr(e.target.value)}
                   inputMode="decimal"
-                  placeholder={scoringType === 'time' ? '25 (Worst)' : '25 (Best)'}
+                  placeholder={rankingDirection === 'lower_is_better' ? '10 (Worst)' : '10 (Best)'}
                 />
               </div>
 
               <p className="text-xs font-bold italic" style={{ color: colors.primary }}>
                 Score Benchmark Rule:{' '}
                 {rankingDirection === 'lower_is_better'
-                  ? `Min value (${minValStr || '10'}) = 5.0 points (Best)  ·  Max value (${maxValStr || '25'}) = 1.0 points (Worst)`
-                  : `Min value (${minValStr || '5'}) = 1.0 points (Worst)  ·  Max value (${maxValStr || '25'}) = 5.0 points (Best)`}
+                  ? `Min value (${minValStr || '1'}) = 5.0 points (Best)  ·  Max value (${maxValStr || '10'}) = 1.0 points (Worst)`
+                  : `Min value (${minValStr || '1'}) = 1.0 points (Worst)  ·  Max value (${maxValStr || '10'}) = 5.0 points (Best)`}
               </p>
             </div>
           )}

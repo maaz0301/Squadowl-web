@@ -22,6 +22,7 @@ import { PasswordSchema } from '@/data/types';
 import { blockableFeatureForPath } from '@/lib/blockableFeatures';
 
 const QUICK_LINKS = [
+  { href: '/library', label: 'Library' },
   { href: '/search', label: 'Search' },
   { href: '/organization/members', label: 'Manage Organization Members' },
   { href: '/shared-athletes', label: 'Shared Athletes' },

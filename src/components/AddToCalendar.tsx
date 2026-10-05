@@ -1,14 +1,19 @@
 'use client';
 
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 
 import { Icon } from '@/components/Icons';
+import { getDataSource } from '@/data';
 import { HubActionTile } from '@/components/teamHub/HubActionTile';
 import { HubRowCard } from '@/components/teamHub/HubRowCard';
 import {
   downloadIcs,
   googleCalendarUrl,
+  googleSubscribeUrl,
   outlookCalendarUrl,
+  outlookSubscribeUrl,
+  webcalUrl,
   type CalendarEvent,
 } from '@/lib/calendarLinks';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -162,6 +167,17 @@ export function AddToCalendar({
   }, [open]);
 
   const calendarEvent = toCalendarEvent(event, { teamName });
+
+  // Looked up only once the menu is open. Null for anyone who cannot see the
+  // season (or the public RSVP page, which has no session), in which case the
+  // season section simply does not appear.
+  const feedQuery = useQuery({
+    queryKey: ['seasonCalendarFeed', event.id],
+    queryFn: () => getDataSource().getSeasonCalendarFeed(event.id).catch(() => null),
+    enabled: open,
+    staleTime: 10 * 60 * 1000,
+  });
+  const feed = feedQuery.data ?? null;
   const googleUrl = googleCalendarUrl(calendarEvent);
   const outlookPersonalUrl = outlookCalendarUrl(calendarEvent);
   const outlookWorkUrl = outlookCalendarUrl(calendarEvent, 'office');
@@ -315,6 +331,61 @@ export function AddToCalendar({
               </span>
             </span>
           </button>
+
+          {feed ? (
+            <>
+              <div className="mx-2 my-1.5 border-t" style={{ borderColor: colors.border }} />
+              <p className="px-2.5 pt-1 text-[11px] font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
+                Whole season
+              </p>
+              <p className="px-2.5 pb-1 text-[11px]" style={{ color: colors.inkMuted }}>
+                Adds every event and keeps it up to date when events are added, changed or removed.
+              </p>
+              <a
+                role="menuitem"
+                href={googleSubscribeUrl(feed.url)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+                className={itemClass}
+              >
+                <ProviderBadge bg={`${GOOGLE_BLUE}26`} fg={GOOGLE_BLUE}>
+                  G
+                </ProviderBadge>
+                <span className="min-w-0 flex-1 text-sm font-semibold" style={{ color: colors.ink }}>
+                  Subscribe in Google Calendar
+                </span>
+              </a>
+              <a
+                role="menuitem"
+                href={outlookSubscribeUrl(feed.url, feed.name)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+                className={itemClass}
+              >
+                <ProviderBadge bg={`${OUTLOOK_BLUE}26`} fg={OUTLOOK_BLUE}>
+                  O
+                </ProviderBadge>
+                <span className="min-w-0 flex-1 text-sm font-semibold" style={{ color: colors.ink }}>
+                  Subscribe in Outlook
+                </span>
+              </a>
+              <a role="menuitem" href={webcalUrl(feed.url)} onClick={() => setOpen(false)} className={itemClass}>
+                <ProviderBadge bg={colors.tile} fg={colors.primary}>
+                  <Icon name="calendar" size={15} />
+                </ProviderBadge>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold" style={{ color: colors.ink }}>
+                    Subscribe in Apple Calendar / other
+                  </span>
+                  <span className="block text-[11px]" style={{ color: colors.inkMuted }}>
+                    Opens your calendar app
+                  </span>
+                </span>
+              </a>
+            </>
+          ) : null}
         </div>
       ) : null}
     </>

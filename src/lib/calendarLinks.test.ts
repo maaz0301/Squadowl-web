@@ -148,3 +148,22 @@ describe('icsFilename', () => {
     expect(icsFilename({ ...base, title: '!!!' })).toBe('event-2026-09-15.ics');
   });
 });
+
+describe('season subscription links', () => {
+  const feed = 'https://abc.supabase.co/functions/v1/season-calendar-feed?token=sched_1234abcd';
+
+  it('turns the feed into a webcal address', async () => {
+    const { webcalUrl } = await import('./calendarLinks');
+    expect(webcalUrl(feed)).toBe('webcal://abc.supabase.co/functions/v1/season-calendar-feed?token=sched_1234abcd');
+  });
+
+  it('prefills Google and Outlook with the feed', async () => {
+    const { googleSubscribeUrl, outlookSubscribeUrl } = await import('./calendarLinks');
+    expect(googleSubscribeUrl(feed)).toContain('calendar.google.com/calendar/r?cid=');
+    expect(googleSubscribeUrl(feed)).toContain(encodeURIComponent('webcal://abc.supabase.co'));
+    const outlook = outlookSubscribeUrl(feed, 'Wildcats schedule');
+    expect(outlook).toContain('outlook.live.com/calendar/0/addfromweb?url=');
+    expect(outlook).toContain(encodeURIComponent(feed));
+    expect(outlook).toContain('name=Wildcats%20schedule');
+  });
+});

@@ -3,6 +3,7 @@ import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import {
   buildIcs,
+  buildIcsCalendar,
   googleCalendarUrl,
   outlookCalendarUrl,
   toBase64,
@@ -382,6 +383,163 @@ function tplScheduleUpdate(payload: SchedulePayload, recipient: string) {
   };
 }
 
+/**
+ * One email for a whole batch of new events.
+ *
+ * Creating a full calendar used to send one schedule_update per event per
+ * recipient, so a 30-game season meant 30 emails to every guardian. This is the
+ * single notification instead: every event in a list, one attached .ics with all
+ * of them for anyone who wants to import, and a subscribe link that keeps the
+ * whole season in sync from then on (added or deleted events reach subscribers
+ * on the calendar app's next refresh, with no further email).
+ */
+interface DigestPayload {
+  teamName?: string;
+  seasonName?: string;
+  feedToken?: string;
+  events?: {
+    eventId?: string;
+    title?: string;
+    date?: string;
+    startTime?: string;
+    endTime?: string;
+    location?: string;
+    notes?: string;
+  }[];
+}
+
+function tplScheduleDigest(payload: DigestPayload) {
+  const events = (payload.events ?? []).filter((e) => isIsoDate(e.date));
+  const teamName = payload.teamName ?? payload.seasonName ?? 'your team';
+  const safeTeam = escapeHtml(teamName);
+  const count = events.length;
+
+  const rowsHtml = events
+    .map((e) => {
+      const time = prettyTime(e.startTime);
+      const end = prettyTime(e.endTime);
+      const when = [prettyDate(e.date!), time ? (end ? `${time} to ${end}` : time) : ''].filter(Boolean).join(', ');
+      const where = e.location ? `<br/><span style="color:#9ca3af;font-size:13px;">📍 ${escapeHtml(e.location)}</span>` : '';
+      return `<tr><td style="padding:10px 0;border-bottom:1px solid #2a2a4a;">
+        <span style="color:#fff;font-weight:600;font-size:15px;">${escapeHtml(e.title ?? 'Event')}</span><br/>
+        <span style="color:#a78bfa;font-size:13px;">${escapeHtml(when)}</span>${where}
+      </td></tr>`;
+    })
+    .join('');
+
+  // Built here rather than taken from the caller, for the same reason as
+  // APP_BASE_URL: these links go out in mail signed for tryouthq.ca.
+  const token = payload.feedToken && /^[A-Za-z0-9_-]{8,64}$/.test(payload.feedToken) ? payload.feedToken : '';
+  const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').replace(/\/+$/, '');
+  const feedHttps = token && supabaseUrl ? `${supabaseUrl}/functions/v1/season-calendar-feed?token=${token}` : '';
+  const feedWebcal = feedHttps.replace(/^https?:/, 'webcal:');
+  const btn = (href: string, label: string) =>
+    `<a href="${href}" style="display:inline-block;padding:9px 16px;margin:0 6px 8px 0;background:#1a1a2e;border:1px solid #6366f1;color:#a78bfa;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;">${label}</a>`;
+  const subscribeBlock = feedHttps
+    ? `
+      <div style="background:#0f0f13;border-radius:12px;padding:20px 24px;margin:20px 0 0;border:1px solid #2a2a4a;">
+        <p style="color:#9ca3af;font-size:12px;text-transform:uppercase;letter-spacing:1.5px;margin:0 0 14px;font-weight:600;">Keep the full season in your calendar</p>
+        <p style="margin:0 0 12px;">
+          ${btn(feedWebcal, 'Apple / other calendar')}
+          ${btn(`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(feedWebcal)}`, 'Google Calendar')}
+          ${btn(`https://outlook.live.com/calendar/0/addfromweb?url=${encodeURIComponent(feedHttps)}&name=${encodeURIComponent(teamName + ' schedule')}`, 'Outlook')}
+        </p>
+        <p style="color:#6b7280;font-size:12px;line-height:1.6;margin:0;">
+          Subscribing adds every event and keeps it up to date: events the coach adds, changes or removes later update automatically, with no more emails.
+          Prefer to import once? Open the <strong style="color:#9ca3af;">schedule.ics</strong> attached to this email.
+        </p>
+      </div>`
+    : '';
+
+  const icsEvents: IcsEvent[] = events.map((e) => ({
+    uid: `season-event-${e.eventId ?? `${e.title}-${e.date}`}@tryouthq.ca`,
+    title: payload.teamName ? `${e.title} (${payload.teamName})` : (e.title ?? 'Event'),
+    date: e.date!,
+    startTime: e.startTime || undefined,
+    endTime: e.endTime || undefined,
+    location: e.location || undefined,
+    description: e.notes || undefined,
+  }));
+
+  return {
+    subject: `${safeTeam}: ${count} new event${count === 1 ? '' : 's'} on the schedule`,
+    attachments: count
+      ? [{
+          content: toBase64(buildIcsCalendar(icsEvents, `${teamName} schedule`, 'PUBLISH')),
+          filename: 'schedule.ics',
+          type: 'text/calendar',
+          disposition: 'attachment',
+        }]
+      : undefined,
+    html: wrap('Schedule Updated 📅', `
+      <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
+        ${count} new event${count === 1 ? ' has' : 's have'} been added to the <strong style="color:#a78bfa;">${safeTeam}</strong> schedule:
+      </p>
+      <div style="background:#0f0f13;border-radius:12px;padding:8px 24px;margin:16px 0;border:1px solid #2a2a4a;">
+        <table width="100%" cellpadding="0" cellspacing="0">${rowsHtml}</table>
+      </div>
+      <p style="color:#9ca3af;font-size:14px;line-height:1.7;margin:0;">
+        Open the TryoutHQ app to RSVP to any of these events.
+      </p>
+      ${subscribeBlock}
+    `),
+  };
+}
+
+/**
+ * An event was removed from the schedule. Carries a METHOD:CANCEL invite, which
+ * Gmail, Outlook and Apple Mail apply by deleting the copy they already hold
+ * (matched on the event's UID), so a deleted game does not linger in anyone's
+ * calendar. People subscribed to the season feed need nothing from this: the
+ * feed simply stops listing the event.
+ */
+function tplScheduleCancel(payload: SchedulePayload, recipient: string) {
+  const eventName = payload.eventName ?? 'Event';
+  const safeName = escapeHtml(eventName);
+  const dateIsReal = isIsoDate(payload.date);
+  const dateLabel = dateIsReal ? prettyDate(payload.date!) : payload.date;
+  const timeLabel = dateIsReal ? prettyTime(payload.startTime) : payload.startTime;
+  const when = [dateLabel, timeLabel].filter(Boolean).join(', ');
+
+  let attachments: { content: string; filename: string; type: string; disposition: string }[] | undefined;
+  if (dateIsReal) {
+    const icsEvent: IcsEvent = {
+      uid: `season-event-${payload.eventId ?? eventName}@tryouthq.ca`,
+      title: payload.teamName ? `${eventName} (${payload.teamName})` : eventName,
+      date: payload.date!,
+      startTime: payload.startTime || undefined,
+      endTime: payload.endTime || undefined,
+      location: payload.location || undefined,
+      sequence: payload.sequence ?? 1,
+      organizer: { name: FROM_NAME, email: FROM_EMAIL },
+      attendee: { email: recipient },
+    };
+    attachments = [{
+      content: toBase64(buildIcs(icsEvent, 'CANCEL')),
+      filename: 'cancel.ics',
+      type: 'text/calendar',
+      disposition: 'attachment',
+    }];
+  }
+
+  return {
+    subject: `Cancelled: ${eventName}${dateLabel ? `, ${dateLabel}` : ''}`,
+    attachments,
+    html: wrap('Event Cancelled', `
+      <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
+        This event has been removed from the schedule${payload.teamName ? ` for <strong style="color:#a78bfa;">${escapeHtml(payload.teamName)}</strong>` : ''}:
+      </p>
+      <div style="background:#0f0f13;border-radius:12px;padding:24px;margin:16px 0;border-left:4px solid #ef4444;">
+        <p style="color:#fff;font-size:20px;font-weight:700;margin:0 0 8px;text-decoration:line-through;">${safeName}</p>
+        ${when ? `<p style="color:#9ca3af;font-size:14px;margin:0;">${escapeHtml(when)}</p>` : ''}
+      </div>
+      <p style="color:#6b7280;font-size:13px;line-height:1.6;margin:0;">
+        If you added it to your calendar from an email, opening the attached cancel.ics removes it. Calendars subscribed to the season update on their own.
+      </p>
+    `),
+  };
+}
+
 function tplReminder(title: string, message: string) {
   return {
     subject: `Reminder: ${title}`,
@@ -591,6 +749,8 @@ serve(async (req: Request) => {
     else if (type === 'team_manager_invite') ({ subject, html } = tplTeamManagerInvite(payload?.teamName ?? 'a team', payload?.role ?? 'manager', payload?.inviteUrl, to, payload?.newUser === true));
     else if (type === 'tryout_invite') ({ subject, html } = tplTryoutInvite(payload?.tryoutName, payload?.inviteUrl, to));
     else if (type === 'schedule_update') ({ subject, html, attachments } = tplScheduleUpdate(payload ?? {}, to));
+    else if (type === 'schedule_cancel') ({ subject, html, attachments } = tplScheduleCancel(payload ?? {}, to));
+    else if (type === 'schedule_digest') ({ subject, html, attachments } = tplScheduleDigest(payload ?? {}));
     else if (type === 'reminder') ({ subject, html } = tplReminder(payload?.title ?? 'Upcoming Event', payload?.message ?? 'This is a reminder for an upcoming event.'));
     else if (type === 'registration_confirmation') ({ subject, html } = tplRegistrationConfirm(payload?.playerName ?? 'Athlete'));
     else if (type === 'tryout_letter') ({ subject, html } = tplTryoutLetter(

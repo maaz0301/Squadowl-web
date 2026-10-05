@@ -1,6 +1,7 @@
 'use client';
 'use no memo';
 
+import { RepeatField } from '@/components/RepeatField';
 import { useTerms, sportLabel } from '@/lib/terms';
 import { useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -1059,6 +1060,7 @@ export default function TeamDetailPage() {
           errors.date?.message,
           errors.endTime ? 'The event ends before it starts. Pick a duration to set a new end.' : undefined,
           errors.endDate?.message,
+          errors.repeatUntil?.message,
         ]
           .filter(Boolean)
           .join('\n') || 'Please check the required fields.',
@@ -2294,6 +2296,24 @@ export default function TeamDetailPage() {
                 </div>
               )}
             />
+            {editingEventId ? null : (
+              <Controller
+                control={eventForm.control}
+                name="repeatWeekdays"
+                render={({ field }) => (
+                  <RepeatField
+                    date={eventForm.watch('date')}
+                    weekdays={field.value}
+                    until={eventForm.watch('repeatUntil')}
+                    error={eventForm.formState.errors.repeatUntil?.message}
+                    onChange={({ weekdays, until }) => {
+                      eventForm.setValue('repeatWeekdays', weekdays);
+                      eventForm.setValue('repeatUntil', until);
+                    }}
+                  />
+                )}
+              />
+            )}
             {editingEventId ? null : (
               <p className="text-xs" style={{ color: colors.inkMuted }}>
                 Everyone on the roster is invited by default.

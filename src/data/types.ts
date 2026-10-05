@@ -881,12 +881,24 @@ export const CreateEventFormSchema = z.object({
   location: z.string().optional(),
   notes: z.string().optional(),
   playerIds: z.array(z.string()).optional(),
+  /** Days of the week (0 = Sunday) to repeat on, from the Repeat picker. Empty or absent means one event. */
+  repeatWeekdays: z.array(z.number()).optional(),
+  /** Last date (YYYY-MM-DD) a repeating event may fall on. */
+  repeatUntil: z.string().optional(),
 }).refine((data) => !data.endDate || data.endDate >= data.date, {
   message: 'End date must be on or after the start date',
   path: ['endDate'],
 }).refine((data) => (!!data.endDate && data.endDate > data.date) || isEndAfterStart(data.startTime, data.endTime), {
   message: END_BEFORE_START_MESSAGE,
   path: ['endTime'],
+})
+.refine((data) => !data.repeatWeekdays?.length || !!data.repeatUntil, {
+  message: 'Pick the last date to repeat until',
+  path: ['repeatUntil'],
+})
+.refine((data) => !data.repeatWeekdays?.length || !data.repeatUntil || data.repeatUntil >= data.date, {
+  message: 'Repeat until must be on or after the start date',
+  path: ['repeatUntil'],
 });
 
 export type CreateEventForm = z.infer<typeof CreateEventFormSchema>;
@@ -1381,4 +1393,109 @@ export interface OrgInfoInput {
   title: string;
   body: string;
   url: string;
+}
+
+// --- Library ------------------------------------------------------------------
+// Files, notes, videos and links an account stores once and shares with chosen
+// audiences. Owners and admins manage it and always see everything; everyone
+// else sees an item only when the toggle for a role they hold is on.
+
+export const LIBRARY_KINDS = ['note', 'file', 'video', 'link'] as const;
+export type LibraryKind = (typeof LIBRARY_KINDS)[number];
+
+export const LIBRARY_AUDIENCES = ['coaches', 'managers', 'assessors', 'players', 'guardians'] as const;
+export type LibraryAudience = (typeof LIBRARY_AUDIENCES)[number];
+export type LibraryAudienceFlags = Record<LibraryAudience, boolean>;
+
+export const LIBRARY_AUDIENCE_LABELS: Record<LibraryAudience, string> = {
+  coaches: 'Coaches',
+  managers: 'Managers',
+  assessors: 'Assessors',
+  players: 'Players',
+  guardians: 'Guardians',
+};
+
+/** Who can see a brand-new item: coaches only, until the owner turns more on. */
+export const DEFAULT_LIBRARY_AUDIENCE: LibraryAudienceFlags = {
+  coaches: true,
+  managers: false,
+  assessors: false,
+  players: false,
+  guardians: false,
+};
+
+export interface LibraryItem {
+  id: string;
+  accountId: string;
+  /** The account's name, when the viewer is allowed to read it (guardians may not be). */
+  accountName?: string;
+  kind: LibraryKind;
+  title: string;
+  /** The note's text, or a description of a file, video or link. */
+  body: string;
+  /** External address for a link or a video hosted elsewhere. */
+  url?: string;
+  fileName?: string;
+  filePath?: string;
+  fileSize: number;
+  contentType?: string;
+  /** Short-lived signed address for an uploaded file. */
+  fileUrl?: string;
+  audience: LibraryAudienceFlags;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LibraryItemInput {
+  kind: LibraryKind;
+  title: string;
+  body: string;
+  url?: string;
+  audience: LibraryAudienceFlags;
+}
+
+// --- Player report cards ---------------------------------------------------------
+// What a coach goes through with a family: the evaluations they chose to include,
+// their own comments, optional AI comments, and files, videos or links. Scores
+// are worked out from the chosen evaluations when a card is opened, not stored.
+
+export interface ReportCardAttachment {
+  kind: 'file' | 'video' | 'link';
+  name: string;
+  /** Storage key, for an uploaded file or video. */
+  path?: string;
+  /** External address, for a link or a video hosted elsewhere. */
+  url?: string;
+  size?: number;
+  contentType?: string;
+  /** Short-lived signed address for an uploaded file. */
+  signedUrl?: string;
+}
+
+export interface PlayerReportCard {
+  id: string;
+  accountId: string;
+  athleteId: string;
+  tryoutId?: string;
+  title: string;
+  /** Ids of the evaluations (Evaluation.id) the card includes. */
+  evalIds: string[];
+  coachComments: string;
+  aiComments: string;
+  attachments: ReportCardAttachment[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlayerReportCardInput {
+  /** Present when editing a saved card. */
+  id?: string;
+  athleteId: string;
+  tryoutId: string;
+  title: string;
+  evalIds: string[];
+  coachComments: string;
+  aiComments: string;
+  /** Attachments already on the card that should stay (uploads are added separately). */
+  attachments: ReportCardAttachment[];
 }

@@ -32,6 +32,7 @@ import {
 import { useSeasonId } from '@/features/useSeasonId';
 import { AddToCalendar } from '@/components/AddToCalendar';
 import { MapLink, MapLocationHint } from '@/components/MapLink';
+import { RepeatField } from '@/components/RepeatField';
 import { getDataSource } from '@/data';
 import { CreateEventFormSchema, EVENT_KINDS, type CreateEventForm, type SeasonEvent } from '@/data/types';
 
@@ -50,7 +51,7 @@ export default function SeasonSchedulePage() {
   const [reminding, setReminding] = useState<string | null>(null);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
 
-  const { control, handleSubmit, watch, setValue, reset, setError } = useForm<CreateEventForm>({
+  const { control, handleSubmit, watch, setValue, reset, setError, formState } = useForm<CreateEventForm>({
     resolver: zodResolver(CreateEventFormSchema),
     defaultValues: { type: 'Practice', title: '', date: '', startTime: '', location: '', playerIds: [] },
   });
@@ -150,7 +151,7 @@ export default function SeasonSchedulePage() {
       }
     },
     async (errors) => {
-      const msg = errors.date?.message || errors.title?.message || 'Please check the required fields and date format.';
+      const msg = errors.date?.message || errors.title?.message || errors.repeatUntil?.message || 'Please check the required fields and date format.';
       await alert('Validation Error', msg);
     },
   );
@@ -338,6 +339,24 @@ export default function SeasonSchedulePage() {
                 </div>
               )}
             />
+            {editingEventId ? null : (
+              <Controller
+                control={control}
+                name="repeatWeekdays"
+                render={({ field }) => (
+                  <RepeatField
+                    date={watch('date')}
+                    weekdays={field.value}
+                    until={watch('repeatUntil')}
+                    error={formState.errors.repeatUntil?.message}
+                    onChange={({ weekdays, until }) => {
+                      setValue('repeatWeekdays', weekdays);
+                      setValue('repeatUntil', until);
+                    }}
+                  />
+                )}
+              />
+            )}
             {editingEventId ? null : (
               <>
                 <p className="mt-2 text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>

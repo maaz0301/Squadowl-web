@@ -181,17 +181,29 @@ export default function SearchPage() {
             ))}
 
             {outcome.players.items.length ? <Heading label="Players" count={outcome.players.total} /> : null}
-            {outcome.players.items.map((p) => (
-              <Row
-                key={`p-${p.id}`}
-                href={`/assessment/${p.tryoutId}/player/${p.id}`}
-                icon="profile"
-                title={`${p.first} ${p.last}`.trim()}
-                sub={[p.jersey ? `#${p.jersey}` : null, p.pos, p.tryoutName].filter(Boolean).join(' · ')}
-                onOpen={() => setCurrentTryout(p.tryoutId)}
-                onWarm={() => prefetchTryout(p.tryoutId)}
-              />
-            ))}
+            {outcome.players.items.map((p) => {
+              const first = p.evaluations[0];
+              const many = p.evaluations.length > 1 && !!p.athleteId;
+              const names = Array.from(new Set(p.evaluations.map((e) => e.tryoutName).filter(Boolean)));
+              return (
+                <Row
+                  key={`p-${p.key}`}
+                  // One person on several evaluations opens their profile, which
+                  // lines every evaluation up together; a single one still goes
+                  // straight to that evaluation's player screen.
+                  href={many ? `/player/${p.athleteId}` : `/assessment/${first.tryoutId}/player/${first.id}`}
+                  icon="profile"
+                  title={`${p.first} ${p.last}`.trim()}
+                  sub={
+                    many
+                      ? `${p.evaluations.length} evaluations${names.length ? ` · ${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''}` : ''}`
+                      : [p.jersey ? `#${p.jersey}` : null, p.pos, first.tryoutName].filter(Boolean).join(' · ')
+                  }
+                  onOpen={() => setCurrentTryout(first.tryoutId)}
+                  onWarm={() => prefetchTryout(first.tryoutId)}
+                />
+              );
+            })}
 
             {outcome.seasons.items.length ? <Heading label="Seasons" count={outcome.seasons.total} /> : null}
             {outcome.seasons.items.map((s) => (

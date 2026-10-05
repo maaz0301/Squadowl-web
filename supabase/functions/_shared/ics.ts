@@ -19,6 +19,8 @@ export interface IcsEvent {
   title: string;
   /** YYYY-MM-DD */
   date: string;
+  /** YYYY-MM-DD, for a multi-day event. Defaults to `date`. */
+  endDate?: string;
   /** HH:MM, 24-hour. Absent means all-day. */
   startTime?: string;
   endTime?: string;
@@ -58,7 +60,14 @@ function addDays(date: string, days: number): string {
 
 /** End of the event: explicit end time, else an hour on, rolling past midnight. */
 function resolveEnd(event: IcsEvent): { date: string; time?: string } {
-  if (!event.startTime) return { date: event.date };
+  const lastDay = event.endDate && event.endDate > event.date ? event.endDate : event.date;
+  if (!event.startTime) return { date: lastDay };
+  if (lastDay !== event.date) {
+    // A multi-day event ends on its last day, at its end time if it has one
+    // (a timed start needs a timed end, so the end of that day otherwise).
+    const parsed = event.endTime ? parseTime(event.endTime) : null;
+    return { date: lastDay, time: parsed ? `${pad(parsed.hours)}:${pad(parsed.minutes)}` : '23:59' };
+  }
   if (event.endTime) {
     const parsed = parseTime(event.endTime);
     if (parsed) return { date: event.date, time: `${pad(parsed.hours)}:${pad(parsed.minutes)}` };
@@ -102,17 +111,13 @@ function foldLine(line: string): string {
   return parts.join('\r\n');
 }
 
-export function buildIcs(event: IcsEvent, method: 'PUBLISH' | 'REQUEST' | 'CANCEL' = 'REQUEST'): string {
+/** The VEVENT block for one event, without the surrounding VCALENDAR. */
+function eventLines(event: IcsEvent, extra: { cancelled?: boolean } = {}): string[] {
   const end = resolveEnd(event);
   const allDay = !event.startTime;
   const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 
   const lines: string[] = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//TryoutHQ//Season Schedule//EN',
-    'CALSCALE:GREGORIAN',
-    `METHOD:${method}`,
     'BEGIN:VEVENT',
     `UID:${event.uid}`,
     `DTSTAMP:${now}`,
@@ -140,7 +145,42 @@ export function buildIcs(event: IcsEvent, method: 'PUBLISH' | 'REQUEST' | 'CANCE
     );
   }
 
-  lines.push('STATUS:CONFIRMED', 'END:VEVENT', 'END:VCALENDAR');
+  lines.push(extra.cancelled ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED', 'END:VEVENT');
+  return lines;
+}
+
+export function buildIcs(event: IcsEvent, method: 'PUBLISH' | 'REQUEST' | 'CANCEL' = 'REQUEST'): string {
+  const lines: string[] = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//TryoutHQ//Season Schedule//EN',
+    'CALSCALE:GREGORIAN',
+    `METHOD:${method}`,
+    ...eventLines(event, { cancelled: method === 'CANCEL' }),
+    'END:VCALENDAR',
+  ];
+  return lines.map(foldLine).join('\r\n');
+}
+
+/**
+ * A whole season as one calendar. Served from the season-calendar-feed function
+ * for subscribers (a subscribed calendar re-reads it on a schedule, which is
+ * how an added, edited or deleted event reaches everyone) and attached to the
+ * one digest email for people who would rather import than subscribe.
+ */
+export function buildIcsCalendar(events: IcsEvent[], name: string, method: 'PUBLISH' | 'REQUEST' = 'PUBLISH'): string {
+  const lines: string[] = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//TryoutHQ//Season Schedule//EN',
+    'CALSCALE:GREGORIAN',
+    `METHOD:${method}`,
+    `X-WR-CALNAME:${escapeText(name)}`,
+    'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
+    'X-PUBLISHED-TTL:PT1H',
+    ...events.flatMap((e) => eventLines(e)),
+    'END:VCALENDAR',
+  ];
   return lines.map(foldLine).join('\r\n');
 }
 

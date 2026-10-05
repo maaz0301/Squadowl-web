@@ -203,6 +203,22 @@ export interface DataSource {
     form: CreateEventForm,
     onProgress?: (done: number, total: number) => void,
   ): Promise<SeasonEvent>;
+  /**
+   * The subscribable calendar feed for the season an event belongs to (null if
+   * the caller cannot see it). Subscribing keeps the whole season in a personal
+   * calendar and picks up events added, changed or deleted later.
+   */
+  getSeasonCalendarFeed(eventId: string): Promise<{ url: string; name: string } | null>;
+  /**
+   * Several events at once (a repeating practice, a full season of games).
+   * Everyone invited gets ONE digest email listing all of them, not one email
+   * per event. `onProgress` counts events created.
+   */
+  addSeasonEvents(
+    seasonId: string,
+    forms: CreateEventForm[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<SeasonEvent[]>;
   updateSeasonEvent(seasonId: string, eventId: string, updates: Partial<SeasonEvent>): Promise<SeasonEvent>;
   deleteSeasonEvent(seasonId: string, eventId: string): Promise<void>;
   /**
@@ -260,6 +276,29 @@ export interface DataSource {
   listEventFiles(eventId: string): Promise<import('./types').EventFile[]>;
   uploadEventFile(seasonId: string, eventId: string, file: File): Promise<import('./types').EventFile>;
   deleteEventFile(file: import('./types').EventFile): Promise<void>;
+  /** Report cards a coach has built for a player. Staff only. */
+  listPlayerReportCards(athleteId: string): Promise<import('./types').PlayerReportCard[]>;
+  /** Saves a card, uploading any new files first. Returns the saved card. */
+  savePlayerReportCard(
+    input: import('./types').PlayerReportCardInput,
+    newFiles?: File[],
+  ): Promise<import('./types').PlayerReportCard>;
+  deletePlayerReportCard(card: import('./types').PlayerReportCard): Promise<void>;
+  /** AI comments for one player drawn only from the chosen evaluations. */
+  generateReportCardComments(
+    tryoutId: string,
+    playerId: string,
+    evalIds: string[],
+  ): Promise<import('./types').AiPlayerSummary>;
+  /**
+   * Library: files, notes, videos and links shared with chosen audiences. Reads
+   * return only what the caller may see (the database enforces each item's
+   * audience toggles); writes need an owner or admin.
+   */
+  listLibraryItems(): Promise<import('./types').LibraryItem[]>;
+  createLibraryItem(input: import('./types').LibraryItemInput, file?: File): Promise<import('./types').LibraryItem>;
+  updateLibraryItem(id: string, updates: Partial<import('./types').LibraryItemInput>): Promise<import('./types').LibraryItem>;
+  deleteLibraryItem(item: import('./types').LibraryItem): Promise<void>;
   /** Team news feed: coaches post and attach files; anyone who can open the season reads and comments. */
   listSeasonPosts(seasonId: string): Promise<import('./types').SeasonPost[]>;
   addSeasonPost(seasonId: string, input: { title: string; body: string }): Promise<import('./types').SeasonPost>;
@@ -374,7 +413,7 @@ export interface DataSource {
   removeTeamManager(managerId: string): Promise<void>;
 
   // Extended UI operations
-  sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'reminder' | 'registration_confirmation' | 'tryout_letter', to: string, payload: Record<string, unknown>): Promise<void>;
+  sendEmail(type: 'org_invite' | 'player_invite' | 'team_manager_invite' | 'tryout_invite' | 'schedule_update' | 'schedule_digest' | 'schedule_cancel' | 'reminder' | 'registration_confirmation' | 'tryout_letter', to: string, payload: Record<string, unknown>): Promise<void>;
   copyTryout(id: string): Promise<Tryout>;
   restoreTryout(id: string): Promise<Tryout>;
   importLibraryPlayers(tryoutId: string, entries: { first: string; last: string; jersey?: string; pos?: string }[]): Promise<Player[]>;

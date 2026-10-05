@@ -40,6 +40,8 @@ export interface PlanDefinition {
     customRubrics: number | 'unlimited';
     teamBuilder: boolean;
     aiSummaries: boolean;
+    /** AI-written comments on a player report card. Club only for now. */
+    aiReportComments: boolean;
     exports: ('csv' | 'pdf' | 'xlsx')[];
     shareLinks: boolean;
     seasonHub: boolean;
@@ -90,6 +92,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
       customRubrics: 3,
       teamBuilder: false,
       aiSummaries: false,
+      aiReportComments: false,
       exports: [],
       shareLinks: false,
       seasonHub: false,
@@ -127,6 +130,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
       customRubrics: 5,
       teamBuilder: false,
       aiSummaries: false,
+      aiReportComments: false,
       exports: ['csv'],
       shareLinks: false,
       seasonHub: true,
@@ -172,6 +176,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
       customRubrics: 'unlimited',
       teamBuilder: true,
       aiSummaries: true,
+      aiReportComments: false,
       exports: ['csv', 'pdf'],
       shareLinks: true,
       seasonHub: true,
@@ -218,6 +223,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
       customRubrics: 'unlimited',
       teamBuilder: true,
       aiSummaries: true,
+      aiReportComments: true,
       exports: ['csv', 'pdf', 'xlsx'],
       shareLinks: true,
       seasonHub: true,

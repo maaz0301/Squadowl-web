@@ -31,7 +31,7 @@ describe('runSearch', () => {
   it('matches case-insensitively across evaluations, players and seasons', () => {
     const r = runSearch(index, 'FALL');
     expect(r.evaluations.items.map((e) => e.id)).toEqual(['e1']);
-    expect(runSearch(index, 'doe').players.items.map((p) => p.id)).toEqual(['p1', 'p2']);
+    expect(runSearch(index, 'doe').players.items.map((p) => p.evaluations[0].id)).toEqual(['p1', 'p2']);
     expect(runSearch(index, 'wildcats').seasons.items.map((s) => s.id)).toEqual(['s1']);
   });
 
@@ -40,14 +40,14 @@ describe('runSearch', () => {
   });
 
   it('matches names in either order and multi-word queries', () => {
-    expect(runSearch(index, 'jane doe').players.items.map((p) => p.id)).toEqual(['p1']);
-    expect(runSearch(index, 'doe jane').players.items.map((p) => p.id)).toEqual(['p1']);
+    expect(runSearch(index, 'jane doe').players.items.map((p) => p.evaluations[0].id)).toEqual(['p1']);
+    expect(runSearch(index, 'doe jane').players.items.map((p) => p.evaluations[0].id)).toEqual(['p1']);
     expect(runSearch(index, 'jane lee').players.total).toBe(0);
   });
 
   it('finds a jersey number exactly, not as a substring of others', () => {
-    expect(runSearch(index, '7').players.items.map((p) => p.id)).toEqual(['p1']);
-    expect(runSearch(index, '#17').players.items.map((p) => p.id)).toEqual(['p2']);
+    expect(runSearch(index, '7').players.items.map((p) => p.evaluations[0].id)).toEqual(['p1']);
+    expect(runSearch(index, '#17').players.items.map((p) => p.evaluations[0].id)).toEqual(['p2']);
   });
 
   it('caps each group but reports the true total', () => {
@@ -57,5 +57,55 @@ describe('runSearch', () => {
     const r = runSearch(many, 'sam', 25);
     expect(r.players.items).toHaveLength(25);
     expect(r.players.total).toBe(60);
+  });
+
+  describe('one person on several evaluations', () => {
+    it('shows an athlete once, listing every evaluation', () => {
+      const idx = buildSearchIndex({
+        players: [
+          player('r1', 'Jane', 'Doe', { athleteId: 'a1', tryoutId: 't1', tryoutName: 'Fall Tryout' }),
+          player('r2', 'Jane', 'Doe', { athleteId: 'a1', tryoutId: 't2', tryoutName: 'Spring Camp' }),
+          player('r3', 'Jane', 'Doe', { athleteId: 'a1', tryoutId: 't3', tryoutName: 'Winter Combine' }),
+        ],
+      });
+      const r = runSearch(idx, 'jane');
+      expect(r.players.total).toBe(1);
+      expect(r.players.items[0].evaluations.map((e) => e.tryoutName)).toEqual([
+        'Fall Tryout',
+        'Spring Camp',
+        'Winter Combine',
+      ]);
+    });
+
+    it('merges separately imported records with the same name and year of birth', () => {
+      const idx = buildSearchIndex({
+        players: [
+          player('r1', 'Jane', 'Doe', { athleteId: 'a1', yob: 2012, tryoutId: 't1' }),
+          player('r2', 'jane ', ' DOE', { athleteId: 'a2', yob: 2012, tryoutId: 't2' }),
+        ],
+      });
+      expect(runSearch(idx, 'doe').players.total).toBe(1);
+    });
+
+    it('keeps same-named players apart without a matching year of birth', () => {
+      const idx = buildSearchIndex({
+        players: [
+          player('r1', 'Sam', 'Lee', { athleteId: 'a1', yob: 2011 }),
+          player('r2', 'Sam', 'Lee', { athleteId: 'a2', yob: 2013 }),
+          player('r3', 'Sam', 'Lee', { athleteId: 'a3' }),
+        ],
+      });
+      expect(runSearch(idx, 'sam lee').players.total).toBe(3);
+    });
+
+    it('still finds a person by the jersey they wore on any evaluation', () => {
+      const idx = buildSearchIndex({
+        players: [
+          player('r1', 'Jane', 'Doe', { athleteId: 'a1', jersey: '7', tryoutId: 't1' }),
+          player('r2', 'Jane', 'Doe', { athleteId: 'a1', jersey: '12', tryoutId: 't2' }),
+        ],
+      });
+      expect(runSearch(idx, '12').players.total).toBe(1);
+    });
   });
 });
