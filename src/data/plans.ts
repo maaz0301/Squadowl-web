@@ -58,8 +58,8 @@ export interface PlanDefinition {
 /** Stripe's own cut, shown as a sub-item under "Stripe payments" on every paid tier. */
 const STRIPE_FEE_SUBITEMS = ['0.5% of registration fees collected', 'Stripe: 2.9% ', 'CAD$0.30 per transaction'];
 
-/** Per-year price of one additional Club team beyond the 6 included in the plan. */
-export const EXTRA_TEAM_PRICE_CENTS = 1000;
+/** Per-year price of one additional team on Coach+ and Club, beyond the teams included in the plan (half the Coach plan's price). */
+export const EXTRA_TEAM_PRICE_CENTS = 2000;
 
 /** Teams included in the Club plan before add-on team licenses are purchased. */
 const CLUB_INCLUDED_TEAMS = 6;
@@ -261,6 +261,17 @@ export function isAtAssessmentLimit(tier: PlanTier, count: number): boolean {
   return count >= limit;
 }
 
+/**
+ * The player count that gates adding a NEW player. On the Free plan evaluations
+ * and teams draw from one shared pool, so the account's total counts as well as
+ * the roster in front of you: a full evaluation can't be sidestepped by adding
+ * more players under a team, or the other way round. Paid plans cap each roster
+ * separately, as before.
+ */
+export function playersTowardCap(tier: PlanTier, rosterCount: number, accountCount: number): number {
+  return tier === 'free' ? Math.max(rosterCount, accountCount) : rosterCount;
+}
+
 export function isAtPlayerLimit(tier: PlanTier, count: number): boolean {
   const limit = getPlanDefinition(tier).limits.players;
   if (limit === 'unlimited') return false;
@@ -352,8 +363,7 @@ export function getTierRank(tier: PlanTier): number {
  * The plan tier that should gate a team-scoped feature (exports, AI summaries,
  * Team Builder, custom rubrics, fee collection). Normally the caller's own
  * account tier — but when `team` is one delegated to them (CLUB mode), the
- * owning club's tier instead: the club already pays for the team, so the
- * coach it was handed to shouldn't hit an upgrade wall managing it.
+ * team runs at Coach level (see managedTeamTier), within the club's larger plan.
  *
  * Falls back to `ownTier` whenever the team isn't managed, or the delegated
  * team's owner tier hasn't loaded yet — never grants more than the caller
@@ -363,8 +373,19 @@ export function effectiveTierForTeam(
   team: Pick<Team, 'managed' | 'ownerPlanTier'> | null | undefined,
   ownTier: PlanTier,
 ): PlanTier {
-  if (team?.managed && team.ownerPlanTier) return team.ownerPlanTier;
+  if (team?.managed && team.ownerPlanTier) return managedTeamTier(team.ownerPlanTier, ownTier);
   return ownTier;
+}
+
+/**
+ * The level a delegated team runs at. It is one step below the club that owns
+ * it: Coach, unless the manager's own plan is higher, and never above what the
+ * club itself has. So a coach handed a club's team works at Coach level, and
+ * upgrading their own plan is what lifts it.
+ */
+export function managedTeamTier(ownerTier: PlanTier, managerTier: PlanTier): PlanTier {
+  const floor = getTierRank(managerTier) > getTierRank('coach') ? managerTier : 'coach';
+  return getTierRank(ownerTier) < getTierRank(floor) ? ownerTier : floor;
 }
 
 /** The next tier up from `tier`, or null if already on the top tier. */

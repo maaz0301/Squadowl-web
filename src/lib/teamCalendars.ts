@@ -23,6 +23,24 @@ export function groupCalendarTeams(seasons: Season[]): CalendarTeam[] {
   return [...byTeam.values()].sort((a, b) => a.teamName.localeCompare(b.teamName));
 }
 
+/**
+ * `calendars` plus an empty calendar for every team that has no season yet.
+ * A team only gets a season once an event or player is added, so without this a
+ * brand-new team was missing from the Calendar screen and its Attach option
+ * came and went depending on which teams had been scheduled.
+ */
+export function withAllTeams(
+  calendars: CalendarTeam[],
+  teams: { id: string; name: string }[],
+): CalendarTeam[] {
+  const known = new Set(calendars.map((c) => c.teamId));
+  const extra = teams
+    .filter((t) => !known.has(t.id))
+    .map((t) => ({ teamId: t.id, teamName: t.name, events: [] as SeasonEvent[] }));
+  if (extra.length === 0) return calendars;
+  return [...calendars, ...extra].sort((a, b) => a.teamName.localeCompare(b.teamName));
+}
+
 /** The events of every calendar attached to `teamId`, and which team each one came from. */
 export function linkedEvents(
   teamId: string,

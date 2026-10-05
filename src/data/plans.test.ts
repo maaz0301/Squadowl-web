@@ -5,6 +5,10 @@ import {
   canUseDummyData,
   canUseFeature,
   playerRoom,
+  playersTowardCap,
+  isAtPlayerLimit,
+  managedTeamTier,
+  effectiveTierForTeam,
   teamRoom,
 } from './plans';
 
@@ -58,5 +62,42 @@ describe('AI report card comments', () => {
     expect(canUseFeature('coach_plus', 'aiReportComments')).toBe(false);
     expect(canUseFeature('coach', 'aiReportComments')).toBe(false);
     expect(canUseFeature('free', 'aiReportComments')).toBe(false);
+  });
+});
+
+describe('playersTowardCap', () => {
+  it('shares one pool across evaluations and teams on the Free plan', () => {
+    // A full evaluation (15) means a team with no players yet is already at the cap.
+    expect(isAtPlayerLimit('free', playersTowardCap('free', 0, 15))).toBe(true);
+    expect(isAtPlayerLimit('free', playersTowardCap('free', 5, 10))).toBe(false);
+    expect(playersTowardCap('free', 12, 9)).toBe(12);
+  });
+
+  it('keeps paid plans capped per roster', () => {
+    expect(playersTowardCap('coach', 4, 28)).toBe(4);
+    expect(isAtPlayerLimit('coach', playersTowardCap('coach', 4, 28))).toBe(false);
+  });
+});
+
+describe('managedTeamTier', () => {
+  it('runs a delegated club team at Coach level by default', () => {
+    expect(managedTeamTier('club', 'free')).toBe('coach');
+    expect(managedTeamTier('club', 'coach')).toBe('coach');
+  });
+
+  it('lifts to the manager\'s own plan when that is higher, never above the club', () => {
+    expect(managedTeamTier('club', 'coach_plus')).toBe('coach_plus');
+    expect(managedTeamTier('club', 'club')).toBe('club');
+    expect(managedTeamTier('coach_plus', 'club')).toBe('coach_plus');
+  });
+
+  it('never gives a team more than its owner has', () => {
+    expect(managedTeamTier('free', 'coach')).toBe('free');
+    expect(managedTeamTier('coach', 'club')).toBe('coach');
+  });
+
+  it('leaves a team the caller owns on their own plan', () => {
+    expect(effectiveTierForTeam({ managed: false, ownerPlanTier: 'club' }, 'coach')).toBe('coach');
+    expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'club' }, 'free')).toBe('coach');
   });
 });

@@ -79,7 +79,7 @@ function LeaveTeamRow({ season }: { season: GuardianSeason }) {
     e.stopPropagation();
     const ok = await confirm({
       title: 'Leave Team',
-      message: `Remove this athlete from ${season.teamName ?? 'this team'} (${season.name})? You'll need a new invite to rejoin.`,
+      message: `Remove this athlete from ${season.teamName ?? 'this team'} (${season.name})? You'll stop getting this team's schedule and messages. The coach's roster is not changed, and only the coach can add you back.`,
       confirmLabel: 'Leave',
       destructive: true,
     });

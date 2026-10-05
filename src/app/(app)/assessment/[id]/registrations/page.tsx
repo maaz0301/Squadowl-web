@@ -25,10 +25,11 @@ import {
   Tabs,
   useAlert,
 } from '@/components/ui';
-import { isAtPlayerLimit, playerRoom } from '@/data/plans';
+import { isAtPlayerLimit, playerRoom, playersTowardCap } from '@/data/plans';
 import { useCanUseDummyData } from '@/features/useCanUseDummyData';
 import type { DummyDataOptions } from '@/data/testDataGenerator';
 import {
+  useAccountPlayerCount,
   useClearTestDataMutation,
   useDismissRegistrationMutation,
   useEnsureCloudSessionMutation,
@@ -55,6 +56,8 @@ export default function RegistrationsPage() {
   const tryoutQuery = useTryoutQuery(id);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
+  // Free plans share one pool of players across evaluations and teams.
+  const accountPlayers = useAccountPlayerCount(effectiveTier === 'free');
   const regsQuery = useRegistrationsQuery(id!);
   const ensureCloud = useEnsureCloudSessionMutation();
   // Only the destination's roster size is read off this — summaries carry the
@@ -150,11 +153,13 @@ export default function RegistrationsPage() {
 
     // The player limit is per-assessment, so it has to be measured against the
     // roster actually receiving these players — not this screen's assessment,
-    // which may not be the destination. A team roster isn't capped this way.
-    if (destination.kind === 'assessment') {
-      const target = (allTryouts.data ?? []).find((t) => t.id === destination.id);
+    // which may not be the destination. 
+    // On the Free plan a team roster is capped too, because evaluations and
+    // teams share one pool of players.
+    {
+      const target = destination.kind === 'assessment' ? (allTryouts.data ?? []).find((t) => t.id === destination.id) : undefined;
       const existing = target?.playerCount ?? 0;
-      if (isAtPlayerLimit(effectiveTier, existing + ids.length - 1)) {
+      if (isAtPlayerLimit(effectiveTier, playersTowardCap(effectiveTier, existing, accountPlayers) + ids.length - 1)) {
         setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
         return;
       }

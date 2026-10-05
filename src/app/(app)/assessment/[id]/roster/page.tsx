@@ -25,12 +25,13 @@ import {
   Spinner,
   useAlert,
 } from '@/components/ui';
-import { isAtPlayerLimit, playerRoom } from '@/data/plans';
+import { isAtPlayerLimit, playerRoom, playersTowardCap } from '@/data/plans';
 import { useCanUseDummyData } from '@/features/useCanUseDummyData';
 import { playerDisplayName } from '@/data/rubrics';
 import { getDataSource } from '@/data';
 import type { AddPlayerForm as AddPlayerFormValues } from '@/data/types';
 import {
+  useAccountPlayerCount,
   useAddPlayerMutation,
   useDeletePlayersMutation,
   useImportTryoutPlayersMutation,
@@ -64,6 +65,8 @@ export default function RosterPage() {
   const terms = useTerms(tryoutQuery.data?.settings.customLabels);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
+  // Free plans share one pool of players across evaluations and teams.
+  const accountPlayers = useAccountPlayerCount(effectiveTier === 'free');
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   const { canComplete, completing, complete } = useCompleteAssessing(tryoutQuery.data);
   const addPlayer = useAddPlayerMutation(id!);
@@ -195,9 +198,10 @@ export default function RosterPage() {
   }
 
   const tryout = tryoutQuery.data;
+  const capCount = playersTowardCap(effectiveTier, tryout.roster.length, accountPlayers);
 
   const openAdd = () => {
-    if (isAtPlayerLimit(effectiveTier, tryout.roster.length)) {
+    if (isAtPlayerLimit(effectiveTier, capCount)) {
       setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
       return;
     }
@@ -207,7 +211,7 @@ export default function RosterPage() {
   // Same plan gate as adding one by hand — a spreadsheet is a faster way onto
   // the roster, not a way around the cap.
   const openImport = () => {
-    if (isAtPlayerLimit(effectiveTier, tryout.roster.length)) {
+    if (isAtPlayerLimit(effectiveTier, capCount)) {
       setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
       return;
     }
@@ -611,7 +615,7 @@ export default function RosterPage() {
         visible={showImport}
         onClose={() => setShowImport(false)}
         target={tryout.name}
-        atLimit={isAtPlayerLimit(effectiveTier, tryout.roster.length)}
+        atLimit={isAtPlayerLimit(effectiveTier, capCount)}
         onLimitReached={() => setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'))}
         onImport={async (rows, onProgress) => {
           // A spreadsheet is a faster way onto the roster, not a way around the
@@ -619,7 +623,7 @@ export default function RosterPage() {
           // nobody, so they shouldn't spend the cap), then what fits goes in and
           // the rest is listed as not added.
           const { fresh, duplicates } = dropExistingPlayers(rows, tryout.roster);
-          const capped = capImportRows(fresh, playerRoom(effectiveTier, tryout.roster.length));
+          const capped = capImportRows(fresh, playerRoom(effectiveTier, capCount));
           const allowed = capped.allowed;
           const skipped = [...duplicates, ...capped.skipped];
           if (allowed.length === 0) {
@@ -701,7 +705,7 @@ export default function RosterPage() {
 
       <DummyDataModal
         variant="assessment"
-        maxPlayers={playerRoom(effectiveTier, tryout.roster.length)}
+        maxPlayers={playerRoom(effectiveTier, capCount)}
         visible={showTestGen}
         loading={genTest.isPending}
         progress={dummyProgress ?? undefined}

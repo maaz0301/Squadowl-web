@@ -1,7 +1,7 @@
 'use client';
 'use no memo';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
@@ -31,6 +31,7 @@ import {
   Modal,
   PageHeader,
   SectionLabel,
+  Select,
   TimeField,
   useAlert,
 } from '@/components/ui';
@@ -42,6 +43,7 @@ import {
 } from '@/features/queries';
 import { useSessionStore } from '@/state/sessionStore';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
+import { DURATION_OPTIONS, endFromDuration, formatDuration, isEndAfterStart } from '@/data/timeRange';
 import { MapLocationHint } from '@/components/MapLink';
 import { isAtAssessmentLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -198,6 +200,21 @@ function NewAssessmentForm() {
   const sport = watch('sport');
   const eventType = watch('eventType');
   const teamId = watch('teamId');
+  // The evaluation is entered as a start plus how long it runs; the end time
+  // that is stored is worked out from the two, as events do.
+  const [duration, setDuration] = useState<number | undefined>(undefined);
+  const startTimeValue = watch('startTime');
+  const tryoutDateValue = watch('tryoutDate');
+  const endTimeValue = watch('endTime');
+  // A duration that carries past midnight would leave an end before the start.
+  const runsPastMidnight = !!duration && !!startTimeValue && !!endTimeValue && !isEndAfterStart(startTimeValue, endTimeValue);
+  useEffect(() => {
+    const end =
+      duration && startTimeValue
+        ? endFromDuration(tryoutDateValue || '2000-01-01', startTimeValue, duration)?.endTime
+        : undefined;
+    setValue('endTime', end ?? '');
+  }, [duration, startTimeValue, tryoutDateValue, setValue]);
   // An evaluation for a team someone else owns is created on that team's plan,
   // not the creator's own — the manager's account stays as it is.
   const effectiveTier = useEffectivePlanTier(teamId);
@@ -359,13 +376,20 @@ function NewAssessmentForm() {
                   <TimeField label="Start Time" value={field.value} onChange={field.onChange} />
                 )}
               />
-              <Controller
-                control={control}
-                name="endTime"
-                render={({ field, fieldState }) => (
-                  <TimeField label="End Time" value={field.value} onChange={field.onChange} error={fieldState.error?.message} />
-                )}
-              />
+              <Select
+                label="Duration"
+                value={duration ? String(duration) : ''}
+                onChange={(e) => setDuration(e.target.value ? Number(e.target.value) : undefined)}
+                disabled={!startTimeValue}
+                error={runsPastMidnight ? 'This runs past midnight. Pick a shorter duration or an earlier start.' : undefined}
+              >
+                <option value="">{startTimeValue ? 'Select a duration' : 'Pick a start time first'}</option>
+                {DURATION_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {formatDuration(m)}
+                  </option>
+                ))}
+              </Select>
             </div>
 
             <Controller

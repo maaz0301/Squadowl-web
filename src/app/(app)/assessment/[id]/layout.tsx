@@ -7,9 +7,10 @@ import { usePathname } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { MapLink } from '@/components/MapLink';
-import { Badge } from '@/components/ui';
+import { Badge, EmptyState } from '@/components/ui';
 import { useRegistrationsQuery, useTryoutQuery, useTryoutRealtimeSync } from '@/features/queries';
 import { useIsAssessorOnly } from '@/features/useAssessmentId';
+import { useEvaluationAccess } from '@/features/useEvaluationAccess';
 import { useSessionStore } from '@/state/sessionStore';
 
 interface TabDef {
@@ -64,9 +65,31 @@ export default function AssessmentLayout({
   // an owner. The parameter only dresses the first paint.
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
 
+  // A guardian of one of its players reaches the athlete view, not the
+  // evaluation: no roster, scoring or editing.
+  const access = useEvaluationAccess(tryoutQuery.data);
+
   const segment = pathname.split('/')[3] ?? 'roster';
   const visibleTabs = TABS.filter((t) => !(isAssessorOnly && t.assessorHidden));
   const suffix = isAssessorOnly ? '?assessor=1' : '';
+
+  if (access === 'guardian-only') {
+    return (
+      <div className="mx-auto max-w-md pt-10">
+        <EmptyState
+          title="This evaluation isn't available to you"
+          message="Your athletes and their results are under My Athletes on your dashboard."
+        />
+        <Link
+          href="/dashboard"
+          className="mt-4 flex h-[46px] items-center justify-center rounded-2xl text-sm font-bold text-white"
+          style={{ backgroundColor: colors.primary }}
+        >
+          Go to My Athletes
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <>

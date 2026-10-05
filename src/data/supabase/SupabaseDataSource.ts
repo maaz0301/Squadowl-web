@@ -3638,6 +3638,7 @@ export class SupabaseDataSource implements DataSource {
           // type date"). Both are nullable, so an empty one means "not set".
           tryout_date: form.tryoutDate || null,
           start_time: form.startTime || null,
+          end_time: form.endTime || null,
           location: form.rink ?? null,
           head_coach: form.headCoach ?? profile.displayName,
           head_assessor: form.headAssessor ?? profile.displayName,
@@ -7834,6 +7835,27 @@ export class SupabaseDataSource implements DataSource {
           'or an owner/admin/coach on the account that owns this season.',
       );
     }
+  }
+
+  async countActiveAthletes(): Promise<number> {
+    const { supabase, accountId } = await this.ctx();
+    const [onEvaluations, onTeams] = await Promise.all([
+      supabase
+        .from('tryout_participants')
+        .select('athlete_id, tryouts!inner(account_id, deleted_at)')
+        .eq('tryouts.account_id', accountId)
+        .is('tryouts.deleted_at', null)
+        .is('removed_at', null),
+      supabase
+        .from('season_roster')
+        .select('athlete_id, seasons!inner(account_id)')
+        .eq('seasons.account_id', accountId),
+    ]);
+    const ids = new Set<string>();
+    for (const r of [...(onEvaluations.data ?? []), ...(onTeams.data ?? [])] as Row[]) {
+      if (r.athlete_id) ids.add(r.athlete_id as string);
+    }
+    return ids.size;
   }
 
   async listAthletes(): Promise<Athlete[]> {

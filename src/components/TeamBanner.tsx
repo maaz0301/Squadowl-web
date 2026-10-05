@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui';
+import { TeamPlanBadge } from '@/components/TeamPlanBadge';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import type { Team } from '@/data/types';
 
@@ -12,7 +13,7 @@ import type { Team } from '@/data/types';
  * still see whose team they're in.
  */
 interface TeamBannerProps {
-  team: Pick<Team, 'id' | 'name' | 'season' | 'logoUrl' | 'brandColor' | 'managed'>;
+  team: Pick<Team, 'id' | 'name' | 'season' | 'logoUrl' | 'brandColor' | 'managed' | 'ownerPlanTier'>;
   /** Right-hand actions (chat, edit). */
   right?: ReactNode;
   /** Line under the team name; defaults to the season label. */
@@ -71,6 +72,7 @@ export function TeamBanner({ team, right, subtitle, linkToHub = true, className 
       {/* A delegated coach sees whose team this is, so a club-owned team is never
           mistaken for one of their own. */}
       {team.managed ? <Badge label="Managed" variant="info" /> : null}
+      <TeamPlanBadge team={team} />
       {right}
     </div>
   );

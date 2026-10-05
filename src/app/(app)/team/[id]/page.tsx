@@ -66,13 +66,15 @@ import {
   useGenerateTestDataMutation,
   useClearTestDataMutation,
   useCreateTryoutMutation,
+  useAccountPlayerCount,
 } from '@/features/queries';
 import { queryKeys } from '@/lib/queryClient';
 import { prefetchNewAssessment } from '@/features/prefetch';
 import { useDebouncedValue } from '@/lib/hooks';
 import { exportTeamRosterData } from '@/lib/teamRosterExport';
 import { useUser, usePermissions } from '@/state/authStore';
-import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit, canUseDummyData, playerRoom, assessmentRoom } from '@/data/plans';
+import { TeamPlanBadge } from '@/components/TeamPlanBadge';
+import { canUseFeature, effectiveTierForTeam, isAtPlayerLimit, canUseDummyData, playerRoom, playersTowardCap, assessmentRoom } from '@/data/plans';
 import { useDummyDataBlockedTiers } from '@/features/useCanUseDummyData';
 import { DUMMY_LIMITS, clampOption } from '@/data/testDataGenerator';
 import { capImportRows, dropExistingPlayers, withSkippedRows } from '@/data/bulkTeamImport';
@@ -182,6 +184,8 @@ export default function TeamDetailPage() {
   const [attachingId, setAttachingId] = useState<string | null>(null);
   const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
+  // Read before the early returns below; only used when the team's plan is Free.
+  const accountPlayersFree = useAccountPlayerCount((user?.planTier ?? 'free') === 'free');
   const { canManageTeam, canAssess } = usePermissions();
   const qc = useQueryClient();
   const logoFileRef = useRef<HTMLInputElement>(null);
@@ -222,6 +226,9 @@ export default function TeamDetailPage() {
   // Whether the selected event's details are showing under its card.
   const [eventDetailsOpen, setEventDetailsOpen] = useState(true);
   const [showAllEvents, setShowAllEvents] = useState(!!focusEventId);
+  // Past events: the Schedule tab leads with what's coming, and this switches it
+  // to what already happened, so photos and videos added to a game stay reachable.
+  const [showPast, setShowPast] = useState(false);
   const [rsvpSearch, setRsvpSearch] = useState('');
   const [availabilityTarget, setAvailabilityTarget] = useState<{
     eventId: string;
@@ -512,6 +519,10 @@ export default function TeamDetailPage() {
   // and the empty-state checks never read as "no players" on a team that has
   // them.
   const playerCount = rosterAthleteIdsQuery.data?.length ?? listedPlayers.length;
+  // Free plans share one pool of players across evaluations and teams, so a new
+  // player is checked against the account's total as well as this roster.
+  const accountPlayers = effectiveTier === 'free' ? accountPlayersFree : 0;
+  const capCount = playersTowardCap(effectiveTier, playerCount, accountPlayers);
 
   // What the Players tab actually renders. 'recent' is listedPlayers as-is —
   // paginated, server-searched, in the order the roster was built. 'name' and
@@ -683,7 +694,7 @@ export default function TeamDetailPage() {
   const linkedSummary = summaries.find((t) => t.teamId === team.id);
   const dummyAssessmentCount = team.managed ? summaries.filter((t) => t.teamId === team.id).length : summaries.length;
   const dummyRoom = Math.min(
-    playerRoom(effectiveTier, playerCount),
+    playerRoom(effectiveTier, capCount),
     linkedSummary ? playerRoom(effectiveTier, linkedSummary.playerCount ?? 0) : Number.POSITIVE_INFINITY,
   );
   const dummyBlocked = !linkedSummary && assessmentRoom(effectiveTier, dummyAssessmentCount) < 1;
@@ -695,7 +706,7 @@ export default function TeamDetailPage() {
   // onto the roster, not a way around the cap. The roster's cap is the owning
   // club's for a delegated team (effectiveTier), as for every other add path.
   const openImportPlayers = () => {
-    if (isAtPlayerLimit(effectiveTier, playerCount)) {
+    if (isAtPlayerLimit(effectiveTier, capCount)) {
       setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
       return;
     }
@@ -918,9 +929,14 @@ export default function TeamDetailPage() {
     .sort((a, b) => a.date.localeCompare(b.date));
   // An event opened from the Calendar page stays reachable even once it is past.
   const focusedPast = (teamSeason?.events ?? []).filter((e) => e.id === focusEventId && e.date < today);
-  const scheduleEvents = [...upcomingEvents, ...focusedPast].sort((a, b) => a.date.localeCompare(b.date));
+  const pastEvents = [...(teamSeason?.events ?? [])]
+    .filter((e) => e.date < today)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const scheduleEvents = showPast
+    ? pastEvents
+    : [...upcomingEvents, ...focusedPast].sort((a, b) => a.date.localeCompare(b.date));
   // The hub leads with the next three; "View All" opens every upcoming event.
-  const shownEvents = showAllEvents ? scheduleEvents : scheduleEvents.slice(0, 3);
+  const shownEvents = showAllEvents || showPast ? scheduleEvents : scheduleEvents.slice(0, 3);
   const selectedEvent = shownEvents.find((e) => e.id === selectedEventId) ?? shownEvents[0];
   const hasHiddenEvents = scheduleEvents.length > 3;
   const evaluatorCount = new Set(
@@ -1179,7 +1195,14 @@ export default function TeamDetailPage() {
         subtitle={team.season || undefined}
         logoUrl={team.logoUrl}
         backHref="/teams"
-        extra={team.managed ? <Badge label="Managed" variant="info" /> : undefined}
+        extra={
+          team.managed ? (
+            <>
+              <Badge label="Managed" variant="info" />
+              <TeamPlanBadge team={team} showUpgrade />
+            </>
+          ) : undefined
+        }
         chatBadge={
           chatUnread > 0 ? (
             <span
@@ -1231,17 +1254,33 @@ export default function TeamDetailPage() {
               <div>
                 <HubSectionLabel
                   icon="calendar"
-                  label="Upcoming Events"
-                  actionLabel={showAllEvents ? 'Show Less' : hasHiddenEvents ? 'View All' : undefined}
+                  label={showPast ? 'Past Events' : 'Upcoming Events'}
+                  actionLabel={showPast ? undefined : showAllEvents ? 'Show Less' : hasHiddenEvents ? 'View All' : undefined}
                   onAction={() => setShowAllEvents((v) => !v)}
                 />
+                {pastEvents.length > 0 || showPast ? (
+                  <div className="mb-3">
+                    <Button
+                      label={showPast ? 'Back to upcoming events' : `Past events (${pastEvents.length})`}
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        setShowPast((v) => !v);
+                        setSelectedEventId(null);
+                        setEventDetailsOpen(false);
+                      }}
+                    />
+                  </div>
+                ) : null}
                 {shownEvents.length === 0 ? (
                   <Card className="mb-2 flex flex-col items-center gap-1 py-8 text-center">
                     <span className="font-bold" style={{ color: colors.ink }}>
-                      No events yet
+                      {showPast ? 'No past events' : 'No events yet'}
                     </span>
                     <span className="max-w-md text-sm" style={{ color: colors.inkMuted }}>
-                      Add an event — everyone on the roster is invited and their guardians can RSVP from the portal.
+                      {showPast
+                        ? 'Events that have already happened are kept here, with their photos, videos and notes.'
+                        : 'Add an event — everyone on the roster is invited and their guardians can RSVP from the portal.'}
                     </span>
                   </Card>
                 ) : (
@@ -1265,6 +1304,12 @@ export default function TeamDetailPage() {
                               setRsvpSearch('');
                             }}
                           />
+                          {/* Every event offers Add to calendar, not only the one that is open. */}
+                          {!open ? (
+                            <div className="flex px-1">
+                              <AddToCalendar event={ev} teamName={team?.name} size="sm" />
+                            </div>
+                          ) : null}
                           {open ? ((() => {
                     const ev = selectedEvent;
                     const rsvp = rsvpSummary(ev);
@@ -1511,7 +1556,15 @@ export default function TeamDetailPage() {
               label={`+ Add ${terms.player} Manually`}
               size="sm"
               variant="secondary"
-              onClick={() => setShowAddManualPlayer(true)}
+              onClick={() => {
+                // Same plan gate as the import and the evaluation roster: adding
+                // by hand is not a way around the cap.
+                if (isAtPlayerLimit(effectiveTier, capCount)) {
+                  setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'));
+                  return;
+                }
+                setShowAddManualPlayer(true);
+              }}
             />
             <Button
               label="Import from File"
@@ -2134,7 +2187,7 @@ export default function TeamDetailPage() {
           }
         }}
         target={team.name}
-        atLimit={isAtPlayerLimit(effectiveTier, playerCount)}
+        atLimit={isAtPlayerLimit(effectiveTier, capCount)}
         onLimitReached={() => setLimitMsg(buildLimitReachedMessage(effectiveTier, 'players', 'players'))}
         onImport={async (rows, onProgress) => {
           // A spreadsheet is a faster way onto the roster, not a way around the
@@ -2142,7 +2195,7 @@ export default function TeamDetailPage() {
           // nobody, so they shouldn't spend the cap), then what fits goes in and
           // the rest is listed as not added.
           const { fresh, duplicates } = dropExistingPlayers(rows, listedPlayers);
-          const capped = capImportRows(fresh, playerRoom(effectiveTier, playerCount));
+          const capped = capImportRows(fresh, playerRoom(effectiveTier, capCount));
           const allowed = capped.allowed;
           const skipped = [...duplicates, ...capped.skipped];
           if (allowed.length === 0) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Season, SeasonEvent } from '@/data/types';
-import { groupCalendarTeams, linkedEvents } from './teamCalendars';
+import { groupCalendarTeams, linkedEvents, withAllTeams } from './teamCalendars';
 
 const ev = (id: string): SeasonEvent => ({ id, title: id, date: '2026-10-20', type: 'Event' }) as SeasonEvent;
 const season = (id: string, teamId: string | undefined, teamName: string, events: SeasonEvent[]) =>
@@ -36,5 +36,22 @@ describe('calendar links', () => {
     expect(linkedEvents('t1', teams, [{ viewerTeamId: 't1', sourceTeamId: 't1' }]).events).toEqual([]);
     // the link points the other way: Thunder's calendar on Comets does not put Comets on Thunder
     expect(linkedEvents('t2', teams, [{ viewerTeamId: 't1', sourceTeamId: 't2' }]).events).toEqual([]);
+  });
+});
+
+describe('withAllTeams', () => {
+  it('adds an empty calendar for a team with no season yet', () => {
+    const calendars = [{ teamId: 'a', teamName: 'Alpha', events: [] }];
+    const all = withAllTeams(calendars, [
+      { id: 'a', name: 'Alpha' },
+      { id: 'b', name: 'Bravo' },
+    ]);
+    expect(all.map((c) => c.teamId)).toEqual(['a', 'b']);
+    expect(all[1].events).toEqual([]);
+  });
+
+  it('keeps the existing calendars when every team already has one', () => {
+    const calendars = [{ teamId: 'a', teamName: 'Alpha', events: [] }];
+    expect(withAllTeams(calendars, [{ id: 'a', name: 'Alpha' }])).toBe(calendars);
   });
 });

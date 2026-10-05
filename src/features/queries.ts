@@ -2114,6 +2114,21 @@ export function useChatUnreadCount(seasonId: string | undefined): number {
   return query.data ?? 0;
 }
 
+/**
+ * The count the Free plan's player cap is measured against: different players
+ * across every evaluation and team in the account. Only fetched on the Free
+ * plan, where evaluations and teams share one pool of players.
+ */
+export function useAccountPlayerCount(enabled: boolean): number {
+  const q = useQuery({
+    queryKey: ['accountPlayerCount'],
+    queryFn: () => getDataSource().countActiveAthletes(),
+    enabled,
+    refetchOnMount: 'always',
+  });
+  return enabled ? (q.data ?? 0) : 0;
+}
+
 export function useAthletesQuery() {
   return useQuery({
     queryKey: ['athletes'],

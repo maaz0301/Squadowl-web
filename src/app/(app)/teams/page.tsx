@@ -16,6 +16,7 @@ import {
   useAlert,
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
+import { TeamPlanBadge } from '@/components/TeamPlanBadge';
 import { HomeIntro } from '@/components/home/HomeIntro';
 import { HomePanel } from '@/components/home/HomePanel';
 import { HomeEmptyCard } from '@/components/home/HomeEmptyCard';
@@ -196,6 +197,7 @@ export default function TeamsPage() {
                             {team.name}
                           </span>
                           {team.managed ? <Badge label="Managed" variant="info" /> : null}
+                          <TeamPlanBadge team={team} />
                         </div>
                         <span className="flex shrink-0 items-center gap-2">
                           <NavPending />

@@ -114,9 +114,13 @@ export function MonthCalendar({
         })}
       </div>
 
-      <h3 className="mb-2 mt-6 text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>
-        {selected ? `Events on ${selected}` : `Events in ${MONTH_NAMES[cursor.month]}`}
-      </h3>
+      {selected ? (
+        <h3 className="mb-2 mt-6 text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>
+          {`Events on ${selected}`}
+        </h3>
+      ) : (
+        <div className="mt-6" />
+      )}
       {selected && onAddEvent ? (
         <button
           type="button"
@@ -133,8 +137,13 @@ export function MonthCalendar({
         <div className="flex flex-col gap-2">
           {shown.map((ev) => (
             <Card key={ev.id} className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <span className="w-12 text-center text-2xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
-                {ev.date.slice(8, 10)}
+              <span className="flex w-12 flex-col items-center leading-tight">
+                <span className="text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>
+                  {MONTH_NAMES[Number(ev.date.slice(5, 7)) - 1]?.slice(0, 3)}
+                </span>
+                <span className="text-2xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
+                  {ev.date.slice(8, 10)}
+                </span>
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-bold" style={{ color: colors.ink }}>
