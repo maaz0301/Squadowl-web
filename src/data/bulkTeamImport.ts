@@ -34,6 +34,12 @@ export interface BulkImportDeps {
   addToRoster(
     entries: { athleteId: string; jersey?: string; pos?: string; form: AddPlayerForm }[],
   ): Promise<void | Map<string, string>>;
+  /**
+   * Save full dates of birth for athletes just created. The create function
+   * takes named columns and has no date of birth among them, so the date goes on
+   * afterwards. Best effort: a failure costs the date, never the player.
+   */
+  saveDatesOfBirth?(entries: { athleteId: string; dateOfBirth: string }[]): Promise<void>;
   /** The one-player path (create + roster), used to isolate a failure. */
   addOne(form: AddPlayerForm): Promise<{ athleteId: string; participantId?: string }>;
   chunkSize?: number;
@@ -100,6 +106,14 @@ export async function bulkImportPlayers(
         throw new Error('The server did not create every player in this batch.');
       }
       chunk.forEach((r, j) => created.push({ ...r, athleteId: ids[j] }));
+      const dates = chunk.flatMap((r, j) => (r.form.dateOfBirth ? [{ athleteId: ids[j], dateOfBirth: r.form.dateOfBirth }] : []));
+      if (dates.length > 0 && deps.saveDatesOfBirth) {
+        try {
+          await deps.saveDatesOfBirth(dates);
+        } catch {
+          // See the dep: the date is optional, the player is not.
+        }
+      }
     } catch {
       // Find out which rows are the problem by adding them one at a time.
       for (const { line, form } of chunk) {

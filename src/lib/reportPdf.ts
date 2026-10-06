@@ -154,12 +154,27 @@ export function reportLogoUrls(opts: { club: boolean; organizationLogoUrl?: stri
   return [...own, BRAND_LOGO_DATA_URI].filter((u): u is string => !!u);
 }
 
-/** Draws the logos side by side along the top-left of the page, inside the border. */
+/**
+ * Draws the logos along the top of the page, inside the border, on one line: the
+ * organization and team logos from the left edge, and the last logo (the app's
+ * own) against the right edge. With a single logo it stays on the left.
+ */
 export function drawLogoStrip(page: PDFPage, logos: EmbeddedLogo[], left: number): void {
+  const y = (logo: EmbeddedLogo) => PAGE_HEIGHT - 32 - logo.height;
+  const rightLogo = logos.length > 1 ? logos[logos.length - 1] : undefined;
+  const leftLogos = rightLogo ? logos.slice(0, -1) : logos;
   let x = left;
-  for (const logo of logos) {
-    page.drawImage(logo.image, { x, y: PAGE_HEIGHT - 32 - logo.height, width: logo.width, height: logo.height });
+  for (const logo of leftLogos) {
+    page.drawImage(logo.image, { x, y: y(logo), width: logo.width, height: logo.height });
     x += logo.width + 12;
+  }
+  if (rightLogo) {
+    page.drawImage(rightLogo.image, {
+      x: PAGE_WIDTH - left - rightLogo.width,
+      y: y(rightLogo),
+      width: rightLogo.width,
+      height: rightLogo.height,
+    });
   }
 }
 

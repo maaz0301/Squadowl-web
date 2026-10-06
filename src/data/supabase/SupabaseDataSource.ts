@@ -2668,6 +2668,13 @@ export class SupabaseDataSource implements DataSource {
     if (error) console.warn('Could not save the date of birth:', error.message);
   }
 
+  /** Full dates of birth for many athletes, a few requests at a time. See BulkImportDeps.saveDatesOfBirth. */
+  private async saveDatesOfBirth(entries: { athleteId: string; dateOfBirth: string }[]): Promise<void> {
+    for (let i = 0; i < entries.length; i += 10) {
+      await Promise.all(entries.slice(i, i + 10).map((e) => this.saveDateOfBirth(e.athleteId, e.dateOfBirth)));
+    }
+  }
+
   async updateTeamRosterPlayer(teamId: string, athleteId: string, form: AddPlayerForm): Promise<void> {
     const { supabase } = await this.ctx();
     await this.saveDateOfBirth(athleteId, form.dateOfBirth);
@@ -2777,6 +2784,7 @@ export class SupabaseDataSource implements DataSource {
     const result = await bulkImportPlayers(
       rows,
       {
+        saveDatesOfBirth: (entries) => this.saveDatesOfBirth(entries),
         resolveGuardians: (forms) =>
           this.resolveGuardiansForRegistrations(
             supabase,
@@ -2854,6 +2862,7 @@ export class SupabaseDataSource implements DataSource {
     return bulkImportPlayers(
       rows,
       {
+        saveDatesOfBirth: (entries) => this.saveDatesOfBirth(entries),
         resolveGuardians: (forms) =>
           this.resolveGuardiansForRegistrations(
             supabase,
