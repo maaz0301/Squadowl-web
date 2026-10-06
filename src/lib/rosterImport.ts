@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 
 import { normalizePosition } from '@/data/positions';
 import { AddPlayerFormSchema, type AddPlayerForm } from '@/data/types';
+import { parseBirth } from '@/lib/birthDate';
 
 /**
  * Reading a roster out of whatever spreadsheet a club already keeps it in.
@@ -50,7 +51,7 @@ export const IMPORT_FIELDS: ImportField[] = [
   { key: 'pos', label: 'Position', synonyms: ['position', 'pos', 'primary position'] },
   {
     key: 'yearOfBirth',
-    label: 'Year of Birth',
+    label: 'Date of Birth',
     synonyms: ['year of birth', 'birth year', 'yob', 'date of birth', 'birthdate', 'dob', 'born'],
   },
   { key: 'playerEmail', label: 'Player Email', synonyms: ['player email', 'athlete email', 'email'] },
@@ -307,12 +308,6 @@ function splitFullName(value: string): { first: string; last: string } {
   return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] };
 }
 
-/** A birth *year*, however the sheet writes the birthday — "2011-04-02", "04/02/2011", "2011". */
-function extractYear(value: string): string {
-  const match = value.match(/(19|20)\d{2}/);
-  return match ? match[0] : '';
-}
-
 /**
  * Turn mapped rows into player forms, saying for each row whether it can be
  * imported and why not.
@@ -334,12 +329,14 @@ export function buildImportRows(sheet: ParsedSheet, mapping: ColumnMapping): Imp
     const first = named ? named.first : at(row, 'first');
     const last = named ? named.last : at(row, 'last');
 
+    const birth = parseBirth(at(row, 'yearOfBirth'));
     const form: AddPlayerForm = {
       first,
       last,
       jersey: at(row, 'jersey'),
       pos: normalizePosition(at(row, 'pos')),
-      yearOfBirth: extractYear(at(row, 'yearOfBirth')),
+      yearOfBirth: birth.yearOfBirth,
+      dateOfBirth: birth.dateOfBirth || undefined,
       playerEmail: at(row, 'playerEmail'),
       guardianName: at(row, 'guardianName'),
       guardianEmail: at(row, 'guardianEmail'),

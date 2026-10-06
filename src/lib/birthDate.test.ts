@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDateOfBirth, daysInMonth, formatBirth, splitDateOfBirth, withYear } from '@/lib/birthDate';
+import { buildDateOfBirth, daysInMonth, formatBirth, parseBirth, splitDateOfBirth, withYear } from '@/lib/birthDate';
 
 describe('birth dates', () => {
   it('knows month lengths, leap years included', () => {
@@ -35,5 +35,42 @@ describe('birth dates', () => {
   it('clears a day that no longer exists when the year changes', () => {
     expect(withYear({ year: '2024', month: '2', day: '29' }, '2023')).toEqual({ year: '2023', month: '2', day: '' });
     expect(withYear({ year: '2024', month: '3', day: '31' }, '2023')).toEqual({ year: '2023', month: '3', day: '31' });
+  });
+});
+
+describe('parseBirth', () => {
+  const full = (y: string, dob: string) => ({ yearOfBirth: y, dateOfBirth: dob });
+
+  it('reads a whole date however a sheet writes it', () => {
+    expect(parseBirth('2011-04-02')).toEqual(full('2011', '2011-04-02'));
+    expect(parseBirth('2011/4/2')).toEqual(full('2011', '2011-04-02'));
+    expect(parseBirth('04/02/2011')).toEqual(full('2011', '2011-04-02'));
+    expect(parseBirth('2-Apr-11')).toEqual(full('2011', '2011-04-02'));
+    expect(parseBirth('April 2, 2011')).toEqual(full('2011', '2011-04-02'));
+    expect(parseBirth('2 April 2011')).toEqual(full('2011', '2011-04-02'));
+  });
+
+  it('reads the two-digit year Excel shows for a date cell', () => {
+    expect(parseBirth('4/2/11')).toEqual(full('2011', '2011-04-02'));
+    expect(parseBirth('12/31/98')).toEqual(full('1998', '1998-12-31'));
+  });
+
+  it('lets a part above 12 settle which is the day', () => {
+    expect(parseBirth('25/12/2010')).toEqual(full('2010', '2010-12-25'));
+    expect(parseBirth('12/25/2010')).toEqual(full('2010', '2010-12-25'));
+  });
+
+  it('reads an Excel serial number', () => {
+    expect(parseBirth('40635')).toEqual(full('2011', '2011-04-02'));
+  });
+
+  it('gives only the year when that is all there is', () => {
+    expect(parseBirth('2011')).toEqual({ yearOfBirth: '2011', dateOfBirth: '' });
+    expect(parseBirth('Born 2011?')).toEqual({ yearOfBirth: '2011', dateOfBirth: '' });
+  });
+
+  it('does not invent a date that does not exist', () => {
+    expect(parseBirth('2011-02-30')).toEqual({ yearOfBirth: '2011', dateOfBirth: '' });
+    expect(parseBirth('')).toEqual({ yearOfBirth: '', dateOfBirth: '' });
   });
 });

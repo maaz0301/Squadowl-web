@@ -241,3 +241,30 @@ describe('sheets whose declared range is wrong or missing', () => {
     expect(buildImportRows(sheet, mapping).filter((r) => r.errors.length === 0)).toHaveLength(20);
   });
 });
+
+describe('Born column holding real Excel dates', () => {
+  it('keeps the full date of birth, not just a blank', () => {
+    // Excel stores a date as a day count with a number format; with no set
+    // format SheetJS shows it as the two-digit-year "m/d/yy".
+    const serial = (y: number, m: number, d: number) => Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['First Name', 'Last Name', 'Born'],
+      ['Ava', 'Lee', ''],
+      ['Mia', 'Roy', ''],
+    ]);
+    sheet.C2 = { t: 'n', v: serial(2011, 4, 2), z: 'm/d/yy' };
+    sheet.C3 = { t: 'n', v: serial(2009, 11, 23), z: 'm/d/yy' };
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Roster');
+    const data = XLSX.write(book, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+
+    const parsed = parseWorkbook(data);
+    expect(parsed.rows[0].cells[2]).toBe('4/2/11');
+    const rows = buildImportRows(parsed, guessMapping(parsed.headers));
+    expect(rows.map((r) => [r.form.yearOfBirth, r.form.dateOfBirth])).toEqual([
+      ['2011', '2011-04-02'],
+      ['2009', '2009-11-23'],
+    ]);
+    expect(rows.every((r) => r.errors.length === 0)).toBe(true);
+  });
+});
