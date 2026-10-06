@@ -7851,7 +7851,32 @@ export class SupabaseDataSource implements DataSource {
       await supabase.rpc('send_season_message', { p_season_id: seasonId, p_body: body }),
     );
     const row = Array.isArray(data) ? data[0] : data;
-    return this.mapTeamMessage(row as Row);
+    const message = this.mapTeamMessage(row as Row);
+    // The message is saved; telling the rest of the chat is best effort and never
+    // holds up or fails the send.
+    void this.pushTeamMessage(supabase, message).catch((e) => console.log('Chat push failed:', e));
+    return message;
+  }
+
+  /**
+   * Puts a new chat message in everyone else's notification bar: staff, managers,
+   * guardians and players who can open this chat, except the sender.
+   */
+  private async pushTeamMessage(supabase: SupabaseClient, message: TeamMessage): Promise<void> {
+    const { data, error } = await supabase.rpc('season_chat_push_targets', { p_season_id: message.seasonId });
+    if (error) throw new Error(error.message);
+    const targets = (data ?? []) as { team_name: string | null; user_id: string }[];
+    const ids = [...new Set(targets.map((t) => t.user_id))];
+    if (ids.length === 0) return;
+    const snippet = message.body.length > 140 ? `${message.body.slice(0, 139)}…` : message.body;
+    await supabase.functions.invoke('send-push-notification', {
+      body: {
+        target_user_ids: ids,
+        heading: targets[0]?.team_name || 'Team chat',
+        content: `${message.authorName}: ${snippet}`,
+        data: { screen: 'chat', seasonId: message.seasonId },
+      },
+    });
   }
 
   async deleteTeamMessage(messageId: string): Promise<void> {
