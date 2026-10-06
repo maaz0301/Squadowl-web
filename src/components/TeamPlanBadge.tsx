@@ -6,9 +6,9 @@ import type { Team } from '@/data/types';
 import { useUser } from '@/state/authStore';
 
 /**
- * The plan level a delegated team runs at, shown next to its name. It comes from
- * the team's owner, so every manager sees the same level; upgrading it is up to
- * the owner's account.
+ * The plan level a delegated team runs at, shown next to its name. It is the
+ * team owner's plan, so every manager of the team sees the same level; upgrading
+ * it is up to the owner's account.
  */
 export function TeamPlanBadge({ team }: { team: Pick<Team, 'managed' | 'ownerPlanTier'> }) {
   const user = useUser();

@@ -81,19 +81,17 @@ describe('playersTowardCap', () => {
 });
 
 describe('managedTeamTier', () => {
-  it('runs a delegated club team at Coach level', () => {
-    expect(managedTeamTier('club')).toBe('coach');
-    expect(managedTeamTier('coach_plus')).toBe('coach');
-  });
-
-  it('never gives a team more than its owner has', () => {
-    expect(managedTeamTier('free')).toBe('free');
+  it('runs a delegated team at its owner\'s plan', () => {
+    expect(managedTeamTier('club')).toBe('club');
+    expect(managedTeamTier('coach_plus')).toBe('coach_plus');
     expect(managedTeamTier('coach')).toBe('coach');
+    expect(managedTeamTier('free')).toBe('free');
   });
 
   it('ignores the viewer\'s own plan, so every manager sees the owner\'s level', () => {
     for (const own of ['free', 'coach', 'coach_plus', 'club'] as const) {
-      expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'club' }, own)).toBe('coach');
+      expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'club' }, own)).toBe('club');
+      expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'coach' }, own)).toBe('coach');
     }
   });
 

@@ -363,7 +363,7 @@ export function getTierRank(tier: PlanTier): number {
  * The plan tier that should gate a team-scoped feature (exports, AI summaries,
  * Team Builder, custom rubrics, fee collection). Normally the caller's own
  * account tier — but when `team` is one delegated to them (CLUB mode), the
- * team runs at Coach level (see managedTeamTier), within the club's larger plan.
+ * team runs at its owner's plan (see managedTeamTier).
  *
  * Falls back to `ownTier` whenever the team isn't managed, or the delegated
  * team's owner tier hasn't loaded yet — never grants more than the caller
@@ -378,13 +378,13 @@ export function effectiveTierForTeam(
 }
 
 /**
- * The level a delegated team runs at. It is set by the team's owner alone, never
- * by who is looking at it: one step below the club, Coach, and never above what
- * the club itself has. A manager's own plan neither lifts nor lowers it, so every
- * manager of the team, however they were added, sees the same level.
+ * The level a delegated team runs at: its owner's plan, whoever is looking at
+ * it. A team made on a Club account is a Club team for every manager of it, and
+ * only for that team: what a manager creates under their own account stays on
+ * their own plan. A manager's own plan neither lifts nor lowers the team.
  */
 export function managedTeamTier(ownerTier: PlanTier): PlanTier {
-  return getTierRank(ownerTier) < getTierRank('coach') ? ownerTier : 'coach';
+  return ownerTier;
 }
 
 /**
