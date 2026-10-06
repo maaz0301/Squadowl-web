@@ -13,6 +13,7 @@ import {
   useUpdateProfileMutation,
   useUpdatePasswordMutation,
   useUploadCoachPhotoMutation,
+  useUploadOrganizationLogoMutation,
   usePlatformBlockedFeaturesQuery,
 } from '@/features/queries';
 import { useIsFounderQuery } from '@/features/founderQueries';
@@ -43,6 +44,8 @@ export default function ProfilePage() {
   const updateProfile = useUpdateProfileMutation();
   const updatePasswordMut = useUpdatePasswordMutation();
   const uploadPhoto = useUploadCoachPhotoMutation();
+  const uploadOrgLogo = useUploadOrganizationLogoMutation();
+  const logoRef = useRef<HTMLInputElement>(null);
   const { role, isGuardian } = usePermissions();
   // The founder account runs the platform; plan limits, billing and the coach
   // quick links don't apply to it.
@@ -95,6 +98,27 @@ export default function ProfilePage() {
       await alert('Upload Error', `Failed to upload photo: ${e instanceof Error ? e.message : 'Unknown error'}`);
     } finally {
       URL.revokeObjectURL(objectUrl);
+    }
+  };
+
+  const onLogoPicked = async (file: File | undefined) => {
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const url = await uploadOrgLogo.mutateAsync({ fileUri: objectUrl, fileType: file.type || 'image/png' });
+      await updateProfile.mutateAsync({ organizationLogoUrl: url });
+    } catch (e) {
+      await alert('Logo Upload Error', `Failed to upload logo: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  };
+
+  const removeOrganizationLogo = async () => {
+    try {
+      await updateProfile.mutateAsync({ organizationLogoUrl: '' });
+    } catch (e) {
+      await alert('Could not remove logo', e instanceof Error ? e.message : 'Please try again.');
     }
   };
 
@@ -183,6 +207,37 @@ export default function ProfilePage() {
             <Input label="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             {!isFounder ? (
               <Input label="Organization" value={organization} onChange={(e) => setOrganization(e.target.value)} />
+            ) : null}
+            {!isFounder ? (
+              <div className="flex items-center gap-3">
+                <Avatar first="O" last="G" size={56} uri={user?.organizationLogoUrl} />
+                <div className="flex-1">
+                  <p className="font-semibold" style={{ color: colors.ink }}>Organization logo</p>
+                  <p className="text-sm" style={{ color: colors.inkMuted }}>
+                    Printed at the top of exported reports on the Club plan.
+                  </p>
+                </div>
+                <input
+                  ref={logoRef}
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  className="hidden"
+                  onChange={(e) => {
+                    void onLogoPicked(e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                />
+                <Button
+                  label={uploadOrgLogo.isPending ? 'Uploading...' : user?.organizationLogoUrl ? 'Change' : 'Upload'}
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => logoRef.current?.click()}
+                  disabled={uploadOrgLogo.isPending}
+                />
+                {user?.organizationLogoUrl ? (
+                  <Button label="Remove" variant="ghost" size="sm" onClick={removeOrganizationLogo} />
+                ) : null}
+              </div>
             ) : null}
             <div className="flex gap-2">
               <Button label="Save" onClick={saveProfile} loading={updateProfile.isPending} />

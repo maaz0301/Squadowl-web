@@ -3,7 +3,7 @@
 
 import { RepeatField } from '@/components/RepeatField';
 import { useTerms, sportLabel } from '@/lib/terms';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -163,6 +163,17 @@ export default function TeamDetailPage() {
   const { alert, confirm } = useAlert();
   const inviteSavedContacts = useInviteSavedFamilyContacts();
   const teamsQuery = useTeamsQuery();
+  // A manager removed while this team is open: the team drops out of their list
+  // on the next refresh. Say so and go back to Teams, rather than leave them on
+  // a screen that no longer exists.
+  const seenTeamRef = useRef(false);
+  const teamInList = teamsQuery.data?.some((t) => t.id === id) ?? false;
+  if (teamInList) seenTeamRef.current = true;
+  const lostTeam = seenTeamRef.current && !teamsQuery.isLoading && !teamsQuery.isError && !teamInList;
+  useEffect(() => {
+    if (!lostTeam) return;
+    void alert('Removed as manager', 'You have been removed as a manager of this team.').then(() => router.push('/teams'));
+  }, [lostTeam, alert, router]);
   const tryoutSummariesQuery = useTryoutSummariesQuery(false);
   const dummyBlockedTiers = useDummyDataBlockedTiers();
   // Dummy data generation writes onto a linked evaluation, so it targets this

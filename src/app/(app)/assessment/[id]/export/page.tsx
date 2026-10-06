@@ -7,11 +7,12 @@ import { Button, Card, Chip, ErrorState, Input, LoadingState, SectionLabel, useA
 import { PlanGate } from '@/components/PlanGate';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery, useTeamsQuery } from '@/features/queries';
-import { PLAYERS_PER_PAGE_OPTIONS, type PlayersPerPage } from '@/lib/reportPdf';
+import { PLAYERS_PER_PAGE_OPTIONS, reportLogoUrls, type PlayersPerPage } from '@/lib/reportPdf';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { useTerms } from '@/lib/terms';
+import { useUser } from '@/state/authStore';
 import type { ExportFormat } from '@/data/types';
 
 export default function ExportPage() {
@@ -35,6 +36,7 @@ export default function ExportPage() {
   // guards below, since it is a hook) from the team this evaluation belongs to.
   const teamsQuery = useTeamsQuery();
   const teamLogoUrl = teamsQuery.data?.find((t) => t.id === tryoutQuery.data?.teamId)?.logoUrl;
+  const organizationLogoUrl = useUser()?.organizationLogoUrl;
 
   if (tryoutQuery.isLoading || !id) return <LoadingState />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -57,7 +59,7 @@ export default function ExportPage() {
         tryout,
         format,
         format === 'pdf'
-          ? { playersPerPage, continuous: continuous && playersPerPage === 1, logoUrls: clubMode && printLogo && teamLogoUrl ? [teamLogoUrl] : [] }
+          ? { playersPerPage, continuous: continuous && playersPerPage === 1, logoUrls: reportLogoUrls({ club: clubMode && printLogo, organizationLogoUrl, teamLogoUrl }) }
           : undefined,
       );
       toast(`${format.toUpperCase()} downloaded`, 'success');
@@ -157,7 +159,7 @@ export default function ExportPage() {
                     : 'Several players per page: scores, ranks and notes. Individual evaluations are left out to keep each card small.'}
                 </span>
               </div>
-              {clubMode && teamLogoUrl ? (
+              {clubMode && (organizationLogoUrl || teamLogoUrl) ? (
                 <label className="flex items-center gap-2 text-sm" style={{ color: colors.ink }}>
                   <input
                     type="checkbox"
@@ -165,7 +167,7 @@ export default function ExportPage() {
                     onChange={(e) => setPrintLogo(e.target.checked)}
                     className="h-4 w-4"
                   />
-                  Print the team logo at the top of every page
+                  Print the organization and team logos at the top of every page
                 </label>
               ) : null}
             </Card>

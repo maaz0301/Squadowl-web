@@ -53,6 +53,7 @@ export interface DataSource {
   checkUserExistsByEmail(email: string): Promise<boolean>;
   uploadCoachPhoto(userId: string, fileUri: string, fileType: string): Promise<string>;
   uploadTeamLogo(teamId: string, fileUri: string, fileType: string): Promise<string>;
+  uploadOrganizationLogo(fileUri: string, fileType: string): Promise<string>;
 
   // Teams
   listTeams(): Promise<Team[]>;

@@ -104,6 +104,18 @@ export function useCreateTeamMutation() {
   });
 }
 
+export function useUploadOrganizationLogoMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ fileUri, fileType }: { fileUri: string; fileType: string }) => {
+      return getDataSource().uploadOrganizationLogo(fileUri, fileType);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
+  });
+}
+
 export function useUploadTeamLogoMutation() {
   const qc = useQueryClient();
   return useMutation({

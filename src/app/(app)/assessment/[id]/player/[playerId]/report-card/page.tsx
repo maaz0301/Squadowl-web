@@ -4,7 +4,8 @@ import { useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { usePermissions } from '@/state/authStore';
+import { reportLogoUrls } from '@/lib/reportPdf';
+import { usePermissions, useUser } from '@/state/authStore';
 import {
   Badge,
   Button,
@@ -46,6 +47,7 @@ export default function PlayerReportCardPage() {
   const colors = useThemeColors();
   const { alert, confirm, toast } = useAlert();
   const { canManageTeam } = usePermissions();
+  const user = useUser();
 
   const tryoutQuery = useTryoutQuery(id);
   const terms = useTerms(tryoutQuery.data?.settings.customLabels);
@@ -220,7 +222,7 @@ export default function PlayerReportCardPage() {
           ...kept.map((a) => ({ kind: a.kind, name: a.name, url: a.url })),
           ...files.map((f) => ({ kind: (f.type.startsWith('video/') ? 'video' : 'file') as 'video' | 'file', name: f.name })),
         ],
-        logoUrls: tier === 'club' && team?.logoUrl ? [team.logoUrl] : [],
+        logoUrls: reportLogoUrls({ club: tier === 'club', organizationLogoUrl: user?.organizationLogoUrl, teamLogoUrl: team?.logoUrl }),
       });
     } catch (e) {
       await alert('Export failed', e instanceof Error ? e.message : 'Could not build the PDF.');

@@ -1765,6 +1765,7 @@ export class SupabaseDataSource implements DataSource {
       email: profile.email,
       displayName: profile.display_name,
       organization: account?.type === 'organization' ? account.name : undefined,
+      organizationLogoUrl: account?.logo_url ?? undefined,
       customLabels: (account?.custom_labels as UserProfile['customLabels']) ?? undefined,
       avatarUrl: profile.avatar_url ?? undefined,
       planTier: (account?.plan_tier as UserProfile['planTier']) ?? 'free',
@@ -1957,8 +1958,9 @@ export class SupabaseDataSource implements DataSource {
       if (res.error) throw new Error(res.error.message);
       if (!res.data?.length) throw new Error('Only an account owner or admin can rename these terms.');
     }
-    if (updates.planTier !== undefined || updates.organization !== undefined) {
+    if (updates.planTier !== undefined || updates.organization !== undefined || updates.organizationLogoUrl !== undefined) {
       const accPatch: Row = {};
+      if (updates.organizationLogoUrl !== undefined) accPatch.logo_url = updates.organizationLogoUrl || null;
       if (updates.planTier !== undefined) accPatch.plan_tier = updates.planTier;
       if (updates.organization !== undefined) {
         accPatch.name = updates.organization;
@@ -3204,11 +3206,22 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async uploadTeamLogo(teamId: string, fileUri: string, fileType: string): Promise<string> {
+    return this.uploadAvatarsImage(`teams/${teamId}`, fileUri, fileType);
+  }
+
+  /** The signed-in account's own logo, printed on exported reports. */
+  async uploadOrganizationLogo(fileUri: string, fileType: string): Promise<string> {
+    const { accountId } = await this.ctx();
+    return this.uploadAvatarsImage(`organizations/${accountId}`, fileUri, fileType);
+  }
+
+  /** Uploads a local image to the public avatars bucket at `pathWithoutExt` and returns its cache-busted public URL. */
+  private async uploadAvatarsImage(pathWithoutExt: string, fileUri: string, fileType: string): Promise<string> {
     const { supabase } = await this.ctx();
 
     const buffer = await uriToArrayBuffer(fileUri);
     const fileExtension = fileType.split('/')[1] || 'jpg';
-    const filePath = `teams/${teamId}.${fileExtension}`;
+    const filePath = `${pathWithoutExt}.${fileExtension}`;
 
     const { error: uploadError } = await supabase.storage
       .from('avatars')

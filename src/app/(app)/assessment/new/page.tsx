@@ -413,12 +413,12 @@ function NewAssessmentForm() {
                 <Button label="+ Add Rubric" variant="ghost" size="sm" onClick={() => setShowRubricForm(true)} />
               </div>
               {rubricError && (
-                <p className="mb-1 text-xs font-medium" style={{ color: colors.danger }}>
+                <p className="mb-1 text-base font-medium" style={{ color: colors.danger }}>
                   {rubricError}
                 </p>
               )}
               {pendingRubrics.length === 0 ? (
-                <p className="text-xs" style={{ color: colors.inkMuted }}>
+                <p className="text-base" style={{ color: colors.inkMuted }}>
                   Add at least one rubric to define how players will be scored in this evaluation.
                 </p>
               ) : (
@@ -441,7 +441,7 @@ function NewAssessmentForm() {
                 <Button label="+ Add Assessor" variant="ghost" size="sm" onClick={() => setShowAssessorForm(true)} />
               </div>
               {pendingAssessors.length === 0 ? (
-                <p className="text-xs" style={{ color: colors.inkMuted }}>
+                <p className="text-base" style={{ color: colors.inkMuted }}>
                   Invite whoever else is scoring — they get an email once the evaluation is created.
                 </p>
               ) : (

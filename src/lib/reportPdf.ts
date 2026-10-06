@@ -1,6 +1,7 @@
 import { PDFDocument, PDFFont, PDFImage, PDFPage, rgb } from 'pdf-lib';
 
 import type { PlayerFullResults, ReportDocInfo } from '@/data/resultsExport';
+import { BRAND_LOGO_DATA_URI } from '@/lib/brandLogo';
 
 /**
  * Pieces of the printable results report that both the app and the web app
@@ -121,6 +122,12 @@ export async function embedLogos(pdfDoc: PDFDocument, urls: string[] | undefined
   for (const url of urls ?? []) {
     if (!url) continue;
     try {
+      if (url.startsWith('data:image/png')) {
+        const image = await pdfDoc.embedPng(url);
+        const scale = LOGO_HEIGHT / image.height;
+        out.push({ image, width: image.width * scale, height: LOGO_HEIGHT });
+        continue;
+      }
       const res = await fetch(url);
       if (!res.ok) continue;
       const bytes = new Uint8Array(await res.arrayBuffer());
@@ -135,6 +142,16 @@ export async function embedLogos(pdfDoc: PDFDocument, urls: string[] | undefined
     }
   }
   return out;
+}
+
+/**
+ * The logos a printed report carries, left to right: the organization's, the
+ * team's, then the app's own. The organization and team logos are a Club-plan
+ * touch; the app logo is on every report.
+ */
+export function reportLogoUrls(opts: { club: boolean; organizationLogoUrl?: string; teamLogoUrl?: string }): string[] {
+  const own = opts.club ? [opts.organizationLogoUrl, opts.teamLogoUrl] : [];
+  return [...own, BRAND_LOGO_DATA_URI].filter((u): u is string => !!u);
 }
 
 /** Draws the logos side by side along the top-left of the page, inside the border. */

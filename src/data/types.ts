@@ -490,6 +490,8 @@ export const UserProfileSchema = z.object({
   email: z.string().email(),
   displayName: z.string(),
   organization: z.string().optional(),
+  /** The organization's logo, printed on exported reports. */
+  organizationLogoUrl: z.string().optional(),
   /** The account's renamed terms, if any. */
   customLabels: CustomLabelsSchema.optional(),
   avatarUrl: z.string().optional(),
