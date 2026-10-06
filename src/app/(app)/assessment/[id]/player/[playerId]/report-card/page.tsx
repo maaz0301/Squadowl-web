@@ -15,6 +15,7 @@ import {
   Input,
   LoadingState,
   PageHeader,
+  RefreshButton,
   SectionLabel,
   Textarea,
   useAlert,
@@ -255,6 +256,9 @@ export default function PlayerReportCardPage() {
         subtitle={`${name} | ${tryout.name}`}
         showBack
         backHref={href(`player/${playerId}`)}
+        right={
+          <RefreshButton onRefresh={() => Promise.all([tryoutQuery.refetch(), cardsQuery.refetch(), teamsQuery.refetch()])} />
+        }
       />
 
       {savedCards.length > 0 ? (

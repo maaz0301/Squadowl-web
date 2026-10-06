@@ -373,19 +373,31 @@ export function effectiveTierForTeam(
   team: Pick<Team, 'managed' | 'ownerPlanTier'> | null | undefined,
   ownTier: PlanTier,
 ): PlanTier {
-  if (team?.managed && team.ownerPlanTier) return managedTeamTier(team.ownerPlanTier, ownTier);
+  if (team?.managed && team.ownerPlanTier) return managedTeamTier(team.ownerPlanTier);
   return ownTier;
 }
 
 /**
- * The level a delegated team runs at. It is one step below the club that owns
- * it: Coach, unless the manager's own plan is higher, and never above what the
- * club itself has. So a coach handed a club's team works at Coach level, and
- * upgrading their own plan is what lifts it.
+ * The level a delegated team runs at. It is set by the team's owner alone, never
+ * by who is looking at it: one step below the club, Coach, and never above what
+ * the club itself has. A manager's own plan neither lifts nor lowers it, so every
+ * manager of the team, however they were added, sees the same level.
  */
-export function managedTeamTier(ownerTier: PlanTier, managerTier: PlanTier): PlanTier {
-  const floor = getTierRank(managerTier) > getTierRank('coach') ? managerTier : 'coach';
-  return getTierRank(ownerTier) < getTierRank(floor) ? ownerTier : floor;
+export function managedTeamTier(ownerTier: PlanTier): PlanTier {
+  return getTierRank(ownerTier) < getTierRank('coach') ? ownerTier : 'coach';
+}
+
+/**
+ * The evaluations that count toward the account's own plan. One on a team
+ * another club delegated to this user belongs to that club and its plan, so it
+ * is left out of this account's allowance.
+ */
+export function ownedTryouts<T extends { teamId?: string | null }>(
+  tryouts: readonly T[],
+  teams: readonly Pick<Team, 'id' | 'managed'>[],
+): T[] {
+  const managedIds = new Set(teams.filter((t) => t.managed).map((t) => t.id));
+  return tryouts.filter((t) => !t.teamId || !managedIds.has(t.teamId));
 }
 
 /** The next tier up from `tier`, or null if already on the top tier. */

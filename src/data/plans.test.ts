@@ -9,6 +9,7 @@ import {
   isAtPlayerLimit,
   managedTeamTier,
   effectiveTierForTeam,
+  ownedTryouts,
   teamRoom,
 } from './plans';
 
@@ -80,24 +81,40 @@ describe('playersTowardCap', () => {
 });
 
 describe('managedTeamTier', () => {
-  it('runs a delegated club team at Coach level by default', () => {
-    expect(managedTeamTier('club', 'free')).toBe('coach');
-    expect(managedTeamTier('club', 'coach')).toBe('coach');
-  });
-
-  it('lifts to the manager\'s own plan when that is higher, never above the club', () => {
-    expect(managedTeamTier('club', 'coach_plus')).toBe('coach_plus');
-    expect(managedTeamTier('club', 'club')).toBe('club');
-    expect(managedTeamTier('coach_plus', 'club')).toBe('coach_plus');
+  it('runs a delegated club team at Coach level', () => {
+    expect(managedTeamTier('club')).toBe('coach');
+    expect(managedTeamTier('coach_plus')).toBe('coach');
   });
 
   it('never gives a team more than its owner has', () => {
-    expect(managedTeamTier('free', 'coach')).toBe('free');
-    expect(managedTeamTier('coach', 'club')).toBe('coach');
+    expect(managedTeamTier('free')).toBe('free');
+    expect(managedTeamTier('coach')).toBe('coach');
+  });
+
+  it('ignores the viewer\'s own plan, so every manager sees the owner\'s level', () => {
+    for (const own of ['free', 'coach', 'coach_plus', 'club'] as const) {
+      expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'club' }, own)).toBe('coach');
+    }
   });
 
   it('leaves a team the caller owns on their own plan', () => {
     expect(effectiveTierForTeam({ managed: false, ownerPlanTier: 'club' }, 'coach')).toBe('coach');
-    expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'club' }, 'free')).toBe('coach');
+    expect(effectiveTierForTeam({ managed: false, ownerPlanTier: 'club' }, 'club')).toBe('club');
+  });
+});
+
+describe('ownedTryouts', () => {
+  const teams = [
+    { id: 'mine', managed: false },
+    { id: 'club', managed: true },
+  ];
+
+  it('leaves out evaluations on a team delegated to the caller', () => {
+    const tryouts = [{ id: 'a' }, { id: 'b', teamId: 'mine' }, { id: 'c', teamId: 'club' }];
+    expect(ownedTryouts(tryouts, teams).map((t) => t.id)).toEqual(['a', 'b']);
+  });
+
+  it('keeps an evaluation whose team is not in the list', () => {
+    expect(ownedTryouts([{ teamId: 'gone' }], teams)).toHaveLength(1);
   });
 });

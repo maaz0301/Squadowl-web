@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 
 import { MonthCalendar } from '@/components/MonthCalendar';
-import { Badge, Button, Card, ErrorState, LoadingState, Modal, PageHeader, useAlert } from '@/components/ui';
+import { Badge, Button, Card, ErrorState, LoadingState, Modal, PageHeader, RefreshButton, useAlert } from '@/components/ui';
 import { groupCalendarTeams, withAllTeams } from '@/lib/teamCalendars';
 import { useSeasonsQuery, useSetTeamCalendarLinkMutation, useTeamCalendarLinksQuery, useTeamsQuery } from '@/features/queries';
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -57,7 +57,15 @@ export default function CalendarPage() {
 
   return (
     <div>
-      <PageHeader title="Calendar" subtitle="Events from all of your teams" />
+      <PageHeader
+        title="Calendar"
+        subtitle="Events from all of your teams"
+        right={
+          <RefreshButton
+            onRefresh={() => Promise.all([seasonsQuery.refetch(), linksQuery.refetch(), teamsQuery.refetch()])}
+          />
+        }
+      />
 
       {teams.length > 1 ? (
         <div className="mb-6">

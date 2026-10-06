@@ -1,4 +1,5 @@
 export { Button, Spinner } from './Button';
+export { RefreshButton } from './RefreshButton';
 export { Card, SectionLabel } from './Card';
 export { Input, Textarea, Select, Checkbox, Switch, FieldShell, useFieldStyle } from './Input';
 export { Badge } from './Badge';

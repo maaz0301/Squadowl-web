@@ -14,6 +14,7 @@ import {
   LoadingState,
   Modal,
   PageHeader,
+  RefreshButton,
   Switch,
   Textarea,
   useAlert,
@@ -167,7 +168,12 @@ export default function LibraryPage() {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Library"
-        right={canManageOrganization ? <Button label="Add to Library" onClick={openNew} /> : undefined}
+        right={
+          <div className="flex items-center gap-2">
+            <RefreshButton onRefresh={() => libraryQuery.refetch()} />
+            {canManageOrganization ? <Button label="Add to Library" onClick={openNew} /> : null}
+          </div>
+        }
       />
 
       <p className="mb-3 text-sm" style={{ color: colors.inkMuted }}>

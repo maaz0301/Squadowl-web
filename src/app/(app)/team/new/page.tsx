@@ -11,7 +11,7 @@ import { DummyDataModal } from '@/components/DummyDataModal';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamColorPicker } from '@/components/TeamColorPicker';
 import { Avatar, Badge, Button, Card, Chip, ErrorState, FormLock, Input, PageHeader, SectionLabel, useAlert } from '@/components/ui';
-import { canUseFeature, isAtTeamLimit, playerRoom, teamRoom, assessmentRoom } from '@/data/plans';
+import { canUseFeature, isAtTeamLimit, playerRoom, teamRoom, assessmentRoom, ownedTryouts } from '@/data/plans';
 import { useCanUseDummyData } from '@/features/useCanUseDummyData';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { getDataSource } from '@/data';
@@ -25,6 +25,7 @@ import {
   useUpdateTeamMutation,
   useGenerateDummyTeamsMutation,
   useTeamCountQuery,
+  useTeamsQuery,
   useTryoutSummariesQuery,
   useUploadTeamLogoMutation,
 } from '@/features/queries';
@@ -88,9 +89,10 @@ export default function NewTeamPage() {
   // whichever of the two allowances runs out first. Until the counts have
   // loaded nothing is offered, rather than guessing a count of zero.
   const tryoutSummaries = useTryoutSummariesQuery(false);
+  const teamsQuery = useTeamsQuery();
   const dummyTier = user?.planTier ?? 'free';
   const dummyTeamRoom = teamCount.data !== undefined ? teamRoom(dummyTier, teamCount.data, user?.extraTeamLicenses ?? 0) : 0;
-  const dummyEvaluationRoom = tryoutSummaries.data ? assessmentRoom(dummyTier, tryoutSummaries.data.length) : 0;
+  const dummyEvaluationRoom = tryoutSummaries.data ? assessmentRoom(dummyTier, ownedTryouts(tryoutSummaries.data, teamsQuery.data ?? []).length) : 0;
   const dummyMaxTeams = Math.min(dummyTeamRoom, dummyEvaluationRoom);
   const dummyBlockedBy: 'teams' | 'evaluations' | 'loading' | undefined =
     !tryoutSummaries.data || teamCount.data === undefined

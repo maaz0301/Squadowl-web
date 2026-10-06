@@ -13,6 +13,7 @@ import {
   LoadingState,
   Modal,
   PageHeader,
+  RefreshButton,
   SectionLabel,
   useAlert,
 } from '@/components/ui';
@@ -263,10 +264,15 @@ export default function LettersPage() {
         showBack
         backHref={href('roster')}
         right={
-          <Button
-            label="+ New Template"
-            onClick={() => setDraft({ name: '', kind: 'custom', subject: '', body: '' })}
-          />
+          <div className="flex items-center gap-2">
+            <RefreshButton
+              onRefresh={() => Promise.all([tryoutQuery.refetch(), teamsQuery.refetch(), templatesQuery.refetch()])}
+            />
+            <Button
+              label="+ New Template"
+              onClick={() => setDraft({ name: '', kind: 'custom', subject: '', body: '' })}
+            />
+          </div>
         }
       />
 

@@ -3454,15 +3454,16 @@ export class SupabaseDataSource implements DataSource {
    */
   async countAssessments(): Promise<number> {
     const { supabase, accountId } = await this.ctx();
-    const [ownRes, managedRes, ownedTeamRes] = await Promise.all([
+    // Evaluations on teams delegated to this user (list_tryouts_for_managed_teams)
+    // belong to the club that owns them and are deliberately not counted here.
+    const [ownRes, ownedTeamRes] = await Promise.all([
       supabase.from('tryouts').select('id').eq('account_id', accountId).is('deleted_at', null).eq('archived', false),
-      this.viewerRpc(supabase, 'list_tryouts_for_managed_teams'),
       this.viewerRpc(supabase, 'list_tryouts_on_my_owned_teams'),
     ]);
     const ids = new Set((unwrap(ownRes) as Row[]).map((t) => t.id as string));
-    // Pre-migration instances have no such functions; own assessments are
-    // still counted correctly without them, same degrade as listTryouts().
-    for (const rows of [managedRes.data, ownedTeamRes.data]) {
+    // Pre-migration instances have no such function; own assessments are
+    // still counted correctly without it, same degrade as listTryouts().
+    for (const rows of [ownedTeamRes.data]) {
       for (const t of (rows ?? []) as Row[]) {
         if (!t.deleted_at && !t.archived) ids.add(t.id as string);
       }

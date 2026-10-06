@@ -40,7 +40,7 @@ import {
   useArchiveTryoutMutation,
   useDeleteTryoutMutation,
 } from '@/features/queries';
-import { isAtAssessmentLimit } from '@/data/plans';
+import { isAtAssessmentLimit, ownedTryouts } from '@/data/plans';
 import { prefetchNewAssessment, prefetchTryout } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
 import { GuardianAthleteCard } from '@/components/GuardianAthleteCard';
@@ -238,6 +238,8 @@ export default function DashboardPage() {
       ),
   );
   const teams = teamsQuery.data ?? [];
+  // Evaluations on a team another club delegated to this user are theirs, not this plan's.
+  const ownedEvalCount = ownedTryouts(allTryouts, teams).length;
   // The Evaluations list is for standalone evaluations. One created for a team
   // lives on that team's own Evaluations tab, so showing it here as well made it
   // look like it belonged to both. Only hidden when its team is one this user
@@ -257,7 +259,7 @@ export default function DashboardPage() {
   };
 
   const newAssessment = () => {
-    if (isAtAssessmentLimit(planTier, allTryouts.length)) {
+    if (isAtAssessmentLimit(planTier, ownedEvalCount)) {
       setLimitMsg(buildLimitReachedMessage(planTier, 'assessments', 'evaluations'));
       return;
     }
@@ -271,7 +273,7 @@ export default function DashboardPage() {
       <h1 className="sr-only">Tryouts</h1>
 
       {loadingTryouts ? null : (
-        <UsageNudgeBanner tier={planTier} metric="assessments" count={allTryouts.length} label="evaluations" />
+        <UsageNudgeBanner tier={planTier} metric="assessments" count={ownedEvalCount} label="evaluations" />
       )}
 
       <HomeIntro
