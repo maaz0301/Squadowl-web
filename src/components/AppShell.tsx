@@ -238,8 +238,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     <>
       <div className="mb-6 flex items-center gap-2">
         <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2.5 px-1">
-          <Image src="/images/squadowl_emblem.png" alt="" width={44} height={44} className="shrink-0" />
-          <Image src={isDark ? '/images/squadowl_wordmark_dark.png' : '/images/squadowl_wordmark_light.png'} alt={APP_CONFIG.appName} width={900} height={194} className="h-7 w-auto min-w-0" />
+          <Image src="/images/squadowl_emblem.png" alt="" width={44} height={44} className="h-11 w-11 shrink-0" />
+          <Image src={isDark ? '/images/squadowl_wordmark_dark.png' : '/images/squadowl_wordmark_light.png'} alt={APP_CONFIG.appName} width={520} height={124} sizes="140px" className="h-7 w-auto min-w-0" />
         </Link>
         {onDismiss ? (
           <button
@@ -407,7 +407,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               height={36}
               className="h-9 w-9 shrink-0"
             />
-            <Image src={isDark ? '/images/squadowl_wordmark_dark.png' : '/images/squadowl_wordmark_light.png'} alt={APP_CONFIG.appName} width={900} height={194} className="h-6 w-auto min-w-0" />
+            <Image src={isDark ? '/images/squadowl_wordmark_dark.png' : '/images/squadowl_wordmark_light.png'} alt={APP_CONFIG.appName} width={520} height={124} sizes="140px" className="h-6 w-auto min-w-0" />
           </Link>
           <ThemeToggle />
         </header>
