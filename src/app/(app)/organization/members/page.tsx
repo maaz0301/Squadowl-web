@@ -81,7 +81,7 @@ export default function OrganizationMembersPage() {
 
   return (
     <>
-      <PageHeader title="Manage Organization" />
+      <PageHeader title="Manage Organization" showBack />
       <Tabs tabs={TABS} activeKey={tab} onChange={(k) => setTab(k as 'staff' | 'guardians')} className="mb-4" />
 
       {canManageOrganization && tab === 'staff' ? (

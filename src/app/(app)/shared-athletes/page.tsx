@@ -52,7 +52,7 @@ export default function SharedAthletesPage() {
     // doesn't blank out and jump when the data arrives.
     return (
       <>
-        <PageHeader title="Shared Athletes" />
+        <PageHeader title="Shared Athletes" showBack />
         <CardGridSkeleton count={3} lines={2} />
       </>
     );
@@ -70,7 +70,7 @@ export default function SharedAthletesPage() {
 
   return (
     <>
-      <PageHeader title="Shared Athletes" />
+      <PageHeader title="Shared Athletes" showBack />
       {shares.length === 0 ? (
         <EmptyState
           title="No shared athletes yet"

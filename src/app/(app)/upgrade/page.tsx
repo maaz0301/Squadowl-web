@@ -289,6 +289,8 @@ export default function UpgradePage() {
       <PageHeader
         title="Upgrade Plan"
         subtitle={`Current Plan: ${PLAN_DEFINITIONS.find((p) => p.tier === (user?.planTier ?? 'free'))?.name ?? 'Free'}`}
+        showBack
+        backHref="/profile"
       />
 
       {/* Loyalty credit — applied to whichever checkout is started below. */}
