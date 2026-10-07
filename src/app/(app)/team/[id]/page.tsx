@@ -87,6 +87,7 @@ import { ImpersonationTeamPanel } from '@/components/founder/ImpersonationTeamPa
 import { TeamUnavailableState } from '@/components/TeamUnavailableState';
 import { Icon } from '@/components/Icons';
 import { TeamHubHeader } from '@/components/teamHub/TeamHubHeader';
+import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { TeamHubTabs } from '@/components/teamHub/TeamHubTabs';
 import { HubSectionLabel } from '@/components/teamHub/HubSection';
 import { HubRowCard } from '@/components/teamHub/HubRowCard';
@@ -163,6 +164,7 @@ export default function TeamDetailPage() {
   const { alert, confirm } = useAlert();
   const inviteSavedContacts = useInviteSavedFamilyContacts();
   const teamsQuery = useTeamsQuery();
+  useDocumentTitle(teamsQuery.data?.find((t) => t.id === id)?.name);
   // A manager removed while this team is open: the team drops out of their list
   // on the next refresh. Say so and go back to Teams, rather than leave them on
   // a screen that no longer exists.

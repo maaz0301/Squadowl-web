@@ -267,7 +267,8 @@ export default function ProfilePage() {
                     variant="info"
                   />
                   {!isGuardian ? <Badge label={`Plan: ${plan.name}`} variant="brand" /> : null}
-                  {user?.subscriptionStatus ? (
+                  {/* 'none' is the database default for no subscription, not something to show. */}
+                  {user?.subscriptionStatus && user.subscriptionStatus !== 'none' ? (
                     <Badge
                       label={user.subscriptionStatus}
                       variant={user.subscriptionStatus === 'active' ? 'success' : 'default'}
@@ -358,7 +359,7 @@ export default function ProfilePage() {
             </>
           )}
 
-          <Card className="flex flex-col gap-3">
+          <Card className="flex flex-col gap-3 md:col-span-2">
             <SectionLabel>Appearance</SectionLabel>
             <div className="flex items-center justify-between">
               <span style={{ color: colors.inkMuted }}>Dark Mode</span>

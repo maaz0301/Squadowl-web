@@ -3,7 +3,7 @@
 import Link from 'next/link';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
+import { Avatar, Badge, Card, CardGridSkeleton, EmptyState, ErrorState, PageHeader } from '@/components/ui';
 import { useSharedAthletesForCoachQuery } from '@/features/queries';
 import type { AthleteShare, AthleteShareStatus } from '@/data/types';
 import type { ThemeColors } from '@/theme/tokens';
@@ -47,11 +47,20 @@ export default function SharedAthletesPage() {
   const colors = useThemeColors();
   const sharedQuery = useSharedAthletesForCoachQuery();
 
-  if (sharedQuery.isLoading) return <LoadingState message="Loading shared athletes..." />;
+  if (sharedQuery.isLoading) {
+    // Keep the page header up while loading, like Archived, so the content area
+    // doesn't blank out and jump when the data arrives.
+    return (
+      <>
+        <PageHeader title="Shared Athletes" />
+        <CardGridSkeleton count={3} lines={2} />
+      </>
+    );
+  }
   if (sharedQuery.isError) {
     return (
       <>
-        <PageHeader title="Shared Athletes" showBack />
+        <PageHeader title="Shared Athletes" />
         <ErrorState message="Could not load shared athletes." onRetry={() => sharedQuery.refetch()} />
       </>
     );
@@ -61,7 +70,7 @@ export default function SharedAthletesPage() {
 
   return (
     <>
-      <PageHeader title="Shared Athletes" showBack />
+      <PageHeader title="Shared Athletes" />
       {shares.length === 0 ? (
         <EmptyState
           title="No shared athletes yet"

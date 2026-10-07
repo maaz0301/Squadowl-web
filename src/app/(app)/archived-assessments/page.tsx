@@ -55,8 +55,6 @@ export default function ArchivedAssessmentsPage() {
         <PageHeader
           title="Archived"
           subtitle="Past evaluations and teams you can restore"
-          showBack
-          backHref="/dashboard"
         />
         <CardGridSkeleton count={3} lines={2} />
       </>
@@ -65,7 +63,7 @@ export default function ArchivedAssessmentsPage() {
   if (tryoutsQuery.isError || archivedTeamsQuery.isError || teamsQuery.isError) {
     return (
       <>
-        <PageHeader title="Archived" showBack backHref="/dashboard" />
+        <PageHeader title="Archived" />
         <ErrorState
           message="Could not load archived items."
           onRetry={() => {
@@ -128,8 +126,6 @@ export default function ArchivedAssessmentsPage() {
       <PageHeader
         title="Archived"
         subtitle="Past evaluations and teams you can restore"
-        showBack
-        backHref="/dashboard"
       />
 
       {archived.length === 0 && archivedTeams.length === 0 ? (

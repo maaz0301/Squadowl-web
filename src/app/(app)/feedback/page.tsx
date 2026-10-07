@@ -205,7 +205,7 @@ export default function FeedbackPage() {
   if (submitted) {
     return (
       <>
-        <PageHeader title="Feedback" showBack backHref="/profile" />
+        <PageHeader title="Feedback" />
         <Card accent className="mt-4 flex flex-col items-center gap-4 py-12 text-center">
           <h2 className="text-2xl font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Thank you!
@@ -226,8 +226,6 @@ export default function FeedbackPage() {
       <PageHeader
         title="Team Feedback Survey"
         subtitle="Help us improve the platform"
-        showBack
-        backHref="/profile"
       />
 
       <Card className="mt-4 max-w-2xl">

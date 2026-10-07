@@ -81,7 +81,7 @@ export default function OrganizationMembersPage() {
 
   return (
     <>
-      <PageHeader title="Manage Organization" showBack />
+      <PageHeader title="Manage Organization" />
       <Tabs tabs={TABS} activeKey={tab} onChange={(k) => setTab(k as 'staff' | 'guardians')} className="mb-4" />
 
       {canManageOrganization && tab === 'staff' ? (
@@ -89,13 +89,16 @@ export default function OrganizationMembersPage() {
           <p className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Invite Staff
           </p>
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <Input label="Email Address" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+          {/* Capped: a single email address doesn't need a full-width field on wide screens. */}
+          <div className="flex w-full max-w-xl flex-col gap-2">
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input label="Email Address" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+              </div>
+              <Button label={inviteRole.toUpperCase()} variant="secondary" onClick={() => setShowRolePicker(true)} />
             </div>
-            <Button label={inviteRole.toUpperCase()} variant="secondary" onClick={() => setShowRolePicker(true)} />
+            <Button label="Send Invite" onClick={handleInvite} loading={inviteMut.isPending} />
           </div>
-          <Button label="Send Invite" onClick={handleInvite} loading={inviteMut.isPending} />
         </Card>
       ) : null}
 

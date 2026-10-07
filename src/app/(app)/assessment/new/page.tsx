@@ -310,7 +310,7 @@ function NewAssessmentForm() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="w-full max-w-5xl">
       <PageHeader title="New Evaluation" showBack backHref="/dashboard" />
 
       <Card>

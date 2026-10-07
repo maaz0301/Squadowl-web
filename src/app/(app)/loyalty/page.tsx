@@ -95,8 +95,8 @@ export default function LoyaltyPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <PageHeader title="Loyalty Program" subtitle="Refer coaches, earn credit" showBack backHref="/profile" />
+    <div className="w-full max-w-5xl">
+      <PageHeader title="Loyalty Program" subtitle="Refer coaches, earn credit" />
 
       {/* Code + balance */}
       <Card accent className="mt-4 mb-4 flex flex-col gap-3">

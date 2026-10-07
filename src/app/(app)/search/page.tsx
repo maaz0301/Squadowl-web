@@ -110,7 +110,7 @@ export default function SearchPage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Search" showBack />
+      <PageHeader title="Search" />
 
       <div className="relative">
         <Input

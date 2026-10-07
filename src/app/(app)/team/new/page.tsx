@@ -53,6 +53,16 @@ export default function NewTeamPage() {
   const uploadLogo = useUploadTeamLogoMutation();
   const user = useUser();
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
+  // Opening this URL directly (bookmark, shared link, history) skips the Teams
+  // page's "+ New Team" gate, so check once on arrival too. It waits for the user
+  // and a settled count (a not-yet-loaded plan reads as 'free'; a stale cached
+  // count could block someone who has room) and decides only once, so the count
+  // changing after a successful create can't pop it up mid-navigation. Submit
+  // still re-checks.
+  const [gate, setGate] = useState<'pending' | 'blocked' | 'clear'>('pending');
+  if (gate === 'pending' && user && teamCount.data !== undefined && !teamCount.isFetching) {
+    setGate(isAtTeamLimit(user.planTier ?? 'free', teamCount.data, user.extraTeamLicenses ?? 0) ? 'blocked' : 'clear');
+  }
   const [showDummy, setShowDummy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [logo, setLogo] = useState<{ uri: string; type: string } | null>(null);
@@ -292,7 +302,7 @@ export default function NewTeamPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="w-full max-w-5xl">
       <PageHeader title="New Team" showBack backHref="/teams" />
 
       <Card>
@@ -433,6 +443,15 @@ export default function NewTeamPage() {
         onSubmit={runDummy}
       />
       <LimitReachedModal visible={!!limitMsg} message={limitMsg || ''} onClose={() => setLimitMsg(null)} />
+      {/* Arrival gate: nothing to do on this page at the limit, so closing it leaves. */}
+      <LimitReachedModal
+        visible={gate === 'blocked'}
+        message={buildLimitReachedMessage(user?.planTier ?? 'free', 'teams', 'teams', user?.extraTeamLicenses ?? 0)}
+        onClose={() => {
+          setGate('clear');
+          router.replace('/teams');
+        }}
+      />
     </div>
   );
 }
