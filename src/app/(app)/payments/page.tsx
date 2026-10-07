@@ -158,7 +158,7 @@ export default function PaymentsPage() {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader title="Payments" />
+      <PageHeader title="Payments" showBack backHref="/profile" />
       <PlanGate feature="payments" title="Payment Dashboard">
         <>
           {!connect.chargesEnabled ? (

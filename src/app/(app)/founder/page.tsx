@@ -56,7 +56,7 @@ export default function FounderPage() {
   if (founderQuery.data !== true) {
     return (
       <>
-        <PageHeader title="Founder Console" />
+        <PageHeader title="Founder Console" showBack backHref="/dashboard" />
         <EmptyState title="Not available" message="This console is limited to the founder account." />
       </>
     );

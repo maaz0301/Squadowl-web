@@ -171,7 +171,7 @@ export default function FeedbackReportsPage() {
   if (!isReviewer) {
     return (
       <>
-        <PageHeader title="Feedback Portal" />
+        <PageHeader title="Feedback Portal" showBack backHref="/feedback" />
         <EmptyState
           title="Not available"
           message="This portal is limited to the people who review submitted feedback."
@@ -193,6 +193,8 @@ export default function FeedbackReportsPage() {
             ? `${reports.length} submission${reports.length === 1 ? '' : 's'}${average != null ? ` · ${average.toFixed(1)} average` : ''}`
             : undefined
         }
+        showBack
+        backHref="/feedback"
       />
 
       {submissionsQuery.isLoading ? (
