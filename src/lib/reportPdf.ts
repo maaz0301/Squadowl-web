@@ -1,6 +1,6 @@
 import { PDFDocument, PDFFont, PDFImage, PDFPage, rgb } from 'pdf-lib';
 
-import type { PlayerFullResults, ReportDocInfo } from '@/data/resultsExport';
+import type { PlayerFullResults, ReportDocInfo, ReportSort } from '@/data/resultsExport';
 import { BRAND_LOGO_DATA_URI } from '@/lib/brandLogo';
 
 /**
@@ -23,6 +23,8 @@ export interface ReportPdfOptions {
   continuous?: boolean;
   /** Logo image URLs to print at the top of every page (team, organization). Unreachable or unsupported ones are skipped. */
   logoUrls?: string[];
+  /** Order players by jersey number (default), last name, or overall result. */
+  sortBy?: ReportSort;
 }
 
 const PAGE_WIDTH = 612;
@@ -287,8 +289,8 @@ function drawCompactCard(
 
   // Overall.
   page.drawText(
-    fitText(`Overall ${card.overallScore || '-'}   Rank ${card.overallRank || '-'}`, bold, 9, innerW),
-    { x: innerX, y, size: 9, font: bold, color: BLUE },
+    fitText(`Overall ${card.overallScore || '-'}   Rank ${card.overallRank || '-'}`, bold, 10, innerW),
+    { x: innerX, y, size: 10, font: bold, color: BLUE },
   );
   y -= 6;
   page.drawLine({ start: { x: innerX, y }, end: { x: innerX + innerW, y }, thickness: 0.5, color: RULE });
@@ -306,6 +308,8 @@ function drawCompactCard(
   const n = card.metrics.length;
   const rowH = Math.max(6.5, Math.min(11, n ? metricsAvail / (n + 1) : 11));
   const size = Math.min(8, rowH - 1.5);
+  // Scores read larger and bolder than the labels beside them, as far as the row allows.
+  const scoreSize = Math.min(size + 2, rowH - 0.5);
   const scoreX = innerX + innerW * 0.62;
   const rankX = innerX + innerW * 0.82;
 
@@ -318,7 +322,7 @@ function drawCompactCard(
   const shown = card.metrics.slice(0, fits);
   for (const m of shown) {
     page.drawText(fitText(m.label, font, size, scoreX - innerX - 4), { x: innerX, y: y - size, size, font, color: BLACK });
-    page.drawText(pdfSafe(m.score), { x: scoreX, y: y - size, size, font, color: BLACK });
+    page.drawText(pdfSafe(m.score), { x: scoreX, y: y - size, size: scoreSize, font: bold, color: BLACK });
     page.drawText(pdfSafe(m.rank), { x: rankX, y: y - size, size, font, color: BLACK });
     y -= rowH;
   }

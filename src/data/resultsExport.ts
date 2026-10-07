@@ -1,5 +1,5 @@
 import { termsFor } from '@/lib/termsCore';
-import type { Evaluation, RankingDirection, ScoringType, Tryout } from './types';
+import type { Evaluation, Player, RankingDirection, ScoringType, Tryout } from './types';
 import { computePlayerResults } from './scoring';
 import {
   binaryLabels,
@@ -249,13 +249,22 @@ export function buildReportDocInfo(tryout: Tryout): ReportDocInfo {
   };
 }
 
+/** How the printed report orders the players. */
+export type ReportSort = 'jersey' | 'name' | 'results';
+
+export const REPORT_SORT_OPTIONS: { key: ReportSort; label: string }[] = [
+  { key: 'jersey', label: 'Jersey #' },
+  { key: 'name', label: 'A–Z (last name)' },
+  { key: 'results', label: 'Results (best first)' },
+];
+
 /**
  * One record per roster player, ordered by jersey number (the way a coach
  * reads a bench, not by rank): every category's score and its rank against
  * the whole roster, plus each evaluation's raw sub-skill values. Feeds both
  * the printed PDF report and the full-results CSV.
  */
-export function buildPlayerFullResults(tryout: Tryout): PlayerFullResults[] {
+export function buildPlayerFullResults(tryout: Tryout, sort: ReportSort = 'jersey'): PlayerFullResults[] {
   const results = computePlayerResults(tryout);
   const resultsById = new Map(results.map((r) => [r.player.id, r]));
   const evalsByPlayer = evalsByPlayerId(tryout);
@@ -274,7 +283,19 @@ export function buildPlayerFullResults(tryout: Tryout): PlayerFullResults[] {
     ]),
   );
 
+  const byLastName = (a: Player, b: Player) =>
+    `${a.last ?? ''} ${a.first ?? ''}`.trim().localeCompare(`${b.last ?? ''} ${b.first ?? ''}`.trim(), undefined, { sensitivity: 'base' });
   const ordered = tryout.roster.slice().sort((a, b) => {
+    if (sort === 'name') return byLastName(a, b);
+    if (sort === 'results') {
+      // Best overall first; players with no evaluations yet go last, in name order.
+      const ra = resultsById.get(a.id);
+      const rb = resultsById.get(b.id);
+      const sa = ra?.evalCount ? ra.overall : -Infinity;
+      const sb = rb?.evalCount ? rb.overall : -Infinity;
+      if (sa !== sb) return sb - sa;
+      return byLastName(a, b);
+    }
     const byJersey = jerseySortKey(a.jersey) - jerseySortKey(b.jersey);
     if (byJersey !== 0) return byJersey;
     return playerDisplayName(a).localeCompare(playerDisplayName(b));

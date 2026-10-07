@@ -8,6 +8,7 @@ import { PlanGate } from '@/components/PlanGate';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery, useTeamsQuery } from '@/features/queries';
 import { PLAYERS_PER_PAGE_OPTIONS, reportLogoUrls, type PlayersPerPage } from '@/lib/reportPdf';
+import { REPORT_SORT_OPTIONS, type ReportSort } from '@/data/resultsExport';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -31,6 +32,7 @@ export default function ExportPage() {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [playersPerPage, setPlayersPerPage] = useState<PlayersPerPage>(1);
   const [continuous, setContinuous] = useState(false);
+  const [sortBy, setSortBy] = useState<ReportSort>('jersey');
   const [printLogo, setPrintLogo] = useState(true);
   // The team's own logo, for club accounts. Looked up here (before the loading
   // guards below, since it is a hook) from the team this evaluation belongs to.
@@ -59,7 +61,7 @@ export default function ExportPage() {
         tryout,
         format,
         format === 'pdf'
-          ? { playersPerPage, continuous: continuous && playersPerPage === 1, logoUrls: reportLogoUrls({ club: clubMode && printLogo, organizationLogoUrl, teamLogoUrl }) }
+          ? { playersPerPage, continuous: continuous && playersPerPage === 1, logoUrls: reportLogoUrls({ club: clubMode && printLogo, organizationLogoUrl, teamLogoUrl }), sortBy }
           : undefined,
       );
       toast(`${format.toUpperCase()} downloaded`, 'success');
@@ -158,6 +160,16 @@ export default function ExportPage() {
                     ? 'One player per page, with every evaluation listed.'
                     : 'Several players per page: scores, ranks and notes. Individual evaluations are left out to keep each card small.'}
                 </span>
+              </div>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
+                  Order players by
+                </span>
+                <div className="mt-2 flex flex-wrap">
+                  {REPORT_SORT_OPTIONS.map((o) => (
+                    <Chip key={o.key} label={o.label} active={sortBy === o.key} onClick={() => setSortBy(o.key)} />
+                  ))}
+                </div>
               </div>
               {clubMode && (organizationLogoUrl || teamLogoUrl) ? (
                 <label className="flex items-center gap-2 text-sm" style={{ color: colors.ink }}>

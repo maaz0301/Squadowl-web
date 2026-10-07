@@ -63,7 +63,7 @@ function wrapText(text: string, f: PDFFont, size: number, maxWidth: number): str
  */
 export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOptions = {}): Promise<string> {
   const docInfo = buildReportDocInfo(tryout);
-  const cards = buildPlayerFullResults(tryout);
+  const cards = buildPlayerFullResults(tryout, opts.sortBy);
 
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -150,20 +150,21 @@ export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOption
     drawLine('Scoring and Ranking', { size: 11, f: fontBold, gap: 16 });
 
     ensureSpace(14);
-    page.drawText('METRIC', { x: MARGIN, y, size: 9, font: fontBold, color: GRAY });
-    page.drawText('SCORE', { x: scoreX, y, size: 9, font: fontBold, color: GRAY });
-    page.drawText('RANK', { x: rankX, y, size: 9, font: fontBold, color: GRAY });
+    page.drawText('METRIC', { x: MARGIN, y, size: 10, font: fontBold, color: GRAY });
+    page.drawText('SCORE', { x: scoreX, y, size: 10, font: fontBold, color: GRAY });
+    page.drawText('RANK', { x: rankX, y, size: 10, font: fontBold, color: GRAY });
     y -= 6;
     page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_WIDTH - MARGIN, y }, thickness: 0.5, color: RULE });
     y -= 12;
 
     const metricRows = [{ label: 'Overall', score: card.overallScore, rank: card.overallRank }, ...card.metrics];
     for (const m of metricRows) {
-      ensureSpace(14);
-      page.drawText(pdfSafe(m.label), { x: MARGIN, y, size: 9, font, color: BLACK });
-      page.drawText(pdfSafe(m.score), { x: scoreX, y, size: 9, font, color: BLACK });
-      page.drawText(pdfSafe(m.rank), { x: rankX, y, size: 9, font, color: BLACK });
-      y -= 14;
+      ensureSpace(20);
+      // Scores are the thing people read off the page, so they are bold and larger than the labels.
+      page.drawText(pdfSafe(m.label), { x: MARGIN, y, size: 11, font, color: BLACK });
+      page.drawText(pdfSafe(m.score), { x: scoreX, y: y - 1, size: 14, font: fontBold, color: BLACK });
+      page.drawText(pdfSafe(m.rank), { x: rankX, y, size: 11, font, color: BLACK });
+      y -= 20;
     }
     y -= 8;
 
@@ -177,9 +178,9 @@ export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOption
       const header = `Eval ${ev.index} • ${ev.date} • ${ev.evaluator} • ${ev.session}`;
       const scoreLine = ev.values.map((v) => `${v.abbr}:${v.text || '—'}`).join(' • ');
       const footer = `Rec: ${ev.recommendation || '—'} | Str: ${ev.strengths || '—'} | Imp: ${ev.improve || '—'}`;
-      drawWrapped(header, { size: 9, f: fontBold, gap: 13 });
-      drawWrapped(scoreLine, { size: 8, color: GRAY, gap: 11 });
-      drawWrapped(footer, { size: 8.5, gap: 11 });
+      drawWrapped(header, { size: 10, f: fontBold, gap: 14 });
+      drawWrapped(scoreLine, { size: 9.5, color: GRAY, gap: 13 });
+      drawWrapped(footer, { size: 9.5, gap: 13 });
       y -= 6;
     }
   });
