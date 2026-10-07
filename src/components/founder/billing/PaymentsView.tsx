@@ -135,7 +135,7 @@ export function PaymentsView({
             />
           ) : null}
           <p className="text-xs" style={{ color: colors.inkFaint }}>
-            Every charge on the TryoutHQ Stripe account, newest first. Searches and status filters use Stripe search,
+            Every charge on the SquadOwl Stripe account, newest first. Searches and status filters use Stripe search,
             which can lag new payments by about a minute.
           </p>
         </div>

@@ -6,7 +6,7 @@
  *
  * Known approximation: a subscription's history is reconstructed from its
  * start/end dates and its *current* price, so a plan change mid-life is
- * back-dated to the start. Only CAD is summed (TryoutHQ bills in CAD); other
+ * back-dated to the start. Only CAD is summed (SquadOwl bills in CAD); other
  * currencies are counted in `otherCurrencySubscriptions` so they aren't
  * silently dropped.
  */

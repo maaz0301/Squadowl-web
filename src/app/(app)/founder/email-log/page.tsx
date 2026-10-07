@@ -59,7 +59,7 @@ function EmailLog() {
 
   return (
     <>
-      <PageHeader title="Email Log" subtitle="Every email SendGrid sent for TryoutHQ, and whether it arrived" />
+      <PageHeader title="Email Log" subtitle="Every email SendGrid sent for SquadOwl, and whether it arrived" />
       <Card className="mb-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-[2fr_1fr_1fr_auto]">
         <Input
           label="Recipient"

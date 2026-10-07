@@ -453,7 +453,7 @@ function ManualAccessSection({ account, hasLiveStripe }: { account: FounderSubsc
   return (
     <FounderSection title="Manual plan">
       <p className="text-sm" style={{ color: colors.inkMuted }}>
-        Sets the plan in TryoutHQ without charging anything — for comps, pilots and fixing a stuck account.
+        Sets the plan in SquadOwl without charging anything — for comps, pilots and fixing a stuck account.
       </p>
       {hasLiveStripe ? (
         <p className="text-xs" style={{ color: colors.warning }}>

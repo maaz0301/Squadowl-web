@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { MapLink } from '@/components/MapLink';
 import { Badge, EmptyState } from '@/components/ui';
-import { useRegistrationsQuery, useTryoutQuery, useTryoutRealtimeSync } from '@/features/queries';
+import { usePendingRegistrationCountQuery, useTryoutQuery, useTryoutRealtimeSync } from '@/features/queries';
 import { useIsAssessorOnly } from '@/features/useAssessmentId';
 import { useEvaluationAccess } from '@/features/useEvaluationAccess';
 import { useSessionStore } from '@/state/sessionStore';
@@ -56,8 +56,7 @@ export default function AssessmentLayout({
 
   const tryoutQuery = useTryoutQuery(id);
   const terms = useTerms(tryoutQuery.data?.settings.customLabels);
-  const regsQuery = useRegistrationsQuery(id);
-  const pendingRegs = (regsQuery.data ?? []).filter((r) => r.status === 'pending').length;
+  const pendingRegs = usePendingRegistrationCountQuery(id).data ?? 0;
 
   // See useIsAssessorOnly: the tryout's own `viewerIsOwner` decides, so
   // deleting `?assessor=1` from the URL can't bring Settings — and its Delete

@@ -19,7 +19,7 @@ import { json, requireFounder } from '../_shared/founder.ts';
 
 const SENDGRID_API_KEY = Deno.env.get('SENDGRID_API_KEY') || '';
 const SUPPORT_EMAIL = Deno.env.get('SUPPORT_FROM_EMAIL') || 'support@tryouthq.ca';
-const FROM_NAME = Deno.env.get('SENDGRID_FROM_NAME') || 'TryoutHQ';
+const FROM_NAME = Deno.env.get('SENDGRID_FROM_NAME') || 'SquadOwl';
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const BROADCAST_BATCH = 500;
 

@@ -13,12 +13,12 @@ import { hasMappableLocation, mapUrl } from '../_shared/maps.ts';
 
 const SENDGRID_API_KEY = Deno.env.get('SENDGRID_API_KEY') || '';
 const FROM_EMAIL = Deno.env.get('SENDGRID_FROM_EMAIL') || 'noreply@tryouthq.ca';
-const FROM_NAME = Deno.env.get('SENDGRID_FROM_NAME') || 'TryoutHQ';
+const FROM_NAME = Deno.env.get('SENDGRID_FROM_NAME') || 'SquadOwl';
 // The shield mark, served from the web app's /public. Every email header
 // points at it, so it lives in one place and can be repointed with an env var
 // if the app ever moves domains.
 const LOGO_URL =
-  Deno.env.get('EMAIL_LOGO_URL') || 'https://tryouthq.ca/images/tryouthq_t_logo_v2.png';
+  Deno.env.get('EMAIL_LOGO_URL') || 'https://tryouthq.ca/images/squadowl_emblem.png';
 // Where RSVP links point. Owned by the function rather than taken from the
 // request on purpose: these URLs go out in mail we sign for tryouthq.ca, and a
 // caller-supplied base would let anyone with a coach's session mail out links to
@@ -47,13 +47,13 @@ function wrap(title: string, body: string): string {
       <!-- Header -->
       <tr><td style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);border-radius:16px 16px 0 0;padding:40px 40px 32px;text-align:center;">
         <!-- The brand lockup, matching the app's own header: shield mark beside
-             the TryoutHQ wordmark. The wordmark is live text rather than part
+             the SquadOwl wordmark. The wordmark is live text rather than part
              of the image so the brand still reads in the many clients that
              block remote images by default (the alt text covers the mark). -->
         <div style="margin-bottom:18px;">
-          <img src="${LOGO_URL}" alt="TryoutHQ" width="48" height="48"
+          <img src="${LOGO_URL}" alt="SquadOwl" width="48" height="48"
                style="display:inline-block;vertical-align:middle;width:48px;height:48px;border:0;outline:none;text-decoration:none;"/>
-          <span style="display:inline-block;vertical-align:middle;margin-left:12px;color:#fff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">TryoutHQ</span>
+          <span style="display:inline-block;vertical-align:middle;margin-left:12px;color:#fff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">SquadOwl</span>
         </div>
         <h1 style="margin:0;color:#fff;font-size:24px;font-weight:700;letter-spacing:-0.5px;">${title}</h1>
       </td></tr>
@@ -65,8 +65,8 @@ function wrap(title: string, body: string): string {
 
       <!-- Footer -->
       <tr><td style="background:#111128;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;border:1px solid #2a2a4a;border-top:none;">
-        <p style="margin:0 0 6px;color:#6366f1;font-size:14px;font-weight:600;">TryoutHQ</p>
-        <p style="margin:0;color:#4b5563;font-size:12px;">© ${new Date().getFullYear()} TryoutHQ. All rights reserved.</p>
+        <p style="margin:0 0 6px;color:#6366f1;font-size:14px;font-weight:600;">SquadOwl</p>
+        <p style="margin:0;color:#4b5563;font-size:12px;">© ${new Date().getFullYear()} SquadOwl. All rights reserved.</p>
         <p style="margin:6px 0 0;color:#374151;font-size:11px;">If you did not expect this email, you can safely ignore it.</p>
       </td></tr>
 
@@ -87,10 +87,10 @@ function tplOrgInvite(role: string, password?: string) {
       ⚠️ Please change this password after your first login for security.
     </p>` : '';
   return {
-    subject: `You've been invited to join an Organization on TryoutHQ`,
+    subject: `You've been invited to join an Organization on SquadOwl`,
     html: wrap("You're Invited! 🎉", `
       <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
-        You've been invited to join an organization on <strong style="color:#a78bfa;">TryoutHQ</strong> as a
+        You've been invited to join an organization on <strong style="color:#a78bfa;">SquadOwl</strong> as a
         <span style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:2px 14px;border-radius:20px;font-size:14px;font-weight:600;">${role}</span>.
       </p>
       ${pwBlock}
@@ -112,14 +112,14 @@ function tplTeamManagerInvite(teamName: string, role: string, inviteUrl?: string
       </p>` : '';
   const who = email ? `<strong style="color:#a78bfa;">${escapeHtml(email)}</strong>` : 'this email address';
   const next = newUser
-    ? `You don't have a TryoutHQ account yet. Create one with ${who} and choose your own password — your access to the team is set up automatically as soon as the account exists.`
+    ? `You don't have a SquadOwl account yet. Create one with ${who} and choose your own password — your access to the team is set up automatically as soon as the account exists.`
     : `Sign in with ${who} to accept the invitation and open the team.`;
   return {
-    subject: `You've been invited to manage ${safeTeam} on TryoutHQ`,
+    subject: `You've been invited to manage ${safeTeam} on SquadOwl`,
     html: wrap("You're Invited to Manage a Team 🏒", `
       <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
         You've been invited to manage <strong style="color:#a78bfa;">${safeTeam}</strong> on
-        <strong style="color:#a78bfa;">TryoutHQ</strong> as its
+        <strong style="color:#a78bfa;">SquadOwl</strong> as its
         <span style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:2px 14px;border-radius:20px;font-size:14px;font-weight:600;">${roleLabel}</span>.
       </p>
       <div style="background:#0f0f13;border-radius:12px;padding:20px 24px;margin:20px 0;border-left:4px solid #6366f1;">
@@ -479,7 +479,7 @@ function tplScheduleDigest(payload: DigestPayload) {
         <table width="100%" cellpadding="0" cellspacing="0">${rowsHtml}</table>
       </div>
       <p style="color:#9ca3af;font-size:14px;line-height:1.7;margin:0;">
-        Open the TryoutHQ app to RSVP to any of these events.
+        Open the SquadOwl app to RSVP to any of these events.
       </p>
       ${subscribeBlock}
     `),
@@ -604,7 +604,7 @@ function tplRegistrationConfirm(playerName: string) {
 
 function tplPasswordReset(code: string) {
   return {
-    subject: `Reset Your Password — TryoutHQ`,
+    subject: `Reset Your Password — SquadOwl`,
     html: wrap('Reset Your Password 🔐', `
       <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 24px;">
         We received a request to reset your password. Use the verification code below — it expires shortly.
@@ -623,7 +623,7 @@ function tplPasswordReset(code: string) {
 function tplSubscriptionUpgraded(planTier: string) {
   const planName = planTier.charAt(0).toUpperCase() + planTier.slice(1);
   return {
-    subject: `Welcome to ${planName} — TryoutHQ`,
+    subject: `Welcome to ${planName} — SquadOwl`,
     html: wrap('Subscription Upgraded 🚀', `
       <div style="background:#0f0f13;border:1px solid #10b981;border-radius:16px;padding:24px;margin-bottom:32px;text-align:center;">
         <p style="margin:0;color:#10b981;font-size:18px;font-weight:700;">✅ Successfully Upgraded to ${planName}</p>
@@ -640,7 +640,7 @@ function tplSubscriptionUpgraded(planTier: string) {
 
 function tplSubscriptionCanceled() {
   return {
-    subject: `Subscription Canceled — TryoutHQ`,
+    subject: `Subscription Canceled — SquadOwl`,
     html: wrap('Subscription Canceled 😔', `
       <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 24px;">
         We've successfully processed your subscription cancellation. Your account has been downgraded to the Free plan.
@@ -691,7 +691,7 @@ function tplPlayerInvite(
   ].join('');
 
   return {
-    subject: `${safePlayer} has been invited to ${safeTeam} on TryoutHQ`,
+    subject: `${safePlayer} has been invited to ${safeTeam} on SquadOwl`,
     html: wrap("You're Invited to the Team Portal 🏒", `
       <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
         ${isGuardian
@@ -730,7 +730,7 @@ serve(async (req: Request) => {
 
     if (!to || !type) throw new Error('Missing required fields (to, type)');
 
-    let subject = 'Notification from TryoutHQ';
+    let subject = 'Notification from SquadOwl';
     let html = '<p>You have a new notification.</p>';
     // Only the schedule email carries one (the iCalendar invite); every other
     // template leaves this undefined and the field is dropped from the send.

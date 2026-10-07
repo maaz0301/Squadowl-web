@@ -39,7 +39,7 @@ export default function VerifyEmailPage() {
       await restoreSession(true);
       const currentUser = useAuthStore.getState().session?.user;
       if (currentUser?.emailVerified) {
-        await alert('Verified!', 'Your email has been verified. Welcome to TryoutHQ!');
+        await alert('Verified!', 'Your email has been verified. Welcome to SquadOwl!');
         router.replace('/dashboard');
       } else {
         setStatusMsg('Email is not verified yet. Please check your inbox and tap the link.');

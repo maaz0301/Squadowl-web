@@ -1075,7 +1075,7 @@ export interface ConnectAccountStatus {
   defaultCurrency?: string | null;
   chargesEnabled?: boolean;
   payoutsEnabled?: boolean;
-  /** e.g. 0.005 for 0.5% — TryoutHQ's cut of every registration fee collected via Connect. */
+  /** e.g. 0.005 for 0.5% — SquadOwl's cut of every registration fee collected via Connect. */
   platformFeeRate: number;
 }
 

@@ -64,8 +64,8 @@ export function SuspendedAccountScreen() {
         <p className="text-sm break-words" style={{ color: colors.inkMuted }}>
           {user?.organization ? <strong>{user.organization}</strong> : 'This account'}{' '}
           {trialEnded
-            ? 'no longer has access. Your teams and evaluations are safe — contact TryoutHQ to continue.'
-            : 'has been suspended. Your data has not been deleted — contact TryoutHQ to restore access.'}
+            ? 'no longer has access. Your teams and evaluations are safe — contact SquadOwl to continue.'
+            : 'has been suspended. Your data has not been deleted — contact SquadOwl to restore access.'}
         </p>
         {user?.suspendedReason ? (
           <p className="text-sm break-words" style={{ color: colors.inkMuted }}>
@@ -99,7 +99,7 @@ export function FeatureBlockedScreen({ feature }: { feature: BlockableFeature })
           {BLOCKABLE_FEATURE_LABEL[feature]} is unavailable
         </h1>
         <p className="text-sm break-words" style={{ color: colors.inkMuted }}>
-          The rest of your account is unaffected — contact TryoutHQ if you think this is a mistake.
+          The rest of your account is unaffected — contact SquadOwl if you think this is a mistake.
         </p>
         <div>
           <Button label="Email founder@tryout.ca" onClick={() => (window.location.href = 'mailto:founder@tryout.ca')} />

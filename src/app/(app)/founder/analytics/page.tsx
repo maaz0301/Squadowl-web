@@ -83,7 +83,7 @@ function Analytics() {
     <>
       <PageHeader
         title="Analytics"
-        subtitle="Sign-ups, feature adoption and referrals across TryoutHQ"
+        subtitle="Sign-ups, feature adoption and referrals across SquadOwl"
         right={
           view === 'referrals' ? undefined : (
             <Select

@@ -47,7 +47,7 @@ export function TeamHubHeader({ name, subtitle, logoUrl, backHref, onChat, chatB
       {logoUrl ? (
         <img src={logoUrl} alt="" width={44} height={44} className="h-11 w-11 shrink-0 rounded-full object-cover" />
       ) : (
-        <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={44} height={44} className="h-11 w-11 shrink-0" />
+        <Image src="/images/squadowl_emblem.png" alt="" width={44} height={44} className="h-11 w-11 shrink-0" />
       )}
 
       <div className="min-w-0 flex-1">

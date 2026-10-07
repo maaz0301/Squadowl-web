@@ -633,6 +633,25 @@ export function isStatementTimeout(e: unknown): boolean {
   return /canceling statement due to statement timeout/i.test(err?.message ?? '');
 }
 
+/** Teams checked and deleted per request in clearDummyTeams (keeps the `in (...)` URL short). */
+const CLEAR_TEAMS_CHUNK = 100;
+/** PostgREST's usual max rows per response; a result this long may have been cut off. */
+const PG_ROW_CAP = 1000;
+
+/**
+ * Run `task` over `items` a few at a time: much faster than awaiting each in
+ * turn, without firing every request at once. Rejects on the first failure,
+ * like the sequential loops it replaces.
+ */
+async function inBatches<T>(items: T[], size: number, task: (item: T) => Promise<unknown>): Promise<void> {
+  for (let i = 0; i < items.length; i += size) {
+    await Promise.all(items.slice(i, i + size).map(task));
+  }
+}
+
+/** Concurrent send-email calls when mailing a whole roster. */
+const EMAIL_SEND_CONCURRENCY = 5;
+
 /**
  * Insert `items` in chunks of `size`, up to `DUMMY_MAX_CONCURRENCY.insert`
  * requests in flight, returning every chunk's rows concatenated in input order.
@@ -3150,7 +3169,7 @@ export class SupabaseDataSource implements DataSource {
       // an address with no account. Name the real cause.
       if (error.message.includes('User not found')) {
         throw new Error(
-          'This address has no TryoutHQ account yet, and saved invitations need the 20260923130000_team_manager_invites migration applied first.',
+          'This address has no SquadOwl account yet, and saved invitations need the 20260923130000_team_manager_invites migration applied first.',
         );
       }
       throw error;
@@ -4721,6 +4740,14 @@ export class SupabaseDataSource implements DataSource {
       unwrap(await supabase.from('evaluation_scores').delete().eq('evaluation_id', id));
     }
 
+    // Scores are written after the evaluation row, so the realtime event for that
+    // row can reach other screens before the scores exist. Touch the row again now
+    // that they do, so their debounced refetch (see useTryoutRealtimeSync, which
+    // no longer listens to evaluation_scores) lands on the final values.
+    void Promise.resolve(
+      supabase.from('evaluations').update({ updated_at: new Date().toISOString() }).eq('id', id),
+    ).catch(() => { });
+
     this.markOnboarding({ scorePlayers: true }).catch(() => { });
 
     savedData.evaluation_scores = scoreRows;
@@ -5311,14 +5338,29 @@ export class SupabaseDataSource implements DataSource {
 
     const teamIds = [...new Set(rows.map((r) => r.team_id).filter(Boolean))] as string[];
     let teams = 0;
-    for (const teamId of teamIds) {
-      const remaining = unwrap(
-        await supabase.from('tryouts').select('id').eq('team_id', teamId).limit(1),
-      ) as Row[];
-      if (remaining.length > 0) continue;
-      const deleted = unwrap(
-        await supabase.from('teams').delete().eq('id', teamId).select('id'),
-      ) as Row[];
+    // One lookup and one delete per chunk of teams, not two round trips per team.
+    // A team is only removed once no assessment still points at it.
+    for (let i = 0; i < teamIds.length; i += CLEAR_TEAMS_CHUNK) {
+      const chunk = teamIds.slice(i, i + CLEAR_TEAMS_CHUNK);
+      const used = unwrap(await supabase.from('tryouts').select('team_id').in('team_id', chunk)) as Row[];
+      // PostgREST silently truncates at its row cap. If the lookup hit it, it
+      // may have missed a team that is still in use, so check this chunk one
+      // team at a time rather than risk deleting a team that has real work.
+      const truncated = used.length >= PG_ROW_CAP;
+      const inUse = new Set(used.map((r) => r.team_id));
+      const empty: string[] = [];
+      for (const teamId of chunk) {
+        if (inUse.has(teamId)) continue;
+        if (truncated) {
+          const remaining = unwrap(
+            await supabase.from('tryouts').select('id').eq('team_id', teamId).limit(1),
+          ) as Row[];
+          if (remaining.length > 0) continue;
+        }
+        empty.push(teamId);
+      }
+      if (empty.length === 0) continue;
+      const deleted = unwrap(await supabase.from('teams').delete().in('id', empty).select('id')) as Row[];
       teams += deleted.length;
     }
     return { teams, assessments: ids.length };
@@ -5512,6 +5554,19 @@ export class SupabaseDataSource implements DataSource {
     const result = await this.getTryout(tryoutId);
     if (!result) throw new Error('Tryout not found');
     return result;
+  }
+
+  async countPendingRegistrations(tryoutId: string): Promise<number> {
+    const { supabase } = await this.ctx();
+    // head + exact count: the server answers with a number and no rows, so the
+    // badge costs one tiny request however many registrations a QR link drew.
+    const { count, error } = await supabase
+      .from('registrations')
+      .select('id', { count: 'exact', head: true })
+      .eq('tryout_id', tryoutId)
+      .eq('status', 'pending');
+    if (error) throw error;
+    return count ?? 0;
   }
 
   async listRegistrations(tryoutId: string): Promise<Registration[]> {
@@ -7468,8 +7523,8 @@ export class SupabaseDataSource implements DataSource {
 
     const scheduleUrl = `https://aas-tryout.app/?schedule=${season.scheduleShareToken}`;
 
-    for (const email of emails) {
-      await supabase.functions.invoke('send-email', {
+    await inBatches([...emails], EMAIL_SEND_CONCURRENCY, (email) =>
+      supabase.functions.invoke('send-email', {
         body: {
           type: 'schedule_update',
           to: email,
@@ -7480,8 +7535,8 @@ export class SupabaseDataSource implements DataSource {
             location: 'Online Portal'
           }
         }
-      });
-    }
+      }),
+    );
   }
 
 
@@ -7790,11 +7845,12 @@ export class SupabaseDataSource implements DataSource {
         body: { target_user_ids: emails, heading: `Announcement: ${title}`, content: message }
       }).catch(console.error);
 
-      for (const email of emails) {
+      // Background, a few at a time, so a big roster doesn't open hundreds of requests at once.
+      void inBatches(emails, EMAIL_SEND_CONCURRENCY, (email) =>
         supabase.functions.invoke('send-email', {
           body: { type: 'reminder', to: email, payload: { title, message } }
-        }).catch(console.error);
-      }
+        }).catch(console.error),
+      ).catch(console.error);
     }
   }
 
@@ -8448,7 +8504,7 @@ export class SupabaseDataSource implements DataSource {
     const { supabase, accountId } = await this.ctx();
     // Only fees collected through the connected Stripe account carry a
     // registration_id (tryout fees) or season_roster_id (team/season fees) —
-    // TryoutHQ's own subscription invoices (billed on the platform's Stripe
+    // SquadOwl's own subscription invoices (billed on the platform's Stripe
     // account) never do, so this filter is what excludes them from the
     // coach's payout ledger.
     const rows = (

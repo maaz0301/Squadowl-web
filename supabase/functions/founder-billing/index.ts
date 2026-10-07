@@ -386,7 +386,7 @@ async function planProductId(tier: string): Promise<string> {
   const found = await stripe.products.search({ query: `metadata['tryouthq_tier']:'${tier}' AND active:'true'`, limit: 1 });
   if (found.data[0]) return found.data[0].id;
   const product = await stripe.products.create({
-    name: `TryoutHQ ${TIER_PRICES_CAD[tier].name}`,
+    name: `SquadOwl ${TIER_PRICES_CAD[tier].name}`,
     metadata: { tryouthq_tier: tier },
   });
   return product.id;

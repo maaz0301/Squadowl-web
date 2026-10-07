@@ -153,7 +153,7 @@ export function buildIcs(event: IcsEvent, method: 'PUBLISH' | 'REQUEST' | 'CANCE
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//TryoutHQ//Season Schedule//EN',
+    'PRODID:-//SquadOwl//Season Schedule//EN',
     'CALSCALE:GREGORIAN',
     `METHOD:${method}`,
     ...eventLines(event, { cancelled: method === 'CANCEL' }),
@@ -172,7 +172,7 @@ export function buildIcsCalendar(events: IcsEvent[], name: string, method: 'PUBL
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//TryoutHQ//Season Schedule//EN',
+    'PRODID:-//SquadOwl//Season Schedule//EN',
     'CALSCALE:GREGORIAN',
     `METHOD:${method}`,
     `X-WR-CALNAME:${escapeText(name)}`,

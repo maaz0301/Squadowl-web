@@ -646,7 +646,7 @@ function NewAssessmentForm() {
             onChange={(e) => setAssessorEmail(e.target.value)}
           />
           <p className="text-xs" style={{ color: colors.inkMuted }}>
-            They&apos;ll be emailed an invitation when the evaluation is created. If they don&apos;t have a TryoutHQ
+            They&apos;ll be emailed an invitation when the evaluation is created. If they don&apos;t have a SquadOwl
             account yet, they can create one with this address and the invitation will be waiting for them.
           </p>
           <Button

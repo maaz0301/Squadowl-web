@@ -164,7 +164,7 @@ function ComposeAnnouncement() {
         error={errors.message}
         rows={3}
         maxLength={2000}
-        placeholder="e.g. TryoutHQ will be unavailable 11pm–midnight ET while we upgrade the database."
+        placeholder="e.g. SquadOwl will be unavailable 11pm–midnight ET while we upgrade the database."
       />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Select

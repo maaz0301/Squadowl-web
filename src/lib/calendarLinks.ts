@@ -157,7 +157,7 @@ export function buildIcs(event: CalendarEvent, method: IcsMethod = 'PUBLISH'): s
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//TryoutHQ//Season Schedule//EN',
+    'PRODID:-//SquadOwl//Season Schedule//EN',
     'CALSCALE:GREGORIAN',
     `METHOD:${method}`,
     'BEGIN:VEVENT',

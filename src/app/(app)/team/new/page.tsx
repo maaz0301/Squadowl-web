@@ -336,7 +336,7 @@ export default function NewTeamPage() {
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
                   Give them this team&apos;s roster, schedule, and chat as soon as it&apos;s created, and let
                   them create its evaluations — but nothing else on your account. They&apos;ll get an email with an
-                  Accept Invitation button. If they don&apos;t have a TryoutHQ account yet, it asks them to create one, and access is granted automatically when they do.
+                  Accept Invitation button. If they don&apos;t have a SquadOwl account yet, it asks them to create one, and access is granted automatically when they do.
                 </p>
                 <Input
                   label="Email address"
@@ -369,7 +369,7 @@ export default function NewTeamPage() {
                     />
                     <p className="text-xs" style={{ color: colors.inkMuted }}>
                       Creating this team creates (or reuses) its season and adds everyone on the roster to it —
-                      each player&apos;s guardian will then be asked to pay this fee, plus TryoutHQ&apos;s 0.5%
+                      each player&apos;s guardian will then be asked to pay this fee, plus SquadOwl&apos;s 0.5%
                       platform fee, from their portal. QR/link evaluation registration always stays free.
                     </p>
                     {connect.chargesEnabled ? (

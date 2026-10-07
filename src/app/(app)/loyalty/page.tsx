@@ -71,14 +71,14 @@ export default function LoyaltyPage() {
     if (!code) return;
     const link = signupLink(code);
     const message =
-      `Join me on TryoutHQ, sign up with my referral code applied: ${link}\n\n` +
+      `Join me on SquadOwl, sign up with my referral code applied: ${link}\n\n` +
       `Or enter this code by hand when you sign up: ${code}`;
 
     // A real https:// link, so it linkifies wherever it lands — unlike a bare
     // custom URL scheme, which most messaging/email clients won't turn blue.
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
-        await navigator.share({ title: 'Join me on TryoutHQ', text: message, url: link });
+        await navigator.share({ title: 'Join me on SquadOwl', text: message, url: link });
         return;
       } catch {
         // User canceled the native share sheet, or it isn't actually wired up

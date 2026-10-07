@@ -1983,7 +1983,7 @@ export default function TeamDetailPage() {
                   <p className="text-xs" style={{ color: colors.inkMuted }}>
                     Saving this creates (or reuses) this team&apos;s season and adds everyone currently on the
                     roster to it — each player&apos;s guardian will then be asked to pay this fee, plus
-                    TryoutHQ&apos;s 0.5% platform fee, from their portal.
+                    SquadOwl&apos;s 0.5% platform fee, from their portal.
                   </p>
                 </Card>
               ) : null}

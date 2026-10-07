@@ -140,7 +140,7 @@ function TeamDetail({ team, orgId, backHref }: { team: FounderTeamDetail; orgId:
                     label: 'Fee per player (CAD)',
                     type: 'number',
                     placeholder: '0.00',
-                    hint: "Each player's guardian is asked to pay this, plus TryoutHQ's 0.5% platform fee, from their portal. The organization needs a plan with payments and a connected Stripe account to receive it.",
+                    hint: "Each player's guardian is asked to pay this, plus SquadOwl's 0.5% platform fee, from their portal. The organization needs a plan with payments and a connected Stripe account to receive it.",
                     showWhen: (v) => v.collectsFees === 'yes',
                   },
                 ],

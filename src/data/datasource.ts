@@ -155,6 +155,8 @@ export interface DataSource {
   // Registration (QR mock)
   ensureCloudSession(tryoutId: string): Promise<Tryout>;
   listRegistrations(tryoutId: string): Promise<Registration[]>;
+  /** Just the number of pending registrations: a head-only count, no rows. Backs the tab badge. */
+  countPendingRegistrations(tryoutId: string): Promise<number>;
   submitRegistration(tryoutId: string, form: RegistrationSubmit): Promise<Registration>;
   addRegistrationToRoster(tryoutId: string, registrationId: string): Promise<Player>;
   /** Place a registration straight onto a team's own roster, with no assessment involved. */

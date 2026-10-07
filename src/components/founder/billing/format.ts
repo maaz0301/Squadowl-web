@@ -1,7 +1,7 @@
 import type { DiscountCode, DiscountCodeInput } from '@/data/founder/types';
 import { planLabel } from '../labels';
 
-/** Stripe amounts are in the currency's minor unit; every currency TryoutHQ has billed in uses cents. */
+/** Stripe amounts are in the currency's minor unit; every currency SquadOwl has billed in uses cents. */
 export function formatMoney(cents: number, currency = 'cad'): string {
   try {
     return new Intl.NumberFormat('en-CA', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);

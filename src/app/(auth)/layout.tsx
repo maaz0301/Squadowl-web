@@ -37,10 +37,10 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           <div className="mb-7 flex flex-col items-center gap-3">
             <div style={{ width: 'min(260px, 70vw)' }}>
               <Image
-                src={isDark ? '/images/tryouthq_logo_v2.png' : '/images/tryouthq_logo_v2_light.png'}
-                alt="TryoutHQ"
-                width={1024}
-                height={777}
+                src={isDark ? '/images/squadowl_logo_dark.png' : '/images/squadowl_logo_light.png'}
+                alt="SquadOwl"
+                width={1200}
+                height={1073}
                 priority
                 style={{ height: 'auto', width: '100%', display: 'block' }}
               />

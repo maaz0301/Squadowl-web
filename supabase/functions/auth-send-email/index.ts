@@ -26,26 +26,26 @@ const COPY: Record<EmailActionType, Copy> = {
     cta: 'VERIFY MY ACCOUNT',
   },
   invite: {
-    subject: "You've been invited to TryoutHQ",
+    subject: "You've been invited to SquadOwl",
     heading: "You're Invited! 🎉",
     intro:
-      "You've been invited to join TryoutHQ. Accept the invite below to set up your account and get started.",
+      "You've been invited to join SquadOwl. Accept the invite below to set up your account and get started.",
     cta: 'ACCEPT INVITE',
   },
   magiclink: {
-    subject: 'Your TryoutHQ sign-in link',
-    heading: 'Sign In to TryoutHQ',
+    subject: 'Your SquadOwl sign-in link',
+    heading: 'Sign In to SquadOwl',
     intro: 'Use the button below to sign in. The link works once and expires shortly.',
     cta: 'SIGN IN',
   },
   email_change: {
     subject: 'Confirm your new email address',
     heading: 'Confirm Your New Email',
-    intro: 'Confirm this address to finish moving your TryoutHQ account over to it.',
+    intro: 'Confirm this address to finish moving your SquadOwl account over to it.',
     cta: 'CONFIRM EMAIL',
   },
   recovery: {
-    subject: 'Reset your TryoutHQ password',
+    subject: 'Reset your SquadOwl password',
     heading: 'Reset Your Password 🔐',
     intro: 'Enter this 8-digit code in the app to choose a new password.',
     cta: '',
@@ -132,7 +132,7 @@ function wrap(heading: string, body: string): string {
 
       <tr><td align="center" style="background-color:#16213e;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);border-radius:16px 16px 0 0;padding:44px 40px 36px;text-align:center;">
         <div style="display:inline-block;background-color:#7c5cf0;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:12px;padding:14px 28px;margin-bottom:22px;">
-          <span style="color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px;">⚡ Tryout HQ</span>
+          <span style="color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px;">⚡ SquadOwl</span>
         </div>
         <h1 style="margin:0;color:#fff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">${heading}</h1>
       </td></tr>
@@ -142,8 +142,8 @@ function wrap(heading: string, body: string): string {
       </td></tr>
 
       <tr><td style="background:#111128;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;border:1px solid #2a2a4a;border-top:none;">
-        <p style="margin:0 0 6px;color:#6366f1;font-size:14px;font-weight:600;">TryoutHQ</p>
-        <p style="margin:0;color:#4b5563;font-size:12px;">© ${new Date().getFullYear()} TryoutHQ. All rights reserved.</p>
+        <p style="margin:0 0 6px;color:#6366f1;font-size:14px;font-weight:600;">SquadOwl</p>
+        <p style="margin:0;color:#4b5563;font-size:12px;">© ${new Date().getFullYear()} SquadOwl. All rights reserved.</p>
         <p style="margin:6px 0 0;color:#374151;font-size:11px;">If you didn't request this, you can safely ignore this email.</p>
       </td></tr>
 
@@ -190,7 +190,7 @@ Deno.serve(async (req) => {
     const HOOK_SECRET = Deno.env.get('SEND_EMAIL_HOOK_SECRET');
     const SITE_URL = Deno.env.get('PUBLIC_SITE_URL') ?? DEFAULT_SITE_URL;
     const FROM_EMAIL = Deno.env.get('SENDGRID_FROM_EMAIL') ?? 'noreply@tryouthq.ca';
-    const FROM_NAME = Deno.env.get('SENDGRID_FROM_NAME') ?? 'TryoutHQ';
+    const FROM_NAME = Deno.env.get('SENDGRID_FROM_NAME') ?? 'SquadOwl';
 
     if (!SENDGRID_API_KEY || !HOOK_SECRET) {
       return new Response(JSON.stringify({ error: 'server misconfigured' }), { status: 500 });

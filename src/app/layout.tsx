@@ -7,10 +7,10 @@ const inter = Inter({ variable: '--font-inter', subsets: ['latin'] });
 const spaceGrotesk = Space_Grotesk({ variable: '--font-space-grotesk', subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'TryoutHQ',
+  title: 'SquadOwl',
   description: 'Run athlete tryouts and evaluations — rosters, rinkside scoring, results and team building.',
   // Home-screen installs on iOS get the app name and their own status bar.
-  appleWebApp: { capable: true, title: 'TryoutHQ', statusBarStyle: 'black-translucent' },
+  appleWebApp: { capable: true, title: 'SquadOwl', statusBarStyle: 'black-translucent' },
 };
 
 export const viewport: Viewport = {

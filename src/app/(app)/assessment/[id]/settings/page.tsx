@@ -479,7 +479,7 @@ export default function SettingsPage() {
       <Modal visible={showAssessor} title="Add Assessor" onClose={() => setShowAssessor(false)} hideDefaultFooter>
         <div className="flex flex-col gap-3">
           <p className="text-sm" style={{ color: colors.inkMuted }}>
-            They&apos;ll get an email invitation. If they don&apos;t have a TryoutHQ account yet, they can create one
+            They&apos;ll get an email invitation. If they don&apos;t have a SquadOwl account yet, they can create one
             with this address and the invitation will be waiting for them.
           </p>
           <Input label="Name" value={assessorName} onChange={(e) => setAssessorName(e.target.value)} />

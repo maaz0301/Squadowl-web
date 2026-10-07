@@ -50,7 +50,7 @@ export interface PlanDefinition {
     /** Delegate a team to another coach/manager by email (Coach+ and up). */
     teamManagers: boolean;
     qrRegistration: boolean;
-    /** Stripe payment collection (+ 0.5% TryoutHQ platform fee) for this tier. */
+    /** Stripe payment collection (+ 0.5% SquadOwl platform fee) for this tier. */
     payments: boolean;
   };
 }

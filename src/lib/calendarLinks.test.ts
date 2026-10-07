@@ -82,7 +82,7 @@ describe('buildIcs', () => {
         {
           ...base,
           sequence: 2,
-          organizer: { name: 'TryoutHQ', email: 'noreply@tryouthq.ca' },
+          organizer: { name: 'SquadOwl', email: 'noreply@tryouthq.ca' },
           attendee: { name: 'Sam Guardian', email: 'sam@example.com' },
         },
         'REQUEST',
@@ -90,7 +90,7 @@ describe('buildIcs', () => {
     );
     expect(out).toContain('METHOD:REQUEST');
     expect(out).toContain('SEQUENCE:2');
-    expect(out).toContain('ORGANIZER;CN=TryoutHQ:mailto:noreply@tryouthq.ca');
+    expect(out).toContain('ORGANIZER;CN=SquadOwl:mailto:noreply@tryouthq.ca');
     expect(out).toContain(
       'ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=Sam Guardian:mailto:sam@example.com',
     );

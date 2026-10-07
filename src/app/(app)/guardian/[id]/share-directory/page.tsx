@@ -169,7 +169,7 @@ export default function ShareDirectoryPage() {
             No coach found for {searchedEmail}
           </p>
           <p className="text-sm" style={{ color: colors.inkMuted }}>
-            Double-check the address, or ask them to create a TryoutHQ account first.
+            Double-check the address, or ask them to create a SquadOwl account first.
           </p>
         </Card>
       ) : (

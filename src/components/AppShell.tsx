@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { lockBodyScroll } from '@/lib/scrollLock';
-import { useThemeColors } from '@/theme/ThemeProvider';
+import { useTheme, useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Button, LoadingState, ThemeToggle } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icons';
 import { useAuthStore, usePermissions, useUser } from '@/state/authStore';
@@ -44,6 +44,7 @@ interface NavItem {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const colors = useThemeColors();
+  const { isDark } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
   const user = useUser();
@@ -237,13 +238,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     <>
       <div className="mb-6 flex items-center gap-2">
         <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2.5 px-1">
-          <Image src="/images/tryouthq_t_logo_v2.png" alt="" width={44} height={44} className="shrink-0" />
-          <span
-            className="truncate text-2xl font-bold tracking-tight"
-            style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-          >
-            {APP_CONFIG.appName}
-          </span>
+          <Image src="/images/squadowl_emblem.png" alt="" width={44} height={44} className="shrink-0" />
+          <Image src={isDark ? '/images/squadowl_wordmark_dark.png' : '/images/squadowl_wordmark_light.png'} alt={APP_CONFIG.appName} width={900} height={194} className="h-7 w-auto min-w-0" />
         </Link>
         {onDismiss ? (
           <button
@@ -405,18 +401,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
           <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2">
             <Image
-              src="/images/tryouthq_t_logo_v2.png"
+              src="/images/squadowl_emblem.png"
               alt=""
               width={36}
               height={36}
               className="h-9 w-9 shrink-0"
             />
-            <span
-              className="truncate text-xl font-bold tracking-tight"
-              style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
-            >
-              {APP_CONFIG.appName}
-            </span>
+            <Image src={isDark ? '/images/squadowl_wordmark_dark.png' : '/images/squadowl_wordmark_light.png'} alt={APP_CONFIG.appName} width={900} height={194} className="h-6 w-auto min-w-0" />
           </Link>
           <ThemeToggle />
         </header>
