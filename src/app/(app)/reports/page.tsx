@@ -104,7 +104,7 @@ export default function ReportsPage() {
   if (summariesQuery.isLoading && !scoresReady) {
     return (
       <>
-        <PageHeader title="Reports" subtitle="Insights across your evaluations" showBack backHref="/dashboard" />
+        <PageHeader title="Reports" subtitle="Insights across your evaluations" />
         <CardGridSkeleton count={4} lines={2} columns="sm:grid-cols-2 lg:grid-cols-4" />
       </>
     );
@@ -123,7 +123,7 @@ export default function ReportsPage() {
   if (evaluationCount === 0) {
     return (
       <>
-        <PageHeader title="Reports" subtitle="Insights across your evaluations" showBack backHref="/dashboard" />
+        <PageHeader title="Reports" subtitle="Insights across your evaluations" />
         <EmptyState
           title="No evaluations yet"
           message="Create an evaluation and score players to see progress, leaders and recommendations here."
@@ -174,7 +174,7 @@ export default function ReportsPage() {
 
   return (
     <>
-      <PageHeader title="Reports" subtitle="Insights across your evaluations" showBack backHref="/dashboard" />
+      <PageHeader title="Reports" subtitle="Insights across your evaluations" />
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {kpis.map((k) => (

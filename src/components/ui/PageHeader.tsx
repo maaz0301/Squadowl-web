@@ -1,7 +1,8 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { isSidebarDestination } from '@/lib/sidebarDestinations';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
 interface PageHeaderProps {
@@ -16,6 +17,9 @@ interface PageHeaderProps {
 export function PageHeader({ title, subtitle, showBack, backHref, onBack, right }: PageHeaderProps) {
   const colors = useThemeColors();
   const router = useRouter();
+  const pathname = usePathname();
+  // No back chevron on pages reached straight from the sidebar (see sidebarDestinations).
+  const canGoBack = !!showBack && !isSidebarDestination(pathname);
 
   const handleBack = () => {
     if (onBack) return onBack();
@@ -26,7 +30,7 @@ export function PageHeader({ title, subtitle, showBack, backHref, onBack, right 
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-3 sm:flex-1">
-        {showBack ? (
+        {canGoBack ? (
           <button
             type="button"
             onClick={handleBack}

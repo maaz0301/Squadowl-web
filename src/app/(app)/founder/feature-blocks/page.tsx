@@ -36,8 +36,6 @@ export default function FounderFeatureBlocksPage() {
       <PageHeader
         title="Feature Blocks"
         subtitle="Turn off a hub section or plan tier for the whole platform"
-        showBack
-        backHref="/founder"
       />
       <FounderSection title="Hub sections">
         <PlatformBlocksCard />

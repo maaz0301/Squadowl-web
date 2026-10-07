@@ -267,8 +267,6 @@ export default function EnterprisePage() {
       <PageHeader
         title="Dashboard"
         subtitle="Association & Org Intelligence"
-        showBack
-        backHref="/dashboard"
       />
 
       <PlanGate feature="enterprise" title="Enterprise Dashboard (Association)">
