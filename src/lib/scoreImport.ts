@@ -186,6 +186,63 @@ function parseNumber(raw: string, allowClock: boolean): number | null {
   return Number(text.match(/^-?\d+(\.\d+)?/)![0]);
 }
 
+/** Metres per unit, to read a typed length and express it in the measure's own unit. */
+const METRES_PER: Record<string, number> = {
+  m: 1, meter: 1, meters: 1, metre: 1, metres: 1,
+  cm: 0.01, centimeter: 0.01, centimeters: 0.01, centimetre: 0.01, centimetres: 0.01,
+  ft: 0.3048, foot: 0.3048, feet: 0.3048,
+  in: 0.0254, inch: 0.0254, inches: 0.0254,
+  yd: 0.9144, yard: 0.9144, yards: 0.9144,
+};
+const METRES_PER_FOOT = 0.3048;
+const METRES_PER_INCH = 0.0254;
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * A distance cell as people actually type it: 6.5, "6.5 ft", 6'4", "6 ft 4 in",
+ * 6-4 (feet-inches), or "190 cm". Returns the length in the measure's own unit
+ * (feet when the measure names no unit), or null when it is not one of those, in
+ * which case the plain-number reader gets the cell. A plain number is never
+ * converted: it is already in the measure's unit.
+ */
+function parseDistance(raw: string, measureUnit?: string): number | null {
+  const text = raw
+    .trim()
+    .replace(/[\u2018\u2019\u2032]/g, "'")
+    .replace(/[\u201c\u201d\u2033]/g, '"')
+    .replace(/,/g, '.');
+  const unitKey = (measureUnit ?? '').trim().toLowerCase().replace(/\.$/, '');
+  const targetKnown = unitKey in METRES_PER;
+  const perTarget = targetKnown ? METRES_PER[unitKey] : METRES_PER_FOOT;
+  const toTarget = (metres: number) => round2(metres / perTarget);
+
+  // 6'4"  6' 4  6 ft 4 in  6ft4in  6'
+  const feetInches = text.match(/^(\d+(?:\.\d+)?)\s*(?:'|ft\.?|feet|foot)\s*(?:(\d+(?:\.\d+)?)\s*(?:"|in\.?|inch|inches)?)?$/i);
+  if (feetInches) {
+    const inches = feetInches[2] ? Number(feetInches[2]) : 0;
+    if (inches >= 12) return null;
+    return toTarget(Number(feetInches[1]) * METRES_PER_FOOT + inches * METRES_PER_INCH);
+  }
+
+  // 6-4, read as feet-inches, only when the inches part is a real inches value.
+  const hyphen = text.match(/^(\d+)\s*-\s*(\d{1,2}(?:\.\d+)?)$/);
+  if (hyphen && Number(hyphen[2]) < 12) {
+    return toTarget(Number(hyphen[1]) * METRES_PER_FOOT + Number(hyphen[2]) * METRES_PER_INCH);
+  }
+
+  // 190 cm, 2.1 m, 72 in: converted when the measure's unit is known and different.
+  const withUnit = text.match(/^(\d+(?:\.\d+)?)\s*([a-z]+|"|')$/i);
+  if (withUnit && targetKnown) {
+    const typed = withUnit[2] === "'" ? 'ft' : withUnit[2] === '"' ? 'in' : withUnit[2].toLowerCase();
+    if (typed in METRES_PER) {
+      return typed === unitKey || METRES_PER[typed] === perTarget
+        ? Number(withUnit[1])
+        : toTarget(Number(withUnit[1]) * METRES_PER[typed]);
+    }
+  }
+  return null;
+}
+
 /** Parse one cell against a measure; `value: null, error: null` means blank (skipped). */
 export function parseMeasureValue(
   raw: string,
@@ -201,7 +258,9 @@ export function parseMeasureValue(
     return { value: null, error: `${measure.label}: "${text}" is not a yes/no` };
   }
 
-  const n = parseNumber(text, measure.scoringType === 'time');
+  const n =
+    (measure.scoringType === 'distance' ? parseDistance(text, measure.unit) : null) ??
+    parseNumber(text, measure.scoringType === 'time');
   if (n == null) return { value: null, error: `${measure.label}: "${text}" is not a number` };
 
   if (measure.scoringType === 'observation') {

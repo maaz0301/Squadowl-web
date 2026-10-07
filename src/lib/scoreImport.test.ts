@@ -44,6 +44,42 @@ describe('parseMeasureValue', () => {
   });
 });
 
+describe('parseMeasureValue: distances', () => {
+  const jump = (unit?: string) => measure({ scoringType: 'distance', unit, label: 'Long Jump 1ft Right Foot' });
+
+  it('reads feet and inches in the ways people type them', () => {
+    for (const text of ["6'4\"", "6' 4\"", '6 ft 4 in', '6ft4in', '6-4', '6\u20194\u201d']) {
+      expect(parseMeasureValue(text, jump('ft'))).toEqual({ value: 6.33, error: null });
+    }
+  });
+
+  it('expresses feet-inches in the measure unit, feet by default', () => {
+    expect(parseMeasureValue("6'4\"", jump())).toEqual({ value: 6.33, error: null });
+    expect(parseMeasureValue("6'4\"", jump('in'))).toEqual({ value: 76, error: null });
+    expect(parseMeasureValue("6'4\"", jump('cm'))).toEqual({ value: 193.04, error: null });
+    expect(parseMeasureValue("6'", jump('ft'))).toEqual({ value: 6, error: null });
+  });
+
+  it('converts a typed unit that differs from the measure unit, and leaves plain numbers alone', () => {
+    expect(parseMeasureValue('190 cm', jump('ft'))).toEqual({ value: 6.23, error: null });
+    expect(parseMeasureValue('72 in', jump('ft'))).toEqual({ value: 6, error: null });
+    expect(parseMeasureValue('6.5 ft', jump('ft'))).toEqual({ value: 6.5, error: null });
+    expect(parseMeasureValue('6.5', jump('ft'))).toEqual({ value: 6.5, error: null });
+    expect(parseMeasureValue('6,5', jump('ft'))).toEqual({ value: 6.5, error: null });
+    expect(parseMeasureValue('190 cm', jump())).toEqual({ value: 190, error: null });
+  });
+
+  it('still rejects things that are not distances', () => {
+    expect(parseMeasureValue('far', jump('ft')).error).toMatch(/not a number/);
+    expect(parseMeasureValue("6'14\"", jump('ft')).error).toMatch(/not a number/);
+    expect(parseMeasureValue('-3', jump('ft')).error).toMatch(/negative/);
+  });
+
+  it('does not apply feet-inches reading to other measure types', () => {
+    expect(parseMeasureValue("6'4\"", measure({ scoringType: 'time' })).error).toMatch(/not a number/);
+  });
+});
+
 describe('buildScoreImportRows', () => {
   const measures = [measure({ key: 'skate', label: 'Skating' }), measure({ key: 'dash', label: '40 Dash', scoringType: 'time' })];
   const roster = [player('1', 'Ann', 'Lee', '9'), player('2', 'Bob', 'Ray', '10'), player('3', 'Bob', 'Ray', '11')];
