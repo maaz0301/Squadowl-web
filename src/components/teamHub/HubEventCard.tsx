@@ -50,7 +50,7 @@ export function HubEventCard({
       type="button"
       onClick={onSelect}
       aria-expanded={expanded}
-      className="flex w-full items-center gap-3 rounded-2xl border py-3 pr-3 pl-2.5 text-left transition-[filter] hover:brightness-110"
+      className={`flex w-full items-center gap-3 border py-3 pr-3 pl-2.5 text-left transition-[filter] hover:brightness-110 ${expanded ? 'rounded-t-2xl' : 'rounded-2xl'}`}
       style={{
         backgroundColor: s.panelBg,
         borderColor: selected ? s.orangeBorder : s.panelBorder,

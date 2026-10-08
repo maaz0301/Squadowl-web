@@ -6,6 +6,7 @@ import { Card } from '@/components/ui';
 import { Icon } from '@/components/Icons';
 import { HomeHero } from '@/components/home/HomeHero';
 import { HomeSectionLabel } from '@/components/home/HomeSectionLabel';
+import { MyAthletesPanel } from '@/components/home/MyAthletesPanel';
 import { QuickAccessGrid, type QuickAccessItem } from '@/components/home/QuickAccessGrid';
 import { canUseFeature } from '@/data/plans';
 import { prefetchReports } from '@/features/prefetch';
@@ -111,6 +112,10 @@ export function HomeIntro({ active, onEvaluations, onTeams }: HomeIntroProps) {
           <QuickAccessGrid items={items} />
         </div>
       ) : null}
+
+      {/* A coach who is also a guardian on some athlete. Lives here so it shows
+          on every hub page, not just Evaluations. */}
+      <MyAthletesPanel />
     </>
   );
 }

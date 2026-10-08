@@ -52,7 +52,7 @@ export function TeamHubHeader({ name, subtitle, logoUrl, backHref, onChat, chatB
 
       <div className="min-w-0 flex-1">
         <h1
-          className="truncate text-lg font-bold sm:text-2xl"
+          className="line-clamp-2 break-words text-lg leading-tight font-bold sm:text-2xl"
           style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}
         >
           {name} Hub

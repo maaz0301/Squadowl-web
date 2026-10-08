@@ -239,12 +239,15 @@ export default function TeamDetailPage() {
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [tab, setTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'schedule');
   const [openRsvpEventId, setOpenRsvpEventId] = useState<string | null>(null);
+  // The event whose attendance (Team Status + RSVPs) is unfolded inside its tile.
+  const [attendanceEventId, setAttendanceEventId] = useState<string | null>(null);
   // The event Team Status, RSVPs and the action row are pointed at.
   // Arriving from the Calendar page with ?event= opens that event straight away.
   const focusEventId = searchParams.get('event');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(focusEventId);
   // Whether the selected event's details are showing under its card.
-  const [eventDetailsOpen, setEventDetailsOpen] = useState(true);
+  // Tiles start folded to their date bar; arriving with ?event= opens that one.
+  const [eventDetailsOpen, setEventDetailsOpen] = useState(!!focusEventId);
   const [showAllEvents, setShowAllEvents] = useState(!!focusEventId);
   // Past events: the Schedule tab leads with what's coming, and this switches it
   // to what already happened, so photos and videos added to a game stay reachable.
@@ -1308,10 +1311,10 @@ export default function TeamDetailPage() {
                     {shownEvents.map((ev) => {
                       const open = selectedEvent?.id === ev.id && eventDetailsOpen;
                       return (
-                        <div key={ev.id} className="flex flex-col gap-3">
+                        <div key={ev.id} className="flex flex-col">
                           <HubEventCard
                             event={ev}
-                            selected={selectedEvent?.id === ev.id}
+                            selected={open}
                             expanded={open}
                             playerCount={playerCount}
                             evaluatorCount={evaluatorCount}
@@ -1321,21 +1324,54 @@ export default function TeamDetailPage() {
                               setEventDetailsOpen(selectedEvent?.id === ev.id ? !eventDetailsOpen : true);
                               setSelectedEventId(ev.id);
                               setOpenRsvpEventId(null);
+                              setAttendanceEventId(null);
                               setRsvpSearch('');
                             }}
                           />
-                          {/* Every event offers Add to calendar, not only the one that is open. */}
-                          {!open ? (
-                            <div className="flex px-1">
-                              <AddToCalendar event={ev} teamName={team?.name} size="sm" />
-                            </div>
-                          ) : null}
                           {open ? ((() => {
                     const ev = selectedEvent;
                     const rsvp = rsvpSummary(ev);
                     const expanded = openRsvpEventId === ev.id;
+                    const attendanceOpen = attendanceEventId === ev.id;
                     return (
-                      <div>
+                      // The tile's body, joined to its date bar above (same left edge,
+                      // no gap) so each date reads as one tile.
+                      <div
+                        className="-mt-px rounded-b-2xl border border-t-0 px-3 pt-1 pb-3"
+                        style={{ borderColor: colors.primary, borderLeftWidth: 3 }}
+                      >
+                        {/* Attached notes first: info, videos, photos and comments. */}
+                        {teamSeasonId ? (
+                          <EventDiscussion seasonId={teamSeasonId} eventId={ev.id} canManage={canEditTeam} currentUserId={user?.id} />
+                        ) : null}
+
+                        <HubRowCard
+                          tone="blue"
+                          icon="barChart"
+                          title={attendanceOpen ? 'Hide attendance' : 'Attendance'}
+                          caption={
+                            ev.availabilityPending
+                              ? 'Loading RSVPs...'
+                              : `${rsvp.counts.yes} yes · ${rsvp.counts.maybe} maybe · ${rsvp.counts.no} no · ${rsvp.counts.pending} pending`
+                          }
+                          aria-expanded={attendanceOpen}
+                          onClick={() => {
+                            setAttendanceEventId(attendanceOpen ? null : ev.id);
+                            setOpenRsvpEventId(null);
+                            setRsvpSearch('');
+                          }}
+                          trailing={
+                            <Icon
+                              name={attendanceOpen ? 'chevronUp' : 'chevronDown'}
+                              size={16}
+                              color={colors.inkMuted}
+                              strokeWidth={2.5}
+                            />
+                          }
+                        />
+
+                        {attendanceOpen ? (
+                        <div className="mt-3">
                         <HubSectionLabel icon="barChart" label="Team Status" />
                         {/* The event lands a round trip or two before its RSVPs do
                             (see getSeason's staged read) — a tally of zeroes in the
@@ -1446,9 +1482,7 @@ export default function TeamDetailPage() {
                     ) : null}
 
                         </div>
-
-                        {teamSeasonId ? (
-                          <EventDiscussion seasonId={teamSeasonId} eventId={ev.id} canManage={canEditTeam} currentUserId={user?.id} />
+                        </div>
                         ) : null}
 
                         <div className="mt-3 flex gap-2">
@@ -1475,12 +1509,6 @@ export default function TeamDetailPage() {
                     })}
                   </div>
                 )}
-
-                {selectedEvent ? (
-                  <div className="mt-3">
-                    <AddToCalendar event={selectedEvent} teamName={team?.name} variant="row" />
-                  </div>
-                ) : null}
 
                 <div className="mt-6">
                   <HubSectionLabel icon="calendar" label="Season Hub" />
