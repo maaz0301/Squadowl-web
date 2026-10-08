@@ -76,9 +76,12 @@ const sections: LegalSection[] = [
     title: 'Reporting a problem',
     body: (
       <p>
-        To report abusive content or a user, email <a href="mailto:support@tryouthq.ca">support@tryouthq.ca</a> with the
-        team name, what you saw and when. We review reports promptly and remove content that breaks these terms. You can
-        also ask the coach or team manager to remove content or a member from their team.
+        In team chat, tap the ⋯ next to someone else&apos;s message to <strong>report</strong> it or to{' '}
+        <strong>block</strong> that person. Blocking hides their messages and notifications from you only, and you can
+        unblock them from Blocked people at the top of the chat. Reports are reviewed by us and the message is removed
+        if it breaks these terms. You can also email <a href="mailto:support@tryouthq.ca">support@tryouthq.ca</a> with
+        the team name, what you saw and when, or ask the coach or team manager to remove content or a member from
+        their team.
       </p>
     ),
   },

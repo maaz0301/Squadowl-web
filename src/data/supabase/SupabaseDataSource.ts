@@ -127,6 +127,8 @@ import type {
   TeamInviteResult,
   PlayerImportResult,
   TeamMessage,
+  BlockedChatUser,
+  ChatReportReason,
   TeamRosterCursor,
   TeamRosterPlayer,
   Tryout,
@@ -7906,6 +7908,67 @@ export class SupabaseDataSource implements DataSource {
     };
   }
 
+  /**
+   * Ids of the people the signed-in user has blocked. Never throws: if the
+   * block list can't be read (for instance before the report-and-block
+   * migration has been applied) chat carries on exactly as it did before,
+   * showing everyone, rather than failing to load at all.
+   */
+  private async blockedAuthorIds(): Promise<string[]> {
+    try {
+      const { supabase } = await this.userCtx();
+      const { data, error } = await supabase.from('user_blocks').select('blocked_user_id');
+      if (error || !data) return [];
+      return (data as Row[]).map((r) => r.blocked_user_id as string);
+    } catch {
+      return [];
+    }
+  }
+
+  async listBlockedChatUsers(): Promise<BlockedChatUser[]> {
+    try {
+      const { supabase } = await this.userCtx();
+      const { data, error } = await supabase
+        .from('user_blocks')
+        .select('blocked_user_id, blocked_name, created_at')
+        .order('created_at', { ascending: false });
+      if (error || !data) return [];
+      return (data as Row[]).map((r) => ({
+        userId: r.blocked_user_id,
+        name: r.blocked_name || 'Unknown',
+        blockedAt: toMs(r.created_at),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  async blockChatUser(userId: string): Promise<void> {
+    const { supabase } = await this.userCtx();
+    unwrap(await supabase.rpc('block_chat_user', { p_user_id: userId }));
+  }
+
+  async unblockChatUser(userId: string): Promise<void> {
+    const { supabase, userId: me } = await this.userCtx();
+    const { error } = await supabase
+      .from('user_blocks')
+      .delete()
+      .eq('blocker_user_id', me)
+      .eq('blocked_user_id', userId);
+    if (error) throw new Error(error.message);
+  }
+
+  async reportTeamMessage(messageId: string, reason: ChatReportReason, details?: string): Promise<void> {
+    const { supabase } = await this.userCtx();
+    unwrap(
+      await supabase.rpc('report_season_message', {
+        p_message_id: messageId,
+        p_reason: reason,
+        p_details: details?.trim() || null,
+      }),
+    );
+  }
+
   // userCtx() rather than ctx(): a guardian has no staff account of their own,
   // and RLS here keys off can_access_season(), not the caller's account.
   async listTeamMessages(seasonId: string): Promise<TeamMessage[]> {
@@ -7920,7 +7983,13 @@ export class SupabaseDataSource implements DataSource {
         .order('created_at', { ascending: false })
         .limit(200),
     ) as Row[] | null;
-    return (rows ?? []).reverse().map((row) => this.mapTeamMessage(row));
+    // People the user has blocked are hidden here, for the live view and for
+    // history alike. It is the user's own filter: nobody else's chat changes.
+    const blocked = new Set(await this.blockedAuthorIds());
+    return (rows ?? [])
+      .reverse()
+      .filter((row) => !blocked.has(row.author_user_id))
+      .map((row) => this.mapTeamMessage(row));
   }
 
   async countUnreadTeamMessages(seasonId: string, sinceMs: number): Promise<number> {
@@ -7929,12 +7998,16 @@ export class SupabaseDataSource implements DataSource {
     // The caller's own messages are excluded: posting to a chat is not a
     // notification to yourself, and every send would otherwise badge the tab
     // it was sent from.
-    const { count, error } = await supabase
+    let query = supabase
       .from('season_messages')
       .select('id', { count: 'exact', head: true })
       .eq('season_id', seasonId)
       .gt('created_at', new Date(sinceMs).toISOString())
       .neq('author_user_id', userId);
+    // Blocked people don't badge the chat either.
+    const blocked = await this.blockedAuthorIds();
+    if (blocked.length > 0) query = query.not('author_user_id', 'in', `(${blocked.join(',')})`);
+    const { count, error } = await query;
     if (error) throw new Error(error.message);
     return count ?? 0;
   }

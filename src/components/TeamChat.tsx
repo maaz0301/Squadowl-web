@@ -11,6 +11,7 @@ import {
   useTeamChatRealtimeSync,
   useTeamMessagesQuery,
 } from '@/features/queries';
+import { useChatSafety } from '@/components/ChatSafety';
 import { useAuthStore } from '@/state/authStore';
 import { useChatReadStore } from '@/state/chatReadStore';
 import type { TeamMessage } from '@/data/types';
@@ -87,6 +88,7 @@ function Bubble({
   colors,
   isDark,
   onDelete,
+  onMore,
   deleting,
 }: {
   message: TeamMessage;
@@ -95,6 +97,8 @@ function Bubble({
   colors: ThemeColors;
   isDark: boolean;
   onDelete: () => void;
+  /** Opens report and block for someone else's message. */
+  onMore?: () => void;
   deleting: boolean;
 }) {
   // Outgoing keeps the brand tint (WhatsApp's own green would fight the palette);
@@ -106,14 +110,15 @@ function Bubble({
 
   return (
     <div className={`flex px-2 ${mine ? 'justify-end' : 'justify-start'}`} style={{ marginTop: startsRun ? 8 : 2 }}>
-      <button
-        type="button"
-        onClick={mine ? onDelete : undefined}
-        disabled={!mine || deleting}
-        title={mine ? 'Delete message' : undefined}
-        className="relative max-w-[82%] text-left"
-        style={{ cursor: mine ? 'pointer' : 'default', opacity: deleting ? 0.5 : 1 }}
-      >
+      {mine ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={deleting}
+          title="Delete message"
+          className="relative max-w-[82%] text-left"
+          style={{ cursor: 'pointer', opacity: deleting ? 0.5 : 1 }}
+        >
         <div
           style={{
             backgroundColor: bubbleColor,
@@ -151,7 +156,60 @@ function Bubble({
             {timeText}
           </span>
         </div>
-      </button>
+        </button>
+      ) : (
+        <div className="relative max-w-[82%] text-left">
+        <div
+          style={{
+            backgroundColor: bubbleColor,
+            borderRadius: 8,
+            borderTopRightRadius: mine && startsRun ? 0 : 8,
+            borderTopLeftRadius: !mine && startsRun ? 0 : 8,
+            paddingLeft: 9,
+            paddingRight: 9,
+            paddingTop: 6,
+            paddingBottom: 5,
+            boxShadow: isDark ? '0 1px 1px rgba(0,0,0,0.25)' : '0 1px 1px rgba(0,0,0,0.08)',
+            position: 'relative',
+          }}
+        >
+          {startsRun ? <Tail mine={mine} color={bubbleColor} /> : null}
+
+          {!mine && startsRun ? (
+            <p className="mb-0.5 text-[13px] font-bold" style={{ color: nameColor(message.authorUserId) }}>
+              {message.authorName}
+              {message.authorRole === 'coach' ? (
+                <span className="text-[11px] font-semibold" style={{ color: colors.inkMuted }}>
+                  {'  '}Coach
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+
+          <p
+            className="whitespace-pre-wrap text-[15px] leading-5"
+            style={{ color: textColor, paddingRight: timeText.length * 6.4 + 16 }}
+          >
+            {message.body}
+          </p>
+          <span className="absolute text-[11px]" style={{ color: metaColor, right: 9, bottom: 5 }}>
+            {timeText}
+          </span>
+        </div>
+          {onMore ? (
+            <button
+              type="button"
+              onClick={onMore}
+              aria-label={`Report or block ${message.authorName}`}
+              title="Report or block"
+              className="absolute flex h-6 w-6 items-center justify-center rounded-full text-base font-bold leading-none"
+              style={{ top: 2, right: -28, color: colors.inkMuted }}
+            >
+              ⋯
+            </button>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -201,6 +259,7 @@ export function TeamChat({
   const sendMessage = useSendTeamMessageMutation();
   const deleteMessage = useDeleteTeamMessageMutation(activeSeasonId ?? '');
   useTeamChatRealtimeSync(activeSeasonId);
+  const safety = useChatSafety();
 
   const rows = useMemo(() => {
     const chronological = messagesQuery.data ?? [];
@@ -286,6 +345,16 @@ export function TeamChat({
 
   return (
     <div className={`flex ${heightClassName} flex-col overflow-hidden rounded-xl border`} style={{ borderColor: colors.border }}>
+      {safety.blockedCount > 0 ? (
+        <button
+          type="button"
+          onClick={safety.openBlocked}
+          className="px-3 py-2 text-left text-xs font-bold"
+          style={{ backgroundColor: colors.tile, color: colors.primary, borderBottom: `1px solid ${colors.border}` }}
+        >
+          Blocked people ({safety.blockedCount})
+        </button>
+      ) : null}
       <div ref={scrollRef} className="flex-1 overflow-y-auto" style={{ backgroundColor: wallpaper }}>
         {messagesQuery.isLoading ? (
           <div className="flex h-full flex-col items-center justify-center gap-2">
@@ -308,6 +377,7 @@ export function TeamChat({
                   colors={colors}
                   isDark={isDark}
                   onDelete={() => confirmDelete(message)}
+                  onMore={() => safety.openActions(message)}
                   deleting={deleteMessage.isPending && deleteMessage.variables === message.id}
                 />
               </div>
@@ -360,6 +430,7 @@ export function TeamChat({
           )}
         </button>
       </div>
+      {safety.modals}
     </div>
   );
 }

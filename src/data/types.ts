@@ -1210,6 +1210,15 @@ export interface AthleteShare {
   updatedAt: number;
 }
 
+/** A person the signed-in user has blocked in team chat. */
+export interface BlockedChatUser {
+  userId: string;
+  name: string;
+  blockedAt: number;
+}
+
+export type ChatReportReason = 'spam' | 'harassment' | 'inappropriate' | 'other';
+
 export interface ShareComment {
   id: string;
   shareId: string;

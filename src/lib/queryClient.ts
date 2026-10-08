@@ -76,6 +76,7 @@ export const queryKeys = {
     teamIds ? (['teams', 'playerCounts', teamIds] as const) : (['teams', 'playerCounts'] as const),
   teamManagers: (teamId?: string) => (teamId ? (['team', teamId, 'managers'] as const) : (['team', 'managers'] as const)),
   teamBuilderResults: (tryoutId: string) => ['tryout', tryoutId, 'teamBuilderResults'] as const,
+  chatBlockedUsers: ['chatBlockedUsers'] as const,
   teamMessages: (seasonId: string) => ['season', seasonId, 'messages'] as const,
   teamMessagesUnread: (seasonId: string, sinceMs: number) =>
     ['season', seasonId, 'messages', 'unread', sinceMs] as const,

@@ -355,6 +355,13 @@ export interface DataSource {
   countUnreadTeamMessages(seasonId: string, sinceMs: number): Promise<number>;
   sendTeamMessage(seasonId: string, body: string): Promise<import('./types').TeamMessage>;
   deleteTeamMessage(messageId: string): Promise<void>;
+  /** People the signed-in user has blocked in chat. Empty (never an error) if blocking is unavailable. */
+  listBlockedChatUsers(): Promise<import('./types').BlockedChatUser[]>;
+  /** Hides this person's chat messages from the signed-in user. */
+  blockChatUser(userId: string): Promise<void>;
+  unblockChatUser(userId: string): Promise<void>;
+  /** Flags a message for the platform operators to review. */
+  reportTeamMessage(messageId: string, reason: import('./types').ChatReportReason, details?: string): Promise<void>;
 
   // Guardian -> Coach athlete profile sharing
   getCoachDirectory(): Promise<import('./types').CoachDirectoryEntry[]>;
