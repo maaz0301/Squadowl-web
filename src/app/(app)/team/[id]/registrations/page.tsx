@@ -36,6 +36,7 @@ import {
 } from '@/features/queries';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
+import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
 type RegTab = 'pending' | 'all' | 'dismissed';
@@ -49,6 +50,7 @@ export default function TeamRegistrationsPage() {
 
   const teamsQuery = useTeamsQuery();
   const team = teamsQuery.data?.find((t) => t.id === id);
+  useDocumentTitle(team ? `${team.name} registrations` : undefined);
   const effectiveTier = useEffectivePlanTier(id);
   // Free plans share one pool of players across evaluations and teams.
   const accountPlayers = useAccountPlayerCount(effectiveTier === 'free');
@@ -362,6 +364,7 @@ export default function TeamRegistrationsPage() {
       </Modal>
 
       <RegistrationProfileModal
+        addLabel="Add to Team"
         registration={viewing}
         onClose={() => setViewingId(null)}
         onAddToRoster={

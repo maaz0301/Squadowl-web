@@ -1167,8 +1167,15 @@ export function useSetTeamRegistrationOpenMutation() {
 export function useAddTeamRegistrationsMutation(teamId: string, onProgress?: (done: number, total: number) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (registrationIds: string[]) =>
-      getDataSource().addRegistrationsToTeam(teamId, registrationIds, onProgress),
+    // One player goes straight through the single placement; the chunked bulk
+    // path is for a ticked group and is much slower for a single registration.
+    mutationFn: async (registrationIds: string[]) => {
+      if (registrationIds.length === 1) {
+        await getDataSource().addRegistrationToTeam(teamId, registrationIds[0]);
+        return 1;
+      }
+      return getDataSource().addRegistrationsToTeam(teamId, registrationIds, onProgress);
+    },
     onSuccess: () => {
       invalidateTeamRoster(qc, teamId);
       void qc.invalidateQueries({ queryKey: teamRegistrationsKey(teamId) });
