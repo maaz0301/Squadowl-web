@@ -9,6 +9,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { LoginFormSchema } from '@/data/types';
 import { useAuthStore } from '@/state/authStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { LegalLinks } from '@/components/LegalPage';
 import { Button, Input, LoadingState } from '@/components/ui';
 
 function LoginForm() {
@@ -111,6 +112,8 @@ function LoginForm() {
           Create account
         </Link>
       </div>
+
+      <LegalLinks />
     </form>
   );
 }

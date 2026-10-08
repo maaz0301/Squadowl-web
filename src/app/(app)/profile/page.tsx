@@ -30,6 +30,8 @@ const QUICK_LINKS = [
   { href: '/archived-assessments', label: 'Archived' },
   { href: '/feedback', label: 'Send Feedback' },
   { href: '/loyalty', label: 'Loyalty Program' },
+  { href: '/privacy', label: 'Privacy Policy' },
+  { href: '/terms', label: 'Terms of Service' },
 ];
 
 export default function ProfilePage() {
@@ -370,6 +372,18 @@ export default function ProfilePage() {
       ) : null}
 
       <div className="mt-6 flex flex-col gap-4">
+        {/* Everyone else finds these in Quick Links; guardians have no Quick Links card. */}
+        {isGuardian ? (
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-bold">
+            <Link href="/privacy" style={{ color: colors.primary }}>
+              Privacy Policy
+            </Link>
+            <Link href="/terms" style={{ color: colors.primary }}>
+              Terms of Service
+            </Link>
+          </div>
+        ) : null}
+
         {!isFounder ? (
           <Card className="flex flex-col items-start gap-2">
             <SectionLabel className="!text-[color:var(--c-danger)]">Danger Zone</SectionLabel>

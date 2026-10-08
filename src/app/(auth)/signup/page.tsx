@@ -9,6 +9,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { SignupFormSchema } from '@/data/types';
 import { useAuthStore } from '@/state/authStore';
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { LegalLinks } from '@/components/LegalPage';
 import { Button, Input } from '@/components/ui';
 import { flushPendingReferralCode, savePendingReferralCode } from '@/lib/pendingReferral';
 
@@ -155,6 +156,8 @@ export default function SignupPage() {
           Sign in
         </Link>
       </div>
+
+      <LegalLinks />
     </form>
   );
 }
