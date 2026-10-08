@@ -33,7 +33,7 @@ export function TeamHubHeader({ name, subtitle, logoUrl, backHref, onChat, chatB
   const router = useRouter();
 
   return (
-    <div className="mb-4 flex items-center gap-2 sm:gap-3">
+    <div className="mb-4 flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-3">
       <button
         type="button"
         onClick={() => router.push(backHref)}
@@ -64,6 +64,8 @@ export function TeamHubHeader({ name, subtitle, logoUrl, backHref, onChat, chatB
         ) : null}
       </div>
 
+      {/* On a phone the actions drop to their own row so the name keeps the full line. */}
+      <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto sm:gap-3">
       {extra}
 
       <button
@@ -88,6 +90,7 @@ export function TeamHubHeader({ name, subtitle, logoUrl, backHref, onChat, chatB
           Edit
         </button>
       ) : null}
+      </div>
     </div>
   );
 }
