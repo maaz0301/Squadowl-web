@@ -119,8 +119,11 @@ const sections: LegalSection[] = [
           <li>
             <strong>Service providers</strong> that process information for us under contract: Supabase (database,
             authentication and file storage), Google Firebase Cloud Messaging (push notifications), Stripe (payments),
-            Resend and SendGrid (email delivery), and Anthropic (optional AI features, which receive only the text a
-            coach submits for that request and limited non-identifying context, not athlete rosters).
+            Resend and SendGrid (email delivery), and Anthropic (optional AI features that a coach chooses to run).
+            Depending on the feature, a request includes athletes&apos; names, positions, year of birth, friend-group
+            names, evaluation scores, the evaluator&apos;s name and the coach&apos;s written comments for the athletes
+            involved, plus the coach&apos;s own instructions. It never includes contact details, medical notes, full
+            dates of birth or payment information.
           </li>
           <li>
             <strong>Legal and safety:</strong> when required by law, or to protect the rights, safety and security of
