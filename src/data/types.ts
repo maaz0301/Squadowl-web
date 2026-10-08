@@ -234,7 +234,10 @@ export type Evaluation = z.infer<typeof EvaluationSchema>;
 
 export const RegistrationSchema = z.object({
   id: z.string(),
+  /** The evaluation it was submitted to; empty for a registration made through a team's link. */
   eventId: z.string(),
+  /** The team it was submitted to, for a registration made through a team's link. */
+  teamId: z.string().optional(),
   firstName: z.string(),
   lastName: z.string(),
   yearOfBirth: z.string().optional(),
@@ -352,6 +355,10 @@ export const TeamSchema = z.object({
   registrationFeeCents: z.number().optional(),
   /** Team brand colour as "#RRGGBB", tinting the team banner and printed results. */
   brandColor: z.string().optional(),
+  /** Public registration code for the team's sign-up link; absent until the link is first created. */
+  registrationCode: z.string().optional(),
+  /** Whether the team's registration link currently accepts sign-ups. */
+  registrationOpen: z.boolean().optional(),
   /**
    * True when the caller reaches this team through a delegation rather than
    * through their own account — i.e. a club handed them this one team. Drives

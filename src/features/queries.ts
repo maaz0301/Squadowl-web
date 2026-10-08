@@ -1119,6 +1119,74 @@ export function useDismissRegistrationMutation(tryoutId: string) {
   });
 }
 
+// ---- Team registration link ----
+/** Registrations made through a team's link are cached under their own key, apart from any evaluation's. */
+const teamRegistrationsKey = (teamId: string) => queryKeys.registrations(`team:${teamId}`);
+
+/** A team's registrations. Refreshes every 30s while the tab is open so sign-ups arrive without a reload. */
+export function useTeamRegistrationsQuery(teamId: string | undefined) {
+  return useQuery({
+    queryKey: teamRegistrationsKey(teamId ?? ''),
+    queryFn: () => getDataSource().listTeamRegistrations(teamId!),
+    enabled: !!teamId,
+    refetchInterval: 30_000,
+  });
+}
+
+/** Pending-registration count for the Team Hub button: a head-only count, no rows. */
+export function usePendingTeamRegistrationCountQuery(teamId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: [...teamRegistrationsKey(teamId ?? ''), 'pending-count'] as const,
+    queryFn: () => getDataSource().countPendingTeamRegistrations(teamId!),
+    enabled: !!teamId && enabled,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useEnsureTeamRegistrationLinkMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (teamId: string) => getDataSource().ensureTeamRegistrationLink(teamId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+    },
+  });
+}
+
+export function useSetTeamRegistrationOpenMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teamId, open }: { teamId: string; open: boolean }) =>
+      getDataSource().setTeamRegistrationOpen(teamId, open),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.teams });
+    },
+  });
+}
+
+export function useAddTeamRegistrationsMutation(teamId: string, onProgress?: (done: number, total: number) => void) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (registrationIds: string[]) =>
+      getDataSource().addRegistrationsToTeam(teamId, registrationIds, onProgress),
+    onSuccess: () => {
+      invalidateTeamRoster(qc, teamId);
+      void qc.invalidateQueries({ queryKey: teamRegistrationsKey(teamId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
+  });
+}
+
+export function useDismissTeamRegistrationMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (registrationId: string) => getDataSource().dismissRegistration('', registrationId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: teamRegistrationsKey(teamId) });
+    },
+  });
+}
+
 export function useGenerateTestDataMutation(tryoutId: string, onProgress?: (done: number, total: number) => void) {
   const qc = useQueryClient();
   return useMutation({

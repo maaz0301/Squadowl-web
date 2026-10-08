@@ -1291,7 +1291,8 @@ export class SupabaseDataSource implements DataSource {
   private rowToRegistration(r: Row): Registration {
     return {
       id: r.id,
-      eventId: r.tryout_id,
+      eventId: r.tryout_id ?? '',
+      teamId: r.team_id ?? undefined,
       firstName: r.first_name,
       lastName: r.last_name,
       yearOfBirth: r.year_of_birth != null ? String(r.year_of_birth) : undefined,
@@ -2151,6 +2152,8 @@ export class SupabaseDataSource implements DataSource {
       collectsFees: t.collects_fees ?? undefined,
       registrationFeeCents: t.registration_fee_cents ?? undefined,
       brandColor: t.brand_color ?? undefined,
+      registrationCode: t.registration_code ?? undefined,
+      registrationOpen: t.registration_code ? (t.registration_open ?? false) : undefined,
       managed: managed || undefined,
       ownerPlanTier: managed ? ((ownerPlanTier as Team['ownerPlanTier']) ?? undefined) : undefined,
       createdAt: toMs(t.created_at),
@@ -5965,6 +5968,43 @@ export class SupabaseDataSource implements DataSource {
   async dismissRegistration(_tryoutId: string, registrationId: string): Promise<void> {
     const { supabase } = await this.ctx();
     await supabase.from('registrations').update({ status: 'dismissed' }).eq('id', registrationId);
+  }
+
+  // ─── Team registration link ─────────────────────────────────────────────────
+  async ensureTeamRegistrationLink(teamId: string): Promise<string> {
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.rpc('ensure_team_registration_code', { t: teamId });
+    if (error) throw new Error(error.message);
+    return data as string;
+  }
+
+  async setTeamRegistrationOpen(teamId: string, open: boolean): Promise<void> {
+    const { supabase } = await this.ctx();
+    const { error } = await supabase.rpc('set_team_registration_open', { t: teamId, is_open: open });
+    if (error) throw new Error(error.message);
+  }
+
+  async listTeamRegistrations(teamId: string): Promise<Registration[]> {
+    const { supabase } = await this.ctx();
+    const rows = unwrap(
+      await supabase
+        .from('registrations')
+        .select('*')
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: false }),
+    ) as Row[];
+    return rows.map((r) => this.rowToRegistration(r));
+  }
+
+  async countPendingTeamRegistrations(teamId: string): Promise<number> {
+    const { supabase } = await this.ctx();
+    const { count, error } = await supabase
+      .from('registrations')
+      .select('id', { count: 'exact', head: true })
+      .eq('team_id', teamId)
+      .eq('status', 'pending');
+    if (error) throw error;
+    return count ?? 0;
   }
 
   // ─── Phase 2: Team Builder, AI, Export ──────────────────────────────────────────

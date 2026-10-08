@@ -33,6 +33,7 @@ import {
 } from '@/components/ui';
 import { DURATION_OPTIONS, durationOf, endFromDuration, formatDuration } from '@/data/timeRange';
 import {
+  usePendingTeamRegistrationCountQuery,
   useTeamsQuery,
   useTryoutsQuery,
   useTryoutSummariesQuery,
@@ -200,6 +201,12 @@ export default function TeamDetailPage() {
   // Read before the early returns below; only used when the team's plan is Free.
   const accountPlayersFree = useAccountPlayerCount((user?.planTier ?? 'free') === 'free');
   const { canManageTeam, canAssess } = usePermissions();
+  // Sign-ups that came in through the team's registration link, for the button's badge.
+  // Only staff and delegated managers can see registrations, so nobody else asks.
+  const pendingTeamRegistrations = usePendingTeamRegistrationCountQuery(
+    id,
+    canManageTeam || !!teamsQuery.data?.find((t) => t.id === id)?.managed,
+  );
   const qc = useQueryClient();
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -1598,6 +1605,18 @@ export default function TeamDetailPage() {
                   setRosterSort('recent');
                   setRosterSelectMode(true);
                 }}
+              />
+            ) : null}
+            {canEditTeam ? (
+              <Button
+                label={
+                  (pendingTeamRegistrations.data ?? 0) > 0
+                    ? `Registration Link (${pendingTeamRegistrations.data})`
+                    : 'Registration Link'
+                }
+                size="sm"
+                variant="secondary"
+                onClick={() => router.push(`/team/${id}/registrations`)}
               />
             ) : null}
             {canManageTeam && playerCount > 0 ? (

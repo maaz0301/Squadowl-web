@@ -173,6 +173,13 @@ export interface DataSource {
     onProgress?: (done: number, total: number) => void,
   ): Promise<number>;
   dismissRegistration(tryoutId: string, registrationId: string): Promise<void>;
+  /** The team's public registration code, created the first time it is asked for. Anyone with the link can sign a player up to the team. */
+  ensureTeamRegistrationLink(teamId: string): Promise<string>;
+  /** Turn the team's link on or off without losing its code. */
+  setTeamRegistrationOpen(teamId: string, open: boolean): Promise<void>;
+  listTeamRegistrations(teamId: string): Promise<Registration[]>;
+  /** Just the number of pending team registrations: a head-only count, no rows. */
+  countPendingTeamRegistrations(teamId: string): Promise<number>;
 
   // Phase 2: Team Builder, AI, Export
   generateTeamBuilder(tryoutId: string, config: TeamBuilderConfig): Promise<TeamBuilderState>;
