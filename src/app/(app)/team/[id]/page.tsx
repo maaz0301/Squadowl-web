@@ -1345,6 +1345,7 @@ export default function TeamDetailPage() {
                           <EventDiscussion seasonId={teamSeasonId} eventId={ev.id} canManage={canEditTeam} currentUserId={user?.id} />
                         ) : null}
 
+                        <div className="mt-3">
                         <HubRowCard
                           tone="blue"
                           icon="barChart"
@@ -1369,6 +1370,7 @@ export default function TeamDetailPage() {
                             />
                           }
                         />
+                        </div>
 
                         {attendanceOpen ? (
                         <div className="mt-3">
