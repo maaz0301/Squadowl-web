@@ -719,6 +719,52 @@ function tplPlayerInvite(
   };
 }
 
+/** Warns the account owner that their stored videos will be deleted on `deletionDate`. */
+function tplVideoDeletionReminder(payload: any) {
+  const when = escapeHtml(String(payload?.deletionDate ?? 'soon'));
+  const days = Number(payload?.daysLeft) || 0;
+  const count = Number(payload?.videoCount) || 0;
+  const size = escapeHtml(String(payload?.usedLabel ?? ''));
+  const account = escapeHtml(String(payload?.accountName ?? 'your account'));
+  const lead = days <= 1 ? 'Tomorrow' : `In ${days} days`;
+  return {
+    subject: `${lead}: your SquadOwl videos will be deleted`,
+    html: wrap('Your videos will be deleted', `
+      <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
+        ${lead}, on <strong style="color:#fff;">${when}</strong>, every video stored for
+        <strong style="color:#a78bfa;">${account}</strong> will be permanently deleted${count ? ` (${count} video${count === 1 ? '' : 's'}${size ? `, ${size}` : ''})` : ''}.
+      </p>
+      <p style="color:#9ca3af;font-size:15px;line-height:1.7;margin:0 0 20px;">
+        This happens because video storage was cancelled, the plan was moved below Coach+, or the account is closing.
+        Until that date your videos stay available. Once they are deleted they cannot be recovered.
+      </p>
+      <div style="background:#1c0505;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;padding:16px 20px;margin-top:12px;">
+        <p style="color:#fca5a5;font-size:13px;line-height:1.5;margin:0;">
+          To keep them, restart your video storage and stay on Coach+ or Club before ${when}.
+        </p>
+      </div>
+    `),
+  };
+}
+
+/** Confirms that an account's stored videos were permanently deleted. */
+function tplVideoDeletionComplete(payload: any) {
+  const count = Number(payload?.videoCount) || 0;
+  const account = escapeHtml(String(payload?.accountName ?? 'your account'));
+  return {
+    subject: 'Your SquadOwl videos have been deleted',
+    html: wrap('Videos deleted', `
+      <p style="color:#d1d5db;font-size:16px;line-height:1.7;margin:0 0 20px;">
+        ${count ? `${count} video${count === 1 ? '' : 's'} stored for` : 'The videos stored for'}
+        <strong style="color:#a78bfa;">${account}</strong> ${count === 1 ? 'has' : 'have'} been permanently deleted, as scheduled.
+      </p>
+      <p style="color:#9ca3af;font-size:15px;line-height:1.7;margin:0;">
+        Your reports, scores and the rest of your data are not affected. You can add video storage again at any time on a Coach+ or Club plan.
+      </p>
+    `),
+  };
+}
+
 // ─── Main handler ────────────────────────────────────────────────────────────
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -760,6 +806,8 @@ serve(async (req: Request) => {
     else if (type === 'password_reset') ({ subject, html } = tplPasswordReset(payload?.code ?? '------'));
     else if (type === 'subscription_upgraded') ({ subject, html } = tplSubscriptionUpgraded(payload?.planTier ?? 'Pro'));
     else if (type === 'subscription_canceled') ({ subject, html } = tplSubscriptionCanceled());
+    else if (type === 'video_deletion_reminder') ({ subject, html } = tplVideoDeletionReminder(payload ?? {}));
+    else if (type === 'video_deletion_complete') ({ subject, html } = tplVideoDeletionComplete(payload ?? {}));
 
     // Send via SendGrid's v3 API. tryouthq.ca is DKIM/SPF-authenticated there,
     // so mail from noreply@tryouthq.ca is signed for the domain. Content parts
