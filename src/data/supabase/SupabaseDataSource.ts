@@ -9690,11 +9690,16 @@ export class SupabaseDataSource implements DataSource {
   async manageVideoStorage(
     action: 'change' | 'cancel' | 'resume',
     args?: { storageGb?: number; confirm?: string },
-  ): Promise<{ cancelAt?: string | null }> {
+  ): Promise<{ cancelAt?: string | null; url?: string }> {
     assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('manage-video-storage', {
-      body: { action, storageGb: args?.storageGb, confirm: args?.confirm },
+      body: {
+        action,
+        storageGb: args?.storageGb,
+        confirm: args?.confirm,
+        origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+      },
     });
     if (error) {
       let detail = '';

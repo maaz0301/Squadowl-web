@@ -344,7 +344,7 @@ export interface DataSource {
   manageVideoStorage(
     action: 'change' | 'cancel' | 'resume',
     args?: { storageGb?: number; confirm?: string },
-  ): Promise<{ cancelAt?: string | null }>;
+  ): Promise<{ cancelAt?: string | null; url?: string }>;
   /** Team news feed: coaches post and attach files; anyone who can open the season reads and comments. */
   listSeasonPosts(seasonId: string): Promise<import('./types').SeasonPost[]>;
   addSeasonPost(seasonId: string, input: { title: string; body: string }): Promise<import('./types').SeasonPost>;

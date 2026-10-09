@@ -104,15 +104,22 @@ function StorageContent() {
       title: `Switch to ${plan.label}?`,
       message:
         gb > info.gb
-          ? `You will be charged the difference for the rest of your year. After that it is ${formatPlanPrice(plan)}.`
+          ? `You will confirm the price and pay the difference for the rest of your year on the next page. After that it is ${formatPlanPrice(plan)}.`
           : `${plan.label} is ${formatPlanPrice(plan)} from your next renewal. There is no refund for the current year.`,
-      confirmLabel: 'Switch',
+      confirmLabel: gb > info.gb ? 'Continue to payment' : 'Switch',
     });
     if (!ok) return;
     manage.mutate(
       { action: 'change', storageGb: gb },
       {
-        onSuccess: () => toast(`Switched to ${plan.label}`, 'success'),
+        onSuccess: (res) => {
+          // A larger size is paid for on Stripe's page; the size changes once it confirms.
+          if (res?.url) {
+            window.location.href = res.url;
+            return;
+          }
+          toast(`Switched to ${plan.label}`, 'success');
+        },
         onError: (e) => alert('Could not change the size', e instanceof Error ? e.message : 'Try again.'),
       },
     );
