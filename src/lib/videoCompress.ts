@@ -11,7 +11,12 @@ import type { FFmpeg } from '@ffmpeg/ffmpeg';
  */
 
 const CORE_VERSION = '0.12.10';
-const CORE_BASE = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${CORE_VERSION}/dist/umd`;
+/** Tried in order. A CDN that stalls (it happens) is abandoned after FETCH_TIMEOUT_MS and the next one is used. */
+const CORE_BASES = [
+  `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/umd`,
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${CORE_VERSION}/dist/umd`,
+];
+const FETCH_TIMEOUT_MS = 60_000;
 
 /** ffmpeg.wasm holds the whole file in memory (32-bit address space), so very large sources cannot be handled. */
 export const MAX_SOURCE_BYTES = 1024 * 1024 * 1024;
@@ -25,17 +30,37 @@ export class VideoCompressError extends Error {
 
 let loading: Promise<FFmpeg> | null = null;
 
+/** Downloads a file into a blob: URL, giving up if it takes longer than FETCH_TIMEOUT_MS overall. */
+async function fetchAsBlobUrl(url: string, mime: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(new Blob([blob], { type: mime }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getFfmpeg(): Promise<FFmpeg> {
   if (!loading) {
     loading = (async () => {
       const { FFmpeg } = await import('@ffmpeg/ffmpeg');
-      const { toBlobURL } = await import('@ffmpeg/util');
-      const ffmpeg = new FFmpeg();
-      await ffmpeg.load({
-        coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm'),
-      });
-      return ffmpeg;
+      let lastError: unknown;
+      for (const base of CORE_BASES) {
+        try {
+          const coreURL = await fetchAsBlobUrl(`${base}/ffmpeg-core.js`, 'text/javascript');
+          const wasmURL = await fetchAsBlobUrl(`${base}/ffmpeg-core.wasm`, 'application/wasm');
+          const ffmpeg = new FFmpeg();
+          await ffmpeg.load({ coreURL, wasmURL });
+          return ffmpeg;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError ?? new Error('no source reachable');
     })().catch((err) => {
       loading = null; // let the next attempt retry the download
       throw new VideoCompressError(

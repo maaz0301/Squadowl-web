@@ -78,7 +78,7 @@ export function ContextVideos({ context, contextId, accountId: accountIdProp, ti
       const uploaded = await getDataSource().uploadAccountVideo({
         file: compressed,
         context,
-        title: file.name,
+        title: file.name.replace(/\.[^.]+$/, ''),
         accountId,
         durationSeconds,
         onProgress: (fraction) => setProgress({ phase: 'uploading', fraction }),
@@ -158,7 +158,7 @@ export function ContextVideos({ context, contextId, accountId: accountIdProp, ti
       {busy && progress ? (
         <div className="flex flex-col gap-1">
           <p className="text-sm font-bold" style={{ color: colors.ink }}>
-            {VIDEO_PHASE_LABEL[progress.phase]}... {Math.round(progress.fraction * 100)}%
+            {progress.phase === 'compressing' && progress.fraction === 0 ? 'Preparing the compressor... (first time only)' : `${VIDEO_PHASE_LABEL[progress.phase]}... ${Math.round(progress.fraction * 100)}%`}
           </p>
           <div className="h-2 overflow-hidden rounded-full" style={{ backgroundColor: colors.border }}>
             <div className="h-full rounded-full" style={{ width: `${Math.round(progress.fraction * 100)}%`, backgroundColor: colors.primary }} />
