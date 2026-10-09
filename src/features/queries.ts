@@ -3157,6 +3157,98 @@ export function useDeleteLibraryItemMutation() {
   });
 }
 
+// ---- Video storage add-on ----
+
+export const videoStorageKey = (accountId?: string) => ['video-storage', accountId ?? 'own'] as const;
+export const accountVideosKey = (accountId?: string) => ['account-videos', accountId ?? 'own'] as const;
+export const videosForContextKey = (context: string, ids: string[]) => ['videos-for-context', context, ...ids] as const;
+
+/** Meter numbers, plan state and who may upload. `accountId` defaults to the signed-in user's own account. */
+export function useVideoStorageQuery(accountId?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: videoStorageKey(accountId),
+    queryFn: () => getDataSource().getVideoStorage(accountId),
+    enabled: options?.enabled !== false,
+    staleTime: 30_000,
+  });
+}
+
+export function useAccountVideosQuery(accountId?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: accountVideosKey(accountId),
+    queryFn: () => getDataSource().listAccountVideos(accountId),
+    enabled: options?.enabled !== false,
+  });
+}
+
+export function useVideosForContextQuery(
+  context: import('@/data/videoStorage').VideoContext,
+  contextIds: string[],
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: videosForContextKey(context, contextIds),
+    queryFn: () => getDataSource().listVideosForContext(context, contextIds),
+    enabled: options?.enabled !== false && contextIds.length > 0,
+    // Playback addresses are signed for an hour.
+    staleTime: 20 * 60_000,
+  });
+}
+
+/** The account that owns the storage for something videos attach to (a manager works in the club's account, not their own). */
+export function useVideoContextAccountQuery(
+  context: import('@/data/videoStorage').VideoContext,
+  contextId: string | undefined,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['video-context-account', context, contextId ?? ''] as const,
+    queryFn: () => getDataSource().getVideoContextAccount(context, contextId!),
+    enabled: options?.enabled !== false && !!contextId,
+    staleTime: 10 * 60_000,
+  });
+}
+
+/** Everything a stored video touches: the meter, the Storage list, the lists it is attached to, the Library. */
+export function useInvalidateVideoStorage() {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: ['video-storage'] });
+    qc.invalidateQueries({ queryKey: ['account-videos'] });
+    qc.invalidateQueries({ queryKey: ['videos-for-context'] });
+    qc.invalidateQueries({ queryKey: libraryKey });
+  };
+}
+
+export function useDeleteAccountVideoMutation() {
+  const invalidate = useInvalidateVideoStorage();
+  return useMutation({
+    mutationFn: (videoId: string) => getDataSource().deleteAccountVideo(videoId),
+    onSuccess: invalidate,
+  });
+}
+
+export function useSetVideoPermissionsMutation() {
+  const invalidate = useInvalidateVideoStorage();
+  return useMutation({
+    mutationFn: (args: { accountId: string; managersCanUpload?: boolean; viewersCanDownload?: boolean }) =>
+      getDataSource().setVideoPermissions(args.accountId, {
+        managersCanUpload: args.managersCanUpload,
+        viewersCanDownload: args.viewersCanDownload,
+      }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useManageVideoStorageMutation() {
+  const invalidate = useInvalidateVideoStorage();
+  return useMutation({
+    mutationFn: (args: { action: 'change' | 'cancel' | 'resume'; storageGb?: number; confirm?: string }) =>
+      getDataSource().manageVideoStorage(args.action, { storageGb: args.storageGb, confirm: args.confirm }),
+    onSuccess: invalidate,
+  });
+}
+
 // ---- Team feed & organization info ----
 
 const seasonPostsKey = (seasonId: string) => ['season-posts', seasonId] as const;

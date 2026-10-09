@@ -5,6 +5,7 @@ import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@s
 import type { DataSource } from '../datasource';
 import type { SearchPlayer } from '../search';
 import { PLAN_TIERS } from '../types';
+import { friendlyVideoError } from '../videoStorage';
 import { bulkImportPlayers, IMPORT_CREATE_CHUNK } from '../bulkTeamImport';
 import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
 import { deriveAccountAccess, isExpiredTrial } from '@/lib/accountAccess';
@@ -508,6 +509,7 @@ const EVENT_FILES_BUCKET = 'event-files';
 const FEED_FILES_BUCKET = 'feed-files';
 const ORG_INFO_FILES_BUCKET = 'org-info-files';
 const LIBRARY_FILES_BUCKET = 'library-files';
+const ACCOUNT_VIDEOS_BUCKET = 'account-videos';
 const REPORT_CARD_FILES_BUCKET = 'report-card-files';
 
 /** Long enough to open an attachment and look at it; short enough that a copied link goes stale. */
@@ -9339,7 +9341,15 @@ export class SupabaseDataSource implements DataSource {
       const { data: signed } = await supabase.storage.from(LIBRARY_FILES_BUCKET).createSignedUrls(paths, 3600);
       for (const s of signed ?? []) if (s.path && s.signedUrl) urls.set(s.path, s.signedUrl);
     }
-    return rows.map((r) => this.rowToLibraryItem(r, r.file_path ? urls.get(r.file_path) : undefined));
+    const items = rows.map((r) => this.rowToLibraryItem(r, r.file_path ? urls.get(r.file_path) : undefined));
+    // Videos stored through the add-on live in account_videos, attached by item id.
+    const videoItemIds = rows.filter((r) => r.kind === 'video').map((r) => r.id as string);
+    if (videoItemIds.length) {
+      const videos = await this.listVideosForContext('library', videoItemIds);
+      const byItem = new Map(videos.map((v) => [v.contextId, v]));
+      for (const item of items) item.video = byItem.get(item.id);
+    }
+    return items;
   }
 
   async createLibraryItem(
@@ -9351,7 +9361,7 @@ export class SupabaseDataSource implements DataSource {
     const title = input.title.trim();
     if (!title) throw new Error('Give the item a title.');
     if (input.kind === 'note' && !input.body.trim()) throw new Error('A note needs some text.');
-    if ((input.kind === 'link' || (input.kind === 'video' && !file)) && !input.url?.trim()) {
+    if ((input.kind === 'link' || (input.kind === 'video' && !file && !input.uploadedVideo)) && !input.url?.trim()) {
       throw new Error(input.kind === 'video' ? 'Add a video link or upload a video.' : 'Add the link.');
     }
     if (input.kind === 'file' && !file) throw new Error('Choose a file to upload.');
@@ -9429,6 +9439,248 @@ export class SupabaseDataSource implements DataSource {
     if (res.error) throw new Error(res.error.message);
     if (!res.data?.length) throw new Error('Only an owner or admin can change the library.');
     if (item.filePath) await supabase.storage.from(LIBRARY_FILES_BUCKET).remove([item.filePath]);
+  }
+
+  // ─── Video storage add-on ───────────────────────────────────────────────────
+  private rowToAccountVideo(r: Row, url?: string): import('../videoStorage').AccountVideo {
+    return {
+      id: r.id as string,
+      accountId: r.account_id as string,
+      storagePath: r.storage_path as string,
+      fileName: r.file_name as string,
+      title: (r.title as string) ?? '',
+      sizeBytes: Number(r.size_bytes ?? 0),
+      durationSeconds: r.duration_seconds != null ? Number(r.duration_seconds) : undefined,
+      context: r.context as import('../videoStorage').VideoContext,
+      contextId: (r.context_id as string | null) ?? undefined,
+      status: r.status as 'pending' | 'ready',
+      createdBy: r.created_by as string,
+      createdAt: toMs(r.created_at as string),
+      viewersCanDownload: !!r.viewers_can_download,
+      url,
+    };
+  }
+
+  async getVideoStorage(accountId?: string): Promise<import('../videoStorage').VideoStorageInfo> {
+    const { supabase, accountId: own } = await this.ctx();
+    const { data, error } = await supabase.rpc('get_video_storage', { p_account_id: accountId ?? own });
+    if (error) throw new Error(friendlyVideoError(error.message));
+    const d = data as Row;
+    return {
+      accountId: d.accountId as string,
+      planTier: d.planTier as string,
+      planEligible: !!d.planEligible,
+      gb: Number(d.gb ?? 0),
+      entitled: !!d.entitled,
+      source: (d.source as 'stripe' | 'apple' | 'google' | null) ?? null,
+      quotaBytes: Number(d.quotaBytes ?? 0),
+      usedBytes: Number(d.usedBytes ?? 0),
+      videoCount: Number(d.videoCount ?? 0),
+      canUpload: !!d.canUpload,
+      canManage: !!d.canManage,
+      managersCanUpload: !!d.managersCanUpload,
+      viewersCanDownload: !!d.viewersCanDownload,
+      cancelAt: d.cancelAt ? toMs(d.cancelAt as string) : null,
+      endedAt: d.endedAt ? toMs(d.endedAt as string) : null,
+      deletionAt: d.deletionAt ? toMs(d.deletionAt as string) : null,
+    };
+  }
+
+  async listAccountVideos(accountId?: string): Promise<import('../videoStorage').AccountVideo[]> {
+    const { supabase, accountId: own } = await this.ctx();
+    const rows = unwrap(
+      await supabase
+        .from('account_videos')
+        .select('*')
+        .eq('account_id', accountId ?? own)
+        .eq('status', 'ready')
+        .is('purge_after', null)
+        .order('created_at', { ascending: false }),
+    ) as Row[];
+    return rows.map((r) => this.rowToAccountVideo(r));
+  }
+
+  async listVideosForContext(
+    context: import('../videoStorage').VideoContext,
+    contextIds: string[],
+  ): Promise<import('../videoStorage').AccountVideo[]> {
+    if (!contextIds.length) return [];
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase
+        .from('account_videos')
+        .select('*')
+        .eq('context', context)
+        .in('context_id', contextIds)
+        .eq('status', 'ready')
+        .is('purge_after', null)
+        .order('created_at', { ascending: true }),
+    ) as Row[];
+    if (!rows.length) return [];
+    const { data: signed } = await supabase.storage
+      .from(ACCOUNT_VIDEOS_BUCKET)
+      .createSignedUrls(rows.map((r) => r.storage_path as string), 3600);
+    const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
+    return rows.map((r) => this.rowToAccountVideo(r, urls.get(r.storage_path as string) ?? undefined));
+  }
+
+  async uploadAccountVideo(args: {
+    file: File;
+    context: import('../videoStorage').VideoContext;
+    title?: string;
+    accountId?: string;
+    durationSeconds?: number;
+    onProgress?: (fraction: number) => void;
+  }): Promise<import('../videoStorage').AccountVideo> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    const accountId = args.accountId ?? (await this.ctx()).accountId;
+    const { file } = args;
+    if (file.type !== 'video/mp4') throw new Error('Videos are stored as MP4. Compress the video first.');
+
+    const reserved = await supabase.rpc('reserve_account_video', {
+      p_account_id: accountId,
+      p_file_name: file.name,
+      p_size_bytes: file.size,
+      p_content_type: file.type,
+      p_context: args.context,
+      p_title: args.title ?? '',
+      p_duration_seconds: args.durationSeconds != null ? Math.round(args.durationSeconds) : null,
+    });
+    if (reserved.error) throw new Error(friendlyVideoError(reserved.error.message));
+    const reservedRow = reserved.data as Row;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+      const base = APP_CONFIG.supabaseUrl.replace(/\/+$/, '');
+      const encodedPath = (reservedRow.storage_path as string).split('/').map(encodeURIComponent).join('/');
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${base}/storage/v1/object/${ACCOUNT_VIDEOS_BUCKET}/${encodedPath}`);
+        xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+        xhr.setRequestHeader('apikey', APP_CONFIG.supabaseAnonKey);
+        xhr.setRequestHeader('Content-Type', 'video/mp4');
+        xhr.setRequestHeader('Cache-Control', 'max-age=3600');
+        xhr.setRequestHeader('x-upsert', 'false');
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) args.onProgress?.(e.loaded / e.total);
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) return resolve();
+          let detail = '';
+          try { detail = JSON.parse(xhr.responseText)?.message ?? ''; } catch { }
+          reject(new Error(detail || `Upload failed (${xhr.status}).`));
+        };
+        xhr.onerror = () => reject(new Error(NETWORK_ERROR_MESSAGE));
+        xhr.send(file);
+      });
+
+      const confirmed = await supabase.rpc('confirm_account_video', { p_video_id: reservedRow.id });
+      if (confirmed.error) throw new Error(friendlyVideoError(confirmed.error.message));
+      return this.rowToAccountVideo(confirmed.data as Row);
+    } catch (err) {
+      // Give the reserved space back and let the maintenance function remove any partial object.
+      await supabase.rpc('delete_account_video', { p_video_id: reservedRow.id });
+      throw err;
+    }
+  }
+
+  async attachAccountVideo(
+    videoId: string,
+    context: import('../videoStorage').VideoContext,
+    contextId: string,
+  ): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    const { error } = await supabase.rpc('attach_account_video', {
+      p_video_id: videoId,
+      p_context: context,
+      p_context_id: contextId,
+    });
+    if (error) throw new Error(friendlyVideoError(error.message));
+  }
+
+  async deleteAccountVideo(videoId: string): Promise<void> {
+    assertNotViewingAs();
+    const { supabase } = await this.userCtx();
+    const { error } = await supabase.rpc('delete_account_video', { p_video_id: videoId });
+    if (error) throw new Error(friendlyVideoError(error.message));
+  }
+
+  async getAccountVideoUrl(storagePath: string): Promise<string> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase.storage.from(ACCOUNT_VIDEOS_BUCKET).createSignedUrl(storagePath, 3600);
+    if (error || !data?.signedUrl) throw new Error('Could not open that video.');
+    return data.signedUrl;
+  }
+
+  async setVideoPermissions(
+    accountId: string,
+    perms: { managersCanUpload?: boolean; viewersCanDownload?: boolean },
+  ): Promise<void> {
+    const { supabase } = await this.userCtx();
+    const { error } = await supabase.rpc('set_video_permissions', {
+      p_account_id: accountId,
+      p_managers_can_upload: perms.managersCanUpload ?? null,
+      p_viewers_can_download: perms.viewersCanDownload ?? null,
+    });
+    if (error) throw new Error(friendlyVideoError(error.message));
+  }
+
+  async getVideoContextAccount(
+    context: import('../videoStorage').VideoContext,
+    contextId: string,
+  ): Promise<string | null> {
+    const { supabase } = await this.userCtx();
+    const { data, error } = await supabase.rpc('video_context_account', { p_context: context, p_context_id: contextId });
+    if (error) throw new Error(friendlyVideoError(error.message));
+    return (data as string | null) ?? null;
+  }
+
+  async acknowledgeVideoDeletion(accountId: string): Promise<void> {
+    const { supabase } = await this.userCtx();
+    const { error } = await supabase.rpc('acknowledge_video_deletion', { p_account_id: accountId });
+    if (error) throw new Error(friendlyVideoError(error.message));
+  }
+
+  async createVideoStorageCheckoutSession(gb: number, options?: { applyCredits?: boolean }): Promise<{ url: string }> {
+    assertNotViewingAs();
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+      body: { addOn: 'video_storage', storageGb: gb, interval: 'year', origin: webOrigin(), applyCredits: options?.applyCredits === true },
+    });
+    if (error) {
+      let detail = '';
+      try {
+        const body = await error.context?.json();
+        if (body?.error) detail = body.error;
+      } catch { }
+      throw new Error(detail || error.message || 'Failed to create checkout session');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+
+  async manageVideoStorage(
+    action: 'change' | 'cancel' | 'resume',
+    args?: { storageGb?: number; confirm?: string },
+  ): Promise<{ cancelAt?: string | null }> {
+    assertNotViewingAs();
+    const { supabase } = await this.ctx();
+    const { data, error } = await supabase.functions.invoke('manage-video-storage', {
+      body: { action, storageGb: args?.storageGb, confirm: args?.confirm },
+    });
+    if (error) {
+      let detail = '';
+      try {
+        const body = await error.context?.json();
+        if (body?.error) detail = body.error;
+      } catch { }
+      throw new Error(detail || error.message || 'Could not update video storage');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data ?? {};
   }
 
   // ─── Team feed & organization info ───────────────────────────────────────────

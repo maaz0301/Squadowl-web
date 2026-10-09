@@ -1,5 +1,7 @@
 'use client';
 
+import { ContextVideos } from '@/components/video/ContextVideos';
+
 import { useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 
@@ -142,6 +144,11 @@ export default function PlayerReportCardPage() {
 
   const addFiles = async (list: FileList | null) => {
     const picked = Array.from(list ?? []);
+    // Videos go through account video storage (compressed and counted against the quota).
+    if (picked.some((f) => f.type.startsWith('video/'))) {
+      await alert('Add videos below', 'Save the report card, then use Add video under Stored videos. Videos are compressed and kept in your video storage.');
+      return;
+    }
     const tooBig = picked.find((f) => f.size > MAX_UPLOAD_BYTES);
     if (tooBig) {
       await alert('File too large', `${tooBig.name} is over 50 MB. For a longer video, add a link instead.`);
@@ -429,9 +436,9 @@ export default function PlayerReportCardPage() {
           }}
         />
         <div>
-          <Button label="Upload a file or video" variant="secondary" onClick={() => fileInput.current?.click()} />
+          <Button label="Upload a file" variant="secondary" onClick={() => fileInput.current?.click()} />
           <p className="mt-1 text-xs" style={{ color: colors.inkMuted }}>
-            Up to 50 MB each. For longer videos, add a link below.
+            Files up to 50 MB each. Videos are added under Stored videos once the card is saved, or add a link below.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -452,6 +459,21 @@ export default function PlayerReportCardPage() {
           </label>
           <Button label="Add link" variant="secondary" size="sm" onClick={addLink} disabled={!linkUrl.trim()} />
         </div>
+      </Card>
+
+      <Card className="flex flex-col gap-3">
+        {editingId ? (
+          <ContextVideos
+            context="report_card"
+            contextId={editingId}
+            accountId={savedCards.find((c) => c.id === editingId)?.accountId}
+            title="Stored videos"
+          />
+        ) : (
+          <p className="text-sm" style={{ color: colors.inkMuted }}>
+            Save the report card first, then you can add videos from your video storage.
+          </p>
+        )}
       </Card>
 
       <div className="flex flex-wrap gap-3 pb-6">

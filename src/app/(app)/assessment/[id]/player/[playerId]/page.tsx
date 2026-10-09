@@ -1,5 +1,7 @@
 'use client';
 
+import { ContextVideos } from '@/components/video/ContextVideos';
+
 import { useTerms } from '@/lib/terms';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -734,6 +736,8 @@ export default function PlayerHubPage() {
                           → {ev.improve}
                         </span>
                       ) : null}
+                      {/* A video clip for this score row, from the account's video storage. */}
+                      <ContextVideos context="evaluation" contextId={ev.id} title="Video clips" />
                       <div>
                         <Button
                           label="Edit Score"

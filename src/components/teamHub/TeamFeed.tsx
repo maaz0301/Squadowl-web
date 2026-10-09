@@ -2,6 +2,8 @@
 
 import { useRef, useState } from 'react';
 
+import { ContextVideos } from '@/components/video/ContextVideos';
+
 import { Badge, Button, Chip, Input, Modal, ModalFooter, Textarea, useAlert } from '@/components/ui';
 import {
   FeedUploadError,
@@ -285,6 +287,10 @@ function PostCard({
           ))}
         </div>
       ) : null}
+      {/* Coach videos posted to the team feed, from the account's video storage. */}
+      <div className="mt-2">
+        <ContextVideos context="team_post" contextId={post.id} readOnly={!canPost} title="Videos" />
+      </div>
       <PostComments seasonId={seasonId} post={post} canModerate={canPost} currentUserId={currentUserId} />
     </div>
   );

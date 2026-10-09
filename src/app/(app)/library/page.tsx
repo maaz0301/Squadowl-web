@@ -23,9 +23,21 @@ import { Icon, type IconName } from '@/components/Icons';
 import {
   useCreateLibraryItemMutation,
   useDeleteLibraryItemMutation,
+  useInvalidateVideoStorage,
   useLibraryQuery,
   useUpdateLibraryItemMutation,
+  useVideoStorageQuery,
 } from '@/features/queries';
+import Link from 'next/link';
+import { getDataSource } from '@/data';
+import { StorageMeterCard } from '@/components/video/StorageMeter';
+import { compressVideo, readVideoDuration, VideoCompressError } from '@/lib/videoCompress';
+import {
+  VIDEO_PHASE_LABEL,
+  formatBytes,
+  friendlyVideoError,
+  type VideoUploadProgress,
+} from '@/data/videoStorage';
 import {
   DEFAULT_LIBRARY_AUDIENCE,
   LIBRARY_AUDIENCES,
@@ -49,6 +61,8 @@ interface FormState {
   url: string;
   audience: LibraryAudienceFlags;
   file: File | null;
+  /** A video chosen from the computer, compressed and uploaded to account storage on save. */
+  video: File | null;
 }
 
 const emptyForm = (): FormState => ({
@@ -58,6 +72,7 @@ const emptyForm = (): FormState => ({
   url: '',
   audience: { ...DEFAULT_LIBRARY_AUDIENCE },
   file: null,
+  video: null,
 });
 
 export default function LibraryPage() {
@@ -75,6 +90,11 @@ export default function LibraryPage() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [viewing, setViewing] = useState<LibraryItem | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const videoInput = useRef<HTMLInputElement>(null);
+  const storage = useVideoStorageQuery();
+  const videoInfo = storage.data;
+  const invalidateVideos = useInvalidateVideoStorage();
+  const [uploadProgress, setUploadProgress] = useState<VideoUploadProgress | null>(null);
 
   const items = useMemo(() => libraryQuery.data ?? [], [libraryQuery.data]);
   const shown = useMemo(() => {
@@ -108,12 +128,57 @@ export default function LibraryPage() {
       url: item.url ?? '',
       audience: { ...item.audience },
       file: null,
+      video: null,
     });
     setEditing(item);
   };
   const closeForm = () => setEditing(null);
 
+  /** Compress and upload the chosen video, create the item, then attach the video to it. */
+  const saveWithVideo = async () => {
+    if (!form.video) return;
+    if (!form.title.trim()) {
+      await alert('Could not save', 'Give the item a title.');
+      return;
+    }
+    let videoId: string | null = null;
+    try {
+      setUploadProgress({ phase: 'compressing', fraction: 0 });
+      const durationSeconds = await readVideoDuration(form.video);
+      const compressed = await compressVideo(form.video, (fraction) => setUploadProgress({ phase: 'compressing', fraction }));
+      setUploadProgress({ phase: 'uploading', fraction: 0 });
+      const uploaded = await getDataSource().uploadAccountVideo({
+        file: compressed,
+        context: 'library',
+        title: form.title.trim(),
+        durationSeconds,
+        onProgress: (fraction) => setUploadProgress({ phase: 'uploading', fraction }),
+      });
+      videoId = uploaded.id;
+      const item = await createItem.mutateAsync({
+        input: { kind: 'video', title: form.title, body: form.body, url: form.url, audience: form.audience, uploadedVideo: true },
+      });
+      await getDataSource().attachAccountVideo(uploaded.id, 'library', item.id);
+      invalidateVideos();
+      toast('Added to the library', 'success');
+      closeForm();
+    } catch (e) {
+      // Nothing may be left holding quota that no item shows.
+      if (videoId) await getDataSource().deleteAccountVideo(videoId).catch(() => undefined);
+      await alert(
+        'Could not save',
+        e instanceof VideoCompressError ? e.message : friendlyVideoError(e instanceof Error ? e.message : undefined),
+      );
+    } finally {
+      setUploadProgress(null);
+    }
+  };
+
   const save = async () => {
+    if (editing === 'new' && form.kind === 'video' && form.video) {
+      await saveWithVideo();
+      return;
+    }
     try {
       if (editing === 'new') {
         if (form.file && form.file.size > MAX_UPLOAD_BYTES) {
@@ -158,10 +223,13 @@ export default function LibraryPage() {
   // or a link, each with its description and a way to open or download it.
   const open = (item: LibraryItem) => setViewing(item);
 
-  const saving = createItem.isPending || updateItem.isPending;
+  const saving = createItem.isPending || updateItem.isPending || uploadProgress !== null;
   const isNew = editing === 'new';
   const showUrl = form.kind === 'link' || form.kind === 'video';
-  const showFile = isNew && (form.kind === 'file' || form.kind === 'video');
+  // Uploaded videos go through account storage (compressed, counted against the quota),
+  // so the plain file picker is for documents only.
+  const showFile = isNew && form.kind === 'file';
+  const showVideoUpload = isNew && form.kind === 'video';
   const multipleClubs = new Set(items.map((i) => i.accountId)).size > 1;
 
   return (
@@ -182,6 +250,7 @@ export default function LibraryPage() {
           : 'Files, notes, videos and links shared with you.'}
       </p>
 
+      <StorageMeterCard />
       <Input
         label="Search the library"
         value={search}
@@ -332,6 +401,63 @@ export default function LibraryPage() {
             </div>
           ) : null}
 
+          {showVideoUpload ? (
+            <div className="flex flex-col gap-1">
+              {videoInfo?.canUpload ? (
+                <>
+                  <input
+                    ref={videoInput}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => setForm((f) => ({ ...f, video: e.target.files?.[0] ?? null }))}
+                  />
+                  <div>
+                    <Button
+                      label={form.video ? 'Choose a different video' : 'Or upload a video'}
+                      variant="secondary"
+                      onClick={() => videoInput.current?.click()}
+                      disabled={uploadProgress !== null}
+                    />
+                  </div>
+                  {form.video ? (
+                    <p className="text-xs" style={{ color: colors.inkMuted }}>
+                      {form.video.name} ({formatBytes(form.video.size)} before compression)
+                    </p>
+                  ) : null}
+                  {uploadProgress ? (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-sm font-bold" style={{ color: colors.ink }}>
+                        {VIDEO_PHASE_LABEL[uploadProgress.phase]}... {Math.round(uploadProgress.fraction * 100)}%
+                      </p>
+                      <div className="h-2 overflow-hidden rounded-full" style={{ backgroundColor: colors.border }}>
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${Math.round(uploadProgress.fraction * 100)}%`, backgroundColor: colors.primary }}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                  <p className="text-xs" style={{ color: colors.inkMuted }}>
+                    Compressed to 720p before it uploads, and counted against your video storage.
+                  </p>
+                </>
+              ) : videoInfo?.canManage && videoInfo.planEligible ? (
+                <Link
+                  href="/storage"
+                  className="inline-block rounded-lg border px-3 py-2 text-center text-sm font-semibold"
+                  style={{ borderColor: colors.primary, color: colors.primary }}
+                >
+                  Add video storage to upload a video
+                </Link>
+              ) : (
+                <p className="text-xs" style={{ color: colors.inkMuted }}>
+                  Uploading videos needs video storage on a Coach+ or Club plan. You can still paste a link.
+                </p>
+              )}
+            </div>
+          ) : null}
+
           <div className="rounded-xl border p-3" style={{ borderColor: colors.border }}>
             <p className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
               Who can view this
@@ -375,6 +501,18 @@ function Viewer({ item }: { item: LibraryItem }) {
   const linkClass = 'inline-block rounded-lg px-3 py-2 text-sm font-semibold';
   return (
     <div className="flex flex-col gap-3">
+      {item.video?.url ? (
+        <video
+          src={item.video.url}
+          controls
+          playsInline
+          className="max-h-[60vh] w-full rounded-lg bg-black"
+          // View only unless the coach has allowed downloads for viewers.
+          controlsList={item.video.viewersCanDownload ? undefined : 'nodownload'}
+          disablePictureInPicture={!item.video.viewersCanDownload}
+          onContextMenu={item.video.viewersCanDownload ? undefined : (e) => e.preventDefault()}
+        />
+      ) : null}
       {isUploadedVideo(item) && item.fileUrl ? (
         <video src={item.fileUrl} controls className="max-h-[60vh] w-full rounded-lg bg-black" />
       ) : embed ? (

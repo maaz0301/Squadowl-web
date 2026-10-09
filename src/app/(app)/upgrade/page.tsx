@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { isVideoStorageTier } from '@/data/videoStorage';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, Input, Modal, ModalFooter, PageHeader, Switch, useAlert } from '@/components/ui';
 import {
@@ -30,6 +32,7 @@ import {
   usePlatformBlockedPlanTiersQuery,
   useReferralSummaryQuery,
   useTeamCountQuery,
+  useVideoStorageQuery,
 } from '@/features/queries';
 
 function formatPlanDate(date: Date): string {
@@ -55,6 +58,10 @@ export default function UpgradePage() {
     resolve: (value: boolean) => void;
   } | null>(null);
   const [extraTeams, setExtraTeams] = useState(1);
+  // Videos are deleted when the plan ends or drops below Coach+, so anything that
+  // could do that goes through the video deletion warning first.
+  const router = useRouter();
+  const hasStoredVideos = (useVideoStorageQuery().data?.videoCount ?? 0) > 0;
   const [buyingTeams, setBuyingTeams] = useState(false);
   // Monthly billing is temporarily hidden — every checkout goes through yearly for now,
   // matching the mobile app.
@@ -217,6 +224,12 @@ export default function UpgradePage() {
         return;
       }
       await startCheckout(tier);
+      return;
+    }
+
+    // Videos are deleted when the plan drops below Coach+, so show the video deletion warning first.
+    if (hasStoredVideos && !isVideoStorageTier(tier)) {
+      router.push('/storage/cancel?reason=plan');
       return;
     }
 
@@ -415,7 +428,7 @@ export default function UpgradePage() {
           <Button
             label="Manage Billing & Invoices"
             variant="secondary"
-            onClick={openPortal}
+            onClick={hasStoredVideos ? () => router.push('/storage/cancel?reason=plan') : openPortal}
             loading={loadingPortal}
           />
         </Card>

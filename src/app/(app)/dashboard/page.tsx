@@ -20,6 +20,7 @@ import {
 } from '@/components/ui';
 import { Icon } from '@/components/Icons';
 import { HomeIntro } from '@/components/home/HomeIntro';
+import { StorageMeterCard } from '@/components/video/StorageMeter';
 import { HomeEmptyCard } from '@/components/home/HomeEmptyCard';
 import { HomePanel } from '@/components/home/HomePanel';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
@@ -277,6 +278,9 @@ export default function DashboardPage() {
         active="evaluations"
         onEvaluations={() => evaluationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
       />
+
+      {/* Video storage: how full the account's shared quota is. Links to Storage. */}
+      <StorageMeterCard className="mb-6 block" />
 
       {/* Assigned to me */}
       {assignedQuery.data && assignedQuery.data.length > 0 ? (
