@@ -11,6 +11,8 @@ import { Avatar, Button, FormLock, Input, Modal, PhoneField, Select, Spinner, Te
 import { useAthletesQuery, useFamilyContactsQuery, useRemoveFamilyContactMutation } from '@/features/queries';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { POSITION_OPTIONS_BY_SPORT } from '@/data/positions';
+import { sportProfile } from '@/data/sportProfile';
+import { duplicatePrompt, findPossibleDuplicates, type DuplicateCandidate } from '@/data/duplicates';
 
 /** A family member the coach adds alongside the primary guardian, invited once the player is saved. */
 export interface ExtraFamilyContact {
@@ -22,6 +24,8 @@ export interface ExtraFamilyContact {
 
 interface Props {
   loading?: boolean;
+  /** Who is already on the roster being added to. When set, saving a likely duplicate asks first. Leave unset when editing. */
+  existingPlayers?: (DuplicateCandidate & { jersey?: string | null })[];
   defaultValues?: Partial<AddPlayerFormType>;
   /** Drives the position picker's options — Hockey positions for a Hockey evaluation, and so on. */
   sport?: Sport;
@@ -121,8 +125,9 @@ export function AddPlayerForm({
   submitLabel,
   showFamilyContacts = true,
   labels,
+  existingPlayers,
 }: Props) {
-  const terms = useTerms(labels);
+  const terms = useTerms(labels, sport);
   const colors = useThemeColors();
   const { alert, confirm } = useAlert();
   const athletesQuery = useAthletesQuery();
@@ -238,12 +243,23 @@ export function AddPlayerForm({
     if (emailError) {
       const message = emailError.message || 'Please enter a valid email address';
       await alert(message.includes('required') ? 'Email Required' : 'Invalid Email', message);
+    } else if (errors.yearOfBirth ?? errors.dateOfBirth) {
+      await alert('Check the date of birth', (errors.yearOfBirth ?? errors.dateOfBirth)?.message || 'Enter a valid date of birth.');
     } else {
       await alert('Validation Error', 'Please check the highlighted fields before saving.');
     }
   };
 
   const submit = handleSubmit(async (data) => {
+    const matches = existingPlayers ? findPossibleDuplicates(data, existingPlayers) : [];
+    if (matches.length > 0) {
+      const ok = await confirm({
+        title: 'Possible duplicate',
+        message: duplicatePrompt(matches, `${data.first} ${data.last}`.trim()),
+        confirmLabel: 'Add anyway',
+      });
+      if (!ok) return;
+    }
     // Marked nothing: say nothing, and let the caller mail whoever it would
     // have. Marked something: those addresses and no others.
     const marked = (['playerEmail', 'guardianEmail'] as const)
@@ -368,6 +384,7 @@ export function AddPlayerForm({
               <Input label={terms.jersey} inputMode="numeric" {...field} error={fieldState.error?.message} />
             )}
           />
+          {sportProfile(sport).positions ? (
           <Controller
             control={control}
             name="pos"
@@ -414,6 +431,7 @@ export function AddPlayerForm({
               )
             }
           />
+          ) : null}
           <Controller
             control={control}
             name="yearOfBirth"

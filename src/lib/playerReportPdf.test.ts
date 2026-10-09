@@ -59,4 +59,17 @@ describe('renderPlayerReportPdf', () => {
     const doc = await PDFDocument.load(Buffer.from(base64, 'base64'));
     expect(doc.getPageCount()).toBe(1);
   });
+
+  it('prints the benchmarks with their notes, and adds nothing when there are none', async () => {
+    const lines = [
+      { key: 'vj', label: 'Vertical Jump', target: '30 in', note: 'What a top-team player reaches. '.repeat(6), result: '27 in', met: false },
+      { key: 'sk', label: 'Skating', target: '4/5', note: '', result: '', met: null },
+    ];
+    const bare = { ...input, card: { ...card, evals: [] }, coachComments: '', aiComments: '', attachments: [] };
+    const withLines = await PDFDocument.load(Buffer.from(await renderPlayerReportPdf({ ...bare, benchmarks: lines }), 'base64'));
+    const without = await PDFDocument.load(Buffer.from(await renderPlayerReportPdf({ ...bare, benchmarks: [] }), 'base64'));
+    expect(withLines.getPageCount()).toBe(1);
+    expect(without.getPageCount()).toBe(1);
+    expect(Buffer.from(await withLines.save()).length).toBeGreaterThan(Buffer.from(await without.save()).length);
+  });
 });

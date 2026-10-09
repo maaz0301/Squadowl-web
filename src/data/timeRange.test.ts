@@ -18,7 +18,7 @@ describe('isEndAfterStart', () => {
 });
 
 describe('form schemas', () => {
-  const event = (o: object) => CreateEventFormSchema.safeParse({ type: 'Event', title: 'x', date: '2026-09-25', ...o });
+  const event = (o: object) => CreateEventFormSchema.safeParse({ type: 'Event', title: 'x', date: '2026-09-25', location: 'Rink A', ...o });
   it('reports the end time on the endTime field', () => {
     const r = event({ startTime: '15:00', endTime: '13:00' });
     expect(r.success).toBe(false);
@@ -69,7 +69,24 @@ describe('duration helpers', () => {
     expect(durationOf('2026-09-29', '15:00')).toBeNull();
   });
   it('lets an overnight event pass when its end date is later', () => {
-    const r = CreateEventFormSchema.safeParse({ type: 'Event', title: 'x', date: '2026-09-29', endDate: '2026-09-30', startTime: '23:30', endTime: '01:00' });
+    const r = CreateEventFormSchema.safeParse({ type: 'Event', title: 'x', date: '2026-09-29', location: 'Rink A', endDate: '2026-09-30', startTime: '23:30', endTime: '01:00' });
     expect(r.success).toBe(true);
+  });
+});
+
+describe('event name and location are required', () => {
+  const event = (o: object) => CreateEventFormSchema.safeParse({ type: 'Event', title: 'Practice', date: '2026-09-25', location: 'Rink A', ...o });
+  const failedOn = (r: ReturnType<typeof event>) => (r.success ? [] : r.error.issues.map((i) => i.path[0]));
+
+  it('accepts a venue', () => expect(event({}).success).toBe(true));
+  it('accepts TBD, which is what the switch stores', () => expect(event({ location: 'TBD' }).success).toBe(true));
+  it('rejects a blank or missing location', () => {
+    expect(failedOn(event({ location: '' }))).toContain('location');
+    expect(failedOn(event({ location: '   ' }))).toContain('location');
+    expect(failedOn(CreateEventFormSchema.safeParse({ type: 'Event', title: 'Practice', date: '2026-09-25' }))).toContain('location');
+  });
+  it('rejects a blank or whitespace name', () => {
+    expect(failedOn(event({ title: '' }))).toContain('title');
+    expect(failedOn(event({ title: '   ' }))).toContain('title');
   });
 });

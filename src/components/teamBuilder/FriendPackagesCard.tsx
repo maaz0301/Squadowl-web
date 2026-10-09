@@ -94,7 +94,7 @@ interface Props {
  */
 export function FriendPackagesCard({ tryout, disabled }: Props) {
   const colors = useThemeColors();
-  const terms = useTerms(tryout.settings.customLabels);
+  const terms = useTerms(tryout.settings.customLabels, tryout.sport);
   const { confirm, alert } = useAlert();
   const setFriendPackages = useSetFriendPackagesMutation();
   const qc = useQueryClient();

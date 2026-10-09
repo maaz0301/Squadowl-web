@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { END_BEFORE_START_MESSAGE, isEndAfterStart } from './timeRange';
 
 import { LETTER_KINDS } from './letters';
+import { FUTURE_BIRTH_MESSAGE, isFutureBirth } from '../lib/birthDate';
 
 /**
  * Validate a guardian phone number as 10–15 digits.
@@ -104,6 +105,10 @@ export const CustomRubricSchema = z.object({
   /** Share of the overall score this rubric carries, 1–100%. Unset rubrics split whatever weight is left over equally, so existing assessments keep their equal-weight behaviour. */
   weight: z.number().min(1).max(100).optional(),
   role: z.enum(['skater', 'goalie', 'all']).optional(),
+  /** A target to show alongside players' results, in the rubric's own units or scale, so families can see what is being aimed for. Unset = no benchmark shown. */
+  benchmark: z.number().optional(),
+  /** A short free-form explanation of the benchmark, shown with it. */
+  benchmarkNote: z.string().max(300).optional(),
 });
 
 export type CustomRubric = z.infer<typeof CustomRubricSchema>;
@@ -347,6 +352,8 @@ export interface TryoutSummary {
 export const TeamSchema = z.object({
   id: z.string(),
   name: z.string(),
+  /** The team's sport, which tailors its player cards and wording; unset keeps the standard card. */
+  sport: z.string().optional(),
   logoUrl: z.string().optional(),
   season: z.string().optional(),
   /** Whether this team collects a registration fee from guardians via Stripe. */
@@ -624,9 +631,9 @@ export const AddPlayerFormSchema = z.object({
   jersey: z.string().optional(),
   pos: z.string().optional(),
   shoots: z.string().optional(),
-  yearOfBirth: z.string().optional(),
+  yearOfBirth: z.string().optional().refine((v) => !isFutureBirth(v), { message: FUTURE_BIRTH_MESSAGE }),
   /** Full date of birth, "YYYY-MM-DD", when known; the year above always accompanies it. */
-  dateOfBirth: z.string().optional(),
+  dateOfBirth: z.string().optional().refine((v) => !isFutureBirth(undefined, v), { message: FUTURE_BIRTH_MESSAGE }),
   positionTryingOutFor: z.string().optional(),
   playerEmail: z
     .string()
@@ -653,9 +660,9 @@ export type AddPlayerForm = z.infer<typeof AddPlayerFormSchema>;
 export const RegistrationSubmitSchema = z.object({
   firstName: z.string().min(1, 'First name is required'),
   lastName: z.string().min(1, 'Last name is required'),
-  yearOfBirth: z.string().optional(),
+  yearOfBirth: z.string().optional().refine((v) => !isFutureBirth(v), { message: FUTURE_BIRTH_MESSAGE }),
   /** Full date of birth, "YYYY-MM-DD", when known; the year above always accompanies it. */
-  dateOfBirth: z.string().optional(),
+  dateOfBirth: z.string().optional().refine((v) => !isFutureBirth(undefined, v), { message: FUTURE_BIRTH_MESSAGE }),
   positionTryingOutFor: z.string().optional(),
   playerEmail: z
     .string()
@@ -876,7 +883,7 @@ export type CreateSeasonForm = z.infer<typeof CreateSeasonFormSchema>;
 
 export const CreateEventFormSchema = z.object({
   type: z.enum(EVENT_KINDS),
-  title: z.string().min(1, 'Title is required'),
+  title: z.string().trim().min(1, 'Title is required'),
   date: z.string().min(1, 'Date is required').regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
   endDate: z
     .string()
@@ -887,7 +894,8 @@ export const CreateEventFormSchema = z.object({
   endTime: z.string().optional(),
   /** Minutes, from the Duration picker; the form turns it into endDate/endTime on save. */
   duration: z.number().optional(),
-  location: z.string().optional(),
+  /** Required: a venue, or "TBD" (the form's switch) when it is not settled yet. */
+  location: z.string().trim().min(1, 'Add a location, or switch on TBD'),
   notes: z.string().optional(),
   playerIds: z.array(z.string()).optional(),
   /** Days of the week (0 = Sunday) to repeat on, from the Repeat picker. Empty or absent means one event. */

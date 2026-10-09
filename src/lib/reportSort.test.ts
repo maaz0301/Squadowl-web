@@ -55,8 +55,10 @@ describe('report player order', () => {
     expect(rankOf('results')).toEqual(rankOf('jersey'));
   });
 
-  it('offers all three choices to the export screens', () => {
-    expect(REPORT_SORT_OPTIONS.map((o) => o.key)).toEqual(['jersey', 'name', 'results']);
+  it('offers every sort choice to the export screens', () => {
+    expect(REPORT_SORT_OPTIONS.map((o) => o.key)).toEqual([
+      'jersey', 'name', 'firstName', 'ageYoungest', 'ageOldest', 'results', 'resultsWorst', 'position',
+    ]);
   });
 
   it('builds a valid PDF for every order and layout', async () => {

@@ -99,7 +99,7 @@ export default function TeamBuilderPage() {
   const colors = useThemeColors();
   const { confirm, alert, toast } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const generate = useGenerateTeamBuilderMutation(id!);
   const savedResultsQuery = useTeamBuilderResultsQuery(id!);
   const saveResult = useSaveTeamBuilderResultMutation(id!);

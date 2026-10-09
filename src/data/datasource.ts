@@ -59,7 +59,7 @@ export interface DataSource {
   listTeams(): Promise<Team[]>;
   /** Teams on the caller's own account — what plan team limits are measured against. */
   countTeams(): Promise<number>;
-  createTeam(name: string, season?: string): Promise<Team>;
+  createTeam(name: string, season?: string, sport?: string): Promise<Team>;
   deleteTeam(id: string): Promise<void>;
   /** Archived teams — ones the coach archived or a plan downgrade did. Deleted teams are not listed. */
   listArchivedTeams(): Promise<Team[]>;

@@ -3,12 +3,26 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { Button, Card, Chip, ErrorState, Input, LoadingState, SectionLabel, useAlert } from '@/components/ui';
+import { Button, Card, Chip, ErrorState, Input, LoadingState, SectionLabel, Switch, useAlert } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery, useTeamsQuery } from '@/features/queries';
-import { PLAYERS_PER_PAGE_OPTIONS, reportLogoUrls, type PlayersPerPage } from '@/lib/reportPdf';
-import { REPORT_SORT_OPTIONS, type ReportSort } from '@/data/resultsExport';
+import {
+  DEFAULT_REPORT_CONTENT,
+  PLAYERS_PER_PAGE_OPTIONS,
+  reportLogoUrls,
+  type PlayersPerPage,
+  type ReportContent,
+  type ReportLayout,
+} from '@/lib/reportPdf';
+import {
+  buildPlayerFullResults,
+  isReportFilterActive,
+  reportFilterChoices,
+  reportSortOptions,
+  type ReportFilter,
+  type ReportSort,
+} from '@/data/resultsExport';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { canUseFeature, getPlanDefinition } from '@/data/plans';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -24,7 +38,7 @@ export default function ExportPage() {
   const tryoutQuery = useTryoutQuery(id);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const shareMut = useShareLinkMutation(id!);
   const { data: platformBlockedFeatures } = usePlatformBlockedFeaturesQuery();
   const billingBlocked = (platformBlockedFeatures ?? []).includes('billing');
@@ -34,6 +48,13 @@ export default function ExportPage() {
   const [continuous, setContinuous] = useState(false);
   const [sortBy, setSortBy] = useState<ReportSort>('jersey');
   const [printLogo, setPrintLogo] = useState(true);
+  const [layout, setLayout] = useState<ReportLayout>('cards');
+  const [content, setContent] = useState<ReportContent>(DEFAULT_REPORT_CONTENT);
+  const [topX, setTopX] = useState('');
+  const [minScore, setMinScore] = useState('');
+  const [scoredOnly, setScoredOnly] = useState(false);
+  const [positions, setPositions] = useState<string[]>([]);
+  const [birthYears, setBirthYears] = useState<string[]>([]);
   // The team's own logo, for club accounts. Looked up here (before the loading
   // guards below, since it is a hook) from the team this evaluation belongs to.
   const teamsQuery = useTeamsQuery();
@@ -53,7 +74,32 @@ export default function ExportPage() {
   // Logos on the printed report are a Club-plan touch.
   const clubMode = tier === 'club';
 
+  const choices = reportFilterChoices(tryout);
+  const toggleIn = (list: string[], value: string) =>
+    list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  const setContentFlag = (key: keyof ReportContent) => (on: boolean) => setContent((c) => ({ ...c, [key]: on }));
+
+  /** Only the filters the coach actually set; blank or invalid numbers are ignored. */
+  const buildFilter = (): ReportFilter => {
+    const top = parseInt(topX, 10);
+    const min = parseFloat(minScore);
+    return {
+      topX: Number.isFinite(top) && top > 0 ? top : undefined,
+      minScore: Number.isFinite(min) ? min : undefined,
+      scoredOnly: scoredOnly || undefined,
+      positions: positions.length ? positions : undefined,
+      birthYears: birthYears.length ? birthYears : undefined,
+    };
+  };
+  const filter = buildFilter();
+  const filterActive = isReportFilterActive(filter);
+  const matchCount = buildPlayerFullResults(tryout, sortBy, filter).length;
+
   const handleExport = async (format: ExportFormat) => {
+    if (matchCount === 0) {
+      await alert('No players match', 'Loosen the filters so at least one player is included.');
+      return;
+    }
     setIsExporting(format);
     try {
       const { exportTryoutData } = await import('@/lib/exportData');
@@ -61,8 +107,16 @@ export default function ExportPage() {
         tryout,
         format,
         format === 'pdf'
-          ? { playersPerPage, continuous: continuous && playersPerPage === 1, logoUrls: reportLogoUrls({ club: clubMode && printLogo, organizationLogoUrl, teamLogoUrl }), sortBy }
-          : undefined,
+          ? {
+              playersPerPage,
+              continuous: continuous && playersPerPage === 1 && layout === 'cards',
+              logoUrls: reportLogoUrls({ club: clubMode && printLogo, organizationLogoUrl, teamLogoUrl }),
+              sortBy,
+              filter,
+              content,
+              layout,
+            }
+          : { sortBy, filter },
       );
       toast(`${format.toUpperCase()} downloaded`, 'success');
     } catch (e) {
@@ -137,8 +191,9 @@ export default function ExportPage() {
                     <Chip
                       key={n}
                       label={n === 1 ? '1 (full detail)' : String(n)}
-                      active={playersPerPage === n && !(n === 1 && continuous)}
+                      active={layout === 'cards' && playersPerPage === n && !(n === 1 && continuous)}
                       onClick={() => {
+                        setLayout('cards');
                         setPlayersPerPage(n);
                         setContinuous(false);
                       }}
@@ -146,15 +201,26 @@ export default function ExportPage() {
                   ))}
                   <Chip
                     label="Continuous (no gaps)"
-                    active={continuous}
+                    active={layout === 'cards' && continuous}
                     onClick={() => {
+                      setLayout('cards');
                       setPlayersPerPage(1);
                       setContinuous(true);
                     }}
                   />
+                  <Chip
+                    label="Compact list"
+                    active={layout === 'list'}
+                    onClick={() => {
+                      setLayout('list');
+                      setContinuous(false);
+                    }}
+                  />
                 </div>
                 <span className="text-xs" style={{ color: colors.inkMuted }}>
-                  {continuous
+                  {layout === 'list'
+                    ? 'A ranked list of names and scores only, with no comments, so a whole roster fits a page or two.'
+                    : continuous
                     ? 'Players run one after another with no blank space, each with every evaluation listed.'
                     : playersPerPage === 1
                     ? 'One player per page, with every evaluation listed.'
@@ -166,10 +232,101 @@ export default function ExportPage() {
                   Order players by
                 </span>
                 <div className="mt-2 flex flex-wrap">
-                  {REPORT_SORT_OPTIONS.map((o) => (
+                  {reportSortOptions(tryout).map((o) => (
                     <Chip key={o.key} label={o.label} active={sortBy === o.key} onClick={() => setSortBy(o.key)} />
                   ))}
                 </div>
+              </div>
+              <div className="flex flex-col gap-3">
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
+                  Include players
+                </span>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="Top players only"
+                    placeholder="All players"
+                    inputMode="numeric"
+                    value={topX}
+                    onChange={(e) => setTopX(e.target.value.replace(/[^0-9]/g, ''))}
+                  />
+                  <Input
+                    label="Overall score at least"
+                    placeholder="Any score"
+                    inputMode="decimal"
+                    value={minScore}
+                    onChange={(e) => setMinScore(e.target.value.replace(/[^0-9.]/g, ''))}
+                  />
+                </div>
+                <Switch checked={scoredOnly} onChange={setScoredOnly} label="Scored players only (leave out incomplete)" />
+                {choices.positions.length > 0 ? (
+                  <div>
+                    <span className="text-xs" style={{ color: colors.inkMuted }}>
+                      Position
+                    </span>
+                    <div className="mt-1 flex flex-wrap">
+                      {choices.positions.map((pos) => (
+                        <Chip
+                          key={pos}
+                          label={pos}
+                          active={positions.includes(pos)}
+                          onClick={() => setPositions((l) => toggleIn(l, pos))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {choices.birthYears.length > 0 ? (
+                  <div>
+                    <span className="text-xs" style={{ color: colors.inkMuted }}>
+                      Age group (birth year)
+                    </span>
+                    <div className="mt-1 flex flex-wrap">
+                      {choices.birthYears.map((y) => (
+                        <Chip
+                          key={y}
+                          label={y}
+                          active={birthYears.includes(y)}
+                          onClick={() => setBirthYears((l) => toggleIn(l, y))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <span className="text-xs" style={{ color: filterActive && matchCount === 0 ? colors.danger : colors.inkMuted }}>
+                  {filterActive
+                    ? `${matchCount} of ${tryout.roster.length} players will be included.`
+                    : 'Everyone is included. Pick any of the above to narrow it down.'}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
+                  Show on the report
+                </span>
+                <Switch checked={content.rubricScores} onChange={setContentFlag('rubricScores')} label="Individual rubric scores" />
+                <Switch checked={content.ranking} onChange={setContentFlag('ranking')} label="Overall ranking" />
+                <Switch
+                  checked={content.comments}
+                  onChange={setContentFlag('comments')}
+                  label="Comments (recommendation, strengths, areas to improve)"
+                  disabled={layout === 'list'}
+                />
+                <Switch
+                  checked={content.assessor}
+                  onChange={setContentFlag('assessor')}
+                  label="Assessor name"
+                  disabled={layout !== 'cards' || playersPerPage !== 1}
+                />
+                <Switch
+                  checked={content.date}
+                  onChange={setContentFlag('date')}
+                  label="Date of evaluation"
+                  disabled={layout !== 'cards' || playersPerPage !== 1}
+                />
+                {layout !== 'cards' || playersPerPage !== 1 ? (
+                  <span className="text-xs" style={{ color: colors.inkMuted }}>
+                    Assessor and date appear with each evaluation, which only the one-player-per-page layout lists.
+                  </span>
+                ) : null}
               </div>
               {clubMode && (organizationLogoUrl || teamLogoUrl) ? (
                 <label className="flex items-center gap-2 text-sm" style={{ color: colors.ink }}>

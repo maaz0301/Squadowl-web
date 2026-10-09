@@ -9,6 +9,8 @@ import {
   embedLogos,
   pdfSafe,
   renderCompactResults,
+  renderListResults,
+  DEFAULT_REPORT_CONTENT,
   type ReportPdfOptions,
 } from '@/lib/reportPdf';
 import * as XLSX from 'xlsx';
@@ -63,16 +65,21 @@ function wrapText(text: string, f: PDFFont, size: number, maxWidth: number): str
  */
 export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOptions = {}): Promise<string> {
   const docInfo = buildReportDocInfo(tryout);
-  const cards = buildPlayerFullResults(tryout, opts.sortBy);
+  const cards = buildPlayerFullResults(tryout, opts.sortBy, opts.filter);
+  const content = opts.content ?? DEFAULT_REPORT_CONTENT;
 
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const logos = await embedLogos(pdfDoc, opts.logoUrls);
+  if (opts.layout === 'list') {
+    renderListResults(pdfDoc, { font, bold: fontBold }, docInfo, cards, logos, content);
+    return pdfDoc.saveAsBase64();
+  }
   const perPage = opts.playersPerPage ?? 1;
   if (perPage !== 1) {
-    renderCompactResults(pdfDoc, { font, bold: fontBold }, docInfo, cards, perPage, logos);
+    renderCompactResults(pdfDoc, { font, bold: fontBold }, docInfo, cards, perPage, logos, content);
     return pdfDoc.saveAsBase64();
   }
 
@@ -147,40 +154,53 @@ export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOption
     page.drawText(meta, { x: PAGE_WIDTH - MARGIN - metaWidth, y: y + 3, size: 9, font, color: GRAY });
     y -= 26;
 
-    drawLine('Scoring and Ranking', { size: 11, f: fontBold, gap: 16 });
+    drawLine(content.ranking ? 'Scoring and Ranking' : 'Scoring', { size: 11, f: fontBold, gap: 16 });
 
     ensureSpace(14);
     page.drawText('METRIC', { x: MARGIN, y, size: 10, font: fontBold, color: GRAY });
     page.drawText('SCORE', { x: scoreX, y, size: 10, font: fontBold, color: GRAY });
-    page.drawText('RANK', { x: rankX, y, size: 10, font: fontBold, color: GRAY });
+    if (content.ranking) page.drawText('RANK', { x: rankX, y, size: 10, font: fontBold, color: GRAY });
     y -= 6;
     page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_WIDTH - MARGIN, y }, thickness: 0.5, color: RULE });
     y -= 12;
 
-    const metricRows = [{ label: 'Overall', score: card.overallScore, rank: card.overallRank }, ...card.metrics];
+    const metricRows = [
+      { label: 'Overall', score: card.overallScore, rank: card.overallRank },
+      ...(content.rubricScores ? card.metrics : []),
+    ];
     for (const m of metricRows) {
       ensureSpace(20);
       // Scores are the thing people read off the page, so they are bold and larger than the labels.
       page.drawText(pdfSafe(m.label), { x: MARGIN, y, size: 11, font, color: BLACK });
       page.drawText(pdfSafe(m.score), { x: scoreX, y: y - 1, size: 14, font: fontBold, color: BLACK });
-      page.drawText(pdfSafe(m.rank), { x: rankX, y, size: 11, font, color: BLACK });
+      if (content.ranking) page.drawText(pdfSafe(m.rank), { x: rankX, y, size: 11, font, color: BLACK });
       y -= 20;
     }
     y -= 8;
 
-    drawWrapped(`Recommendation: ${card.recommendation || '—'}`, { size: 9.5, gap: 13 });
-    drawWrapped(`Strengths: ${card.strengths || '—'}`, { size: 9.5, gap: 13 });
-    drawWrapped(`Improve: ${card.improve || '—'}`, { size: 9.5, gap: 13 });
+    if (content.comments) {
+      drawWrapped(`Recommendation: ${card.recommendation || '—'}`, { size: 9.5, gap: 13 });
+      drawWrapped(`Strengths: ${card.strengths || '—'}`, { size: 9.5, gap: 13 });
+      drawWrapped(`Improve: ${card.improve || '—'}`, { size: 9.5, gap: 13 });
+    }
     y -= 10;
 
-    for (const ev of card.evals) {
+    const showEvals = content.rubricScores || content.comments || content.assessor || content.date;
+    for (const ev of showEvals ? card.evals : []) {
       ensureSpace(36);
-      const header = `Eval ${ev.index} • ${ev.date} • ${ev.evaluator} • ${ev.session}`;
+      const header = [
+        `Eval ${ev.index}`,
+        content.date ? ev.date : '',
+        content.assessor ? ev.evaluator : '',
+        ev.session,
+      ]
+        .filter(Boolean)
+        .join(' • ');
       const scoreLine = ev.values.map((v) => `${v.abbr}:${v.text || '—'}`).join(' • ');
       const footer = `Rec: ${ev.recommendation || '—'} | Str: ${ev.strengths || '—'} | Imp: ${ev.improve || '—'}`;
       drawWrapped(header, { size: 10, f: fontBold, gap: 14 });
-      drawWrapped(scoreLine, { size: 9.5, color: GRAY, gap: 13 });
-      drawWrapped(footer, { size: 9.5, gap: 13 });
+      if (content.rubricScores) drawWrapped(scoreLine, { size: 9.5, color: GRAY, gap: 13 });
+      if (content.comments) drawWrapped(footer, { size: 9.5, gap: 13 });
       y -= 6;
     }
   });
@@ -228,7 +248,7 @@ export async function exportTryoutData(
   const fileName = `${safeName}_results.${format}`;
 
   if (format === 'csv') {
-    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout);
+    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout, pdfOptions?.sortBy, pdfOptions?.filter);
     const blocks = playerBlocks.map((rows) => rows.map((r) => r.map(csvCell).join(',')).join('\n'));
     const text = [
       infoLines.map((r) => r.map(csvCell).join(',')).join('\n'),
@@ -243,7 +263,7 @@ export async function exportTryoutData(
     // The full-results rows: the info header, then each player's
     // PLYR/CAT/STR/IMP rows and eval tables, blocks separated by a blank row so
     // one player's card stays readable on a printed page.
-    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout);
+    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout, pdfOptions?.sortBy, pdfOptions?.filter);
     const rows: (string | number)[][] = [...infoLines, []];
     playerBlocks.forEach((block, i) => {
       if (i > 0) rows.push([]);

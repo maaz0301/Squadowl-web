@@ -42,7 +42,7 @@ export default function RinksidePage() {
   const router = useRouter();
   const { alert } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const saveEval = useSaveEvaluationMutation(id!);
   const rinksideIndex = useSessionStore((s) => s.rinksideIndex);
   const setRinksideIndex = useSessionStore((s) => s.setRinksideIndex);
@@ -524,6 +524,8 @@ export default function RinksidePage() {
                 unit={s.unit}
                 minVal={s.minVal}
                 maxVal={s.maxVal}
+                benchmark={s.benchmark}
+                benchmarkNote={s.benchmarkNote}
                 rankingDirection={s.rankingDirection}
                 value={workingScores[s.key]}
                 onChange={(v) => setWorkingScores({ ...workingScores, [s.key]: v })}

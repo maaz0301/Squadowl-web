@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { flagRegistrationDuplicates } from '@/data/duplicates';
 import { AddToRosterModal, type RosterDestination } from '@/components/assessment/AddToRosterModal';
 import { RegistrationForm } from '@/components/assessment/RegistrationForm';
 import { RegistrationProfileModal } from '@/components/assessment/RegistrationProfileModal';
@@ -103,6 +104,13 @@ export default function RegistrationsPage() {
     [regsQuery.data, viewingId],
   );
 
+  // Registrations that look like someone already on the roster, or like another
+  // registration in this queue, so a coach is warned before filing a second copy.
+  const dupFlags = useMemo(
+    () => flagRegistrationDuplicates(regsQuery.data ?? [], tryoutQuery.data?.roster ?? []),
+    [regsQuery.data, tryoutQuery.data?.roster],
+  );
+
   if (tryoutQuery.isLoading) return <LoadingState message="Loading..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
     return <ErrorState message="Could not load registrations." onRetry={() => tryoutQuery.refetch()} />;
@@ -144,8 +152,30 @@ export default function RegistrationsPage() {
   // The "Add to Roster" on a card means the whole ticked group when that card is
   // one of them — clicking it on one of several ticked players used to place only
   // that one, which is how a multi-select "sent one player".
+  // Opens the destination picker, first asking about any registration that looks
+  // like a player already on the roster or registered twice.
+  const requestPlacing = async (ids: string[]) => {
+    const flagged = ids.filter((regId) => dupFlags.has(regId));
+    if (flagged.length > 0) {
+      const regs = regsQuery.data ?? [];
+      const nameOf = (regId: string) => {
+        const r = regs.find((x) => x.id === regId);
+        return r ? `${r.firstName} ${r.lastName}`.trim() : 'A registration';
+      };
+      const message =
+        flagged.length === 1
+          ? `${nameOf(flagged[0])}\n${dupFlags.get(flagged[0])}\n\nAdd them anyway?`
+          : `${flagged.length} of these registrations look like duplicates:\n${flagged
+              .slice(0, 3)
+              .map((regId) => `- ${nameOf(regId)}: ${dupFlags.get(regId)}`)
+              .join('\n')}\n\nAdd them anyway?`;
+      const ok = await confirm({ title: 'Possible duplicate', message, confirmLabel: 'Add anyway' });
+      if (!ok) return;
+    }
+    setPlacing(ids);
+  };
   const addFromCard = (regId: string) =>
-    setPlacing(selected.has(regId) && selectedIds.length > 1 ? selectedIds : [regId]);
+    requestPlacing(selected.has(regId) && selectedIds.length > 1 ? selectedIds : [regId]);
 
   const runPlacement = async (destination: RosterDestination) => {
     const ids = placing ?? [];
@@ -291,7 +321,7 @@ export default function RegistrationsPage() {
             <Button
               label={`Add ${selectedIds.length} to Roster`}
               size="sm"
-              onClick={() => setPlacing(selectedIds)}
+              onClick={() => requestPlacing(selectedIds)}
             />
           ) : null}
           <Button label="Export CSV" variant="ghost" size="sm" onClick={exportCsv} />
@@ -380,6 +410,11 @@ export default function RegistrationsPage() {
                     <span className="truncate text-sm" style={{ color: colors.inkFaint }}>
                       {item.guardianEmail}
                     </span>
+                    {item.status === 'pending' && dupFlags.has(item.id) ? (
+                      <span className="text-sm font-semibold" style={{ color: colors.warning }}>
+                        {dupFlags.get(item.id)}
+                      </span>
+                    ) : null}
                     {item.yearOfBirth || item.positionTryingOutFor ? (
                       <span className="text-sm" style={{ color: colors.inkFaint }}>
                         {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}
@@ -438,7 +473,7 @@ export default function RegistrationsPage() {
             </p>
           </div>
           <Button label="Clear" variant="ghost" onClick={() => setSelected(new Set())} />
-          <Button label={`Add ${selectedIds.length}`} onClick={() => setPlacing(selectedIds)} />
+          <Button label={`Add ${selectedIds.length}`} onClick={() => requestPlacing(selectedIds)} />
         </div>
       ) : null}
 
@@ -461,6 +496,7 @@ export default function RegistrationsPage() {
         hideDefaultFooter
       >
         <RegistrationForm
+          sport={tryout.sport}
           loading={submitReg.isPending}
           onSubmit={async (data) => {
             await submitReg.mutateAsync(data);
@@ -486,13 +522,14 @@ export default function RegistrationsPage() {
 
       <RegistrationProfileModal
         labels={tryout.settings.customLabels}
+        sport={tryout.sport}
         registration={viewing}
         onClose={() => setViewingId(null)}
         onAddToRoster={
           viewing
             ? () => {
                 setViewingId(null);
-                setPlacing([viewing.id]);
+                void requestPlacing([viewing.id]);
               }
             : undefined
         }
@@ -508,6 +545,7 @@ export default function RegistrationsPage() {
 
       <AddToRosterModal
         labels={tryout.settings.customLabels}
+        sport={tryout.sport}
         visible={placing !== null}
         count={placing?.length ?? 0}
         currentTryoutId={id}

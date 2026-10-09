@@ -1,5 +1,6 @@
 'use client';
 
+import { flagRegistrationDuplicates } from '@/data/duplicates';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 
@@ -32,6 +33,7 @@ import {
   useSetTeamRegistrationOpenMutation,
   useTeamRegistrationsQuery,
   useTeamRosterAthleteIdsQuery,
+  useTeamRosterQuery,
   useTeamsQuery,
 } from '@/features/queries';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
@@ -46,7 +48,7 @@ export default function TeamRegistrationsPage() {
   const routeParams = useParams();
   const id = Array.isArray(routeParams?.id) ? routeParams.id[0] : (routeParams?.id as string);
   const colors = useThemeColors();
-  const { alert, toast } = useAlert();
+  const { alert, confirm, toast } = useAlert();
 
   const teamsQuery = useTeamsQuery();
   const team = teamsQuery.data?.find((t) => t.id === id);
@@ -55,6 +57,7 @@ export default function TeamRegistrationsPage() {
   // Free plans share one pool of players across evaluations and teams.
   const accountPlayers = useAccountPlayerCount(effectiveTier === 'free');
   const rosterIds = useTeamRosterAthleteIdsQuery(id);
+  const rosterQuery = useTeamRosterQuery(id, true);
   const regsQuery = useTeamRegistrationsQuery(id);
   const ensureLink = useEnsureTeamRegistrationLinkMutation();
   const setOpen = useSetTeamRegistrationOpenMutation();
@@ -77,6 +80,9 @@ export default function TeamRegistrationsPage() {
   }, [team, code]);
 
   const all = useMemo(() => regsQuery.data ?? [], [regsQuery.data]);
+  // Registrations that look like someone already on the team, or like another
+  // registration in this queue, so a coach is warned before filing a second copy.
+  const dupFlags = useMemo(() => flagRegistrationDuplicates(all, rosterQuery.data ?? []), [all, rosterQuery.data]);
   const filtered = useMemo(() => {
     if (tab === 'all') return all;
     if (tab === 'dismissed') return all.filter((r) => r.status === 'dismissed');
@@ -137,6 +143,22 @@ export default function TeamRegistrationsPage() {
 
   const addToTeam = async (ids: string[]) => {
     if (ids.length === 0) return;
+    const flagged = ids.filter((rid) => dupFlags.has(rid));
+    if (flagged.length > 0) {
+      const nameOf = (rid: string) => {
+        const r = all.find((x) => x.id === rid);
+        return r ? `${r.firstName} ${r.lastName}`.trim() : 'A registration';
+      };
+      const message =
+        flagged.length === 1
+          ? `${nameOf(flagged[0])}\n${dupFlags.get(flagged[0])}\n\nAdd them anyway?`
+          : `${flagged.length} of these registrations look like duplicates:\n${flagged
+              .slice(0, 3)
+              .map((rid) => `- ${nameOf(rid)}: ${dupFlags.get(rid)}`)
+              .join('\n')}\n\nAdd them anyway?`;
+      const ok = await confirm({ title: 'Possible duplicate', message, confirmLabel: 'Add anyway' });
+      if (!ok) return;
+    }
     // The player limit is measured against this team's roster; on the Free plan
     // evaluations and teams share one pool, so the account total counts too.
     const existing = rosterIds.data?.length ?? 0;
@@ -289,6 +311,11 @@ export default function TeamRegistrationsPage() {
                     <span className="truncate text-sm" style={{ color: colors.inkFaint }}>
                       {item.guardianEmail}
                     </span>
+                    {item.status === 'pending' && dupFlags.has(item.id) ? (
+                      <span className="text-sm font-semibold" style={{ color: colors.warning }}>
+                        {dupFlags.get(item.id)}
+                      </span>
+                    ) : null}
                     {item.yearOfBirth || item.positionTryingOutFor ? (
                       <span className="text-sm" style={{ color: colors.inkFaint }}>
                         {[item.yearOfBirth, item.positionTryingOutFor, item.currentTeam].filter(Boolean).join(' · ')}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, Chip, ErrorState, LoadingState, PageHeader, useAlert } from '@/components/ui';
@@ -40,6 +40,8 @@ export default function ScanSheetPage() {
   const href = useAssessmentHref();
   const colors = useThemeColors();
   const router = useRouter();
+  // Opened from Results, Back returns there instead of to the roster.
+  const backTo = useSearchParams().get('from') === 'results' ? 'results' : 'roster';
   const { alert } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   const importScores = useImportScanScoresMutation();
@@ -55,7 +57,7 @@ export default function ScanSheetPage() {
   const [dragging, setDragging] = useState(false);
 
   const tryout = tryoutQuery.data;
-  const terms = useTerms(tryout?.settings.customLabels);
+  const terms = useTerms(tryout?.settings.customLabels, tryout?.sport);
   const measures = useMemo(() => tryout?.settings.customRubrics ?? [], [tryout]);
 
   const rows = useMemo(
@@ -82,7 +84,7 @@ export default function ScanSheetPage() {
   if (tryoutQuery.isError || !tryout) {
     return (
       <>
-        <PageHeader title="Import Scores" showBack backHref={href('roster')} />
+        <PageHeader title="Import Scores" showBack backHref={href(backTo)} />
         <ErrorState message="Could not load this evaluation." onRetry={() => tryoutQuery.refetch()} />
       </>
     );
@@ -168,7 +170,7 @@ export default function ScanSheetPage() {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader title="Import Scores from a File" showBack backHref={href('roster')} />
+      <PageHeader title="Import Scores from a File" showBack backHref={href(backTo)} />
       <input ref={fileRef} type="file" accept={ACCEPT} className="hidden" onChange={(e) => void readFile(e.target.files?.[0])} />
 
       {measures.length === 0 ? (

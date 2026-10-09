@@ -4,15 +4,18 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RegistrationSubmitSchema, type RegistrationSubmit } from '@/data/types';
 import { BirthDateField, Button, Input, PhoneField, Textarea } from '@/components/ui';
+import { sportProfile } from '@/data/sportProfile';
 
 interface Props {
   loading?: boolean;
+  /** The evaluation's sport; a sport without positions does not ask for one. */
+  sport?: string | null;
   /** Public registration collects the full detail set; the in-app simulator keeps it short. */
   full?: boolean;
   onSubmit: (data: RegistrationSubmit) => Promise<void>;
 }
 
-export function RegistrationForm({ loading, full, onSubmit }: Props) {
+export function RegistrationForm({ loading, full, sport, onSubmit }: Props) {
   const { control, handleSubmit, watch, setValue } = useForm<RegistrationSubmit>({
     resolver: zodResolver(RegistrationSubmitSchema),
     defaultValues: {
@@ -69,11 +72,13 @@ export function RegistrationForm({ loading, full, onSubmit }: Props) {
             )}
           />
         ) : null}
-        <Controller
-          control={control}
-          name="positionTryingOutFor"
-          render={({ field }) => <Input label="Position" {...field} value={field.value ?? ''} />}
-        />
+        {sportProfile(sport).positions ? (
+          <Controller
+            control={control}
+            name="positionTryingOutFor"
+            render={({ field }) => <Input label="Position" {...field} value={field.value ?? ''} />}
+          />
+        ) : null}
         <Controller
           control={control}
           name="playerEmail"

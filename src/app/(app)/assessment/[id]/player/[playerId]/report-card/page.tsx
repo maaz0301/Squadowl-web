@@ -34,6 +34,7 @@ import {
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { buildPlayerFullResults } from '@/data/resultsExport';
+import { benchmarkLines } from '@/data/benchmarks';
 import { playerDisplayName } from '@/data/rubrics';
 import type { PlayerReportCard, ReportCardAttachment } from '@/data/types';
 import { formatAiComments } from '@/lib/reportCardText';
@@ -53,7 +54,7 @@ export default function PlayerReportCardPage() {
   const user = useUser();
 
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   const tier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   const teamsQuery = useTeamsQuery();
@@ -95,6 +96,13 @@ export default function PlayerReportCardPage() {
     if (!tryout || !player) return null;
     const scoped = { ...tryout, evals: tryout.evals.filter((e) => e.playerId !== player.id || chosen.has(e.id)) };
     return buildPlayerFullResults(scoped).find((c) => c.playerId === player.id) ?? null;
+  }, [tryout, player, chosen]);
+
+  // The rubrics' benchmarks beside this player's average over the chosen evaluations.
+  const benchmarks = useMemo(() => {
+    if (!tryout || !player) return [];
+    const scoped = { ...tryout, evals: tryout.evals.filter((e) => e.playerId !== player.id || chosen.has(e.id)) };
+    return benchmarkLines(scoped, player);
   }, [tryout, player, chosen]);
 
   if (tryoutQuery.isLoading) return <LoadingState />;
@@ -224,6 +232,7 @@ export default function PlayerReportCardPage() {
         title,
         subtitle: [team?.name, tryout.name].filter(Boolean).join(' | '),
         card: reportCard,
+        benchmarks,
         coachComments,
         aiComments,
         attachments: [
@@ -349,6 +358,29 @@ export default function PlayerReportCardPage() {
                 <span>
                   {m.score} · {m.rank}
                 </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {benchmarks.length > 0 ? (
+        <Card className="flex flex-col gap-2">
+          <SectionLabel>Benchmarks</SectionLabel>
+          <div className="text-sm" style={{ color: colors.ink }}>
+            {benchmarks.map((b) => (
+              <div key={b.key} className="border-b py-1" style={{ borderColor: colors.border }}>
+                <div className="flex justify-between gap-2">
+                  <span className="font-bold">{b.label}</span>
+                  <span style={{ color: b.met ? colors.success : colors.ink }}>
+                    {b.result || 'Not scored'} · benchmark {b.target}
+                  </span>
+                </div>
+                {b.note ? (
+                  <p className="text-xs" style={{ color: colors.inkMuted }}>
+                    {b.note}
+                  </p>
+                ) : null}
               </div>
             ))}
           </div>

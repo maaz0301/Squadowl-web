@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -9,6 +9,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { BirthDateField, Button, Card, Input, Textarea, ThemeToggle } from '@/components/ui';
 import { SupabaseDataSource } from '@/data/supabase/SupabaseDataSource';
 import { RegistrationSubmitSchema, type RegistrationSubmit } from '@/data/types';
+import { sportProfile } from '@/data/sportProfile';
 
 const ds = new SupabaseDataSource();
 
@@ -18,6 +19,18 @@ export default function PublicRegistrationPage() {
   const colors = useThemeColors();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [sport, setSport] = useState<string | undefined>();
+  // The link's sport decides which fields apply; unknown keeps the standard form.
+  useEffect(() => {
+    if (!eventId) return;
+    let live = true;
+    void ds.getRegistrationLinkInfo(eventId.toUpperCase()).then((info) => {
+      if (live) setSport(info?.sport);
+    });
+    return () => {
+      live = false;
+    };
+  }, [eventId]);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<RegistrationSubmit>({
@@ -137,13 +150,15 @@ export default function PublicRegistrationPage() {
             name="lastName"
             render={({ field }) => <Input label="Last Name" {...field} error={errors.lastName?.message} />}
           />
-          <Controller
-            control={control}
-            name="positionTryingOutFor"
-            render={({ field }) => (
-              <Input label="Position (FWD/DEF/GTL)" {...field} value={field.value ?? ''} error={errors.positionTryingOutFor?.message} />
-            )}
-          />
+          {sportProfile(sport).positions ? (
+            <Controller
+              control={control}
+              name="positionTryingOutFor"
+              render={({ field }) => (
+                <Input label="Position (FWD/DEF/GTL)" {...field} value={field.value ?? ''} error={errors.positionTryingOutFor?.message} />
+              )}
+            />
+          ) : null}
           <Controller
             control={control}
             name="yearOfBirth"

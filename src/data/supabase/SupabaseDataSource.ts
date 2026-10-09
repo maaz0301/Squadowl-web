@@ -2151,6 +2151,7 @@ export class SupabaseDataSource implements DataSource {
     return {
       id: t.id,
       name: t.name,
+      sport: t.sport ?? undefined,
       logoUrl,
       season,
       collectsFees: t.collects_fees ?? undefined,
@@ -2313,20 +2314,24 @@ export class SupabaseDataSource implements DataSource {
     return count ?? 0;
   }
 
-  async createTeam(name: string, season?: string): Promise<Team> {
-    return this.withFreshAccount((guard) => this._createTeam(name, season, guard));
+  async createTeam(name: string, season?: string, sport?: string): Promise<Team> {
+    return this.withFreshAccount((guard) => this._createTeam(name, season, guard, sport));
   }
 
-  private async _createTeam(name: string, season: string | undefined, guard: WriteGuard): Promise<Team> {
+  private async _createTeam(name: string, season: string | undefined, guard: WriteGuard, sport?: string): Promise<Team> {
     const { supabase } = await this.ctx();
     const accountId = await this.writableAccountId();
-    const row = unwrap(
-      await supabase
-        .from('teams')
-        .insert({ account_id: accountId, name, season_label: season ?? null })
-        .select()
-        .single(),
-    ) as Row;
+    const base = { account_id: accountId, name, season_label: season ?? null };
+    let created = await supabase
+      .from('teams')
+      .insert({ ...base, ...(sport ? { sport } : {}) })
+      .select()
+      .single();
+    // A database without the team sport column yet: make the team without it.
+    if (created.error && sport && /sport/i.test(created.error.message)) {
+      created = await supabase.from('teams').insert(base).select().single();
+    }
+    const row = unwrap(created) as Row;
     guard.wrote = true;
     await this.markOnboarding({ createTeam: true });
     return this.rowToTeam(row);
@@ -3100,6 +3105,7 @@ export class SupabaseDataSource implements DataSource {
     const { supabase } = await this.ctx();
     const patch: Row = {};
     if (updates.name !== undefined) patch.name = updates.name;
+    if (updates.sport !== undefined) patch.sport = updates.sport || null;
     if (updates.archived !== undefined) patch.archived = updates.archived;
     if (updates.brandColor !== undefined) patch.brand_color = updates.brandColor || null;
     if (updates.collectsFees !== undefined) patch.collects_fees = updates.collectsFees;
@@ -5623,6 +5629,25 @@ export class SupabaseDataSource implements DataSource {
       else row.date_of_birth = form.dateOfBirth;
     }
     return this.rowToRegistration(row);
+  }
+
+  /**
+   * What a public sign-up link opens (an evaluation or a team) and its sport, so
+   * the form can drop what the sport does not use. Null when the code is
+   * unknown or closed, or when the lookup is not available: the form then keeps
+   * its standard fields.
+   */
+  async getRegistrationLinkInfo(eventIdOrCode: string): Promise<{ kind: 'evaluation' | 'team'; name: string; sport?: string } | null> {
+    try {
+      const supabase = getSupabase();
+      const { data, error } = await supabase.rpc('registration_link_info', { code: eventIdOrCode });
+      if (error || !data) return null;
+      const info = data as { kind?: string; name?: string; sport?: string | null };
+      if (info.kind !== 'evaluation' && info.kind !== 'team') return null;
+      return { kind: info.kind, name: info.name ?? '', sport: info.sport ?? undefined };
+    } catch {
+      return null;
+    }
   }
 
   async submitPublicRegistration(eventIdOrCode: string, form: RegistrationSubmit): Promise<Registration> {

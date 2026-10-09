@@ -65,7 +65,7 @@ export default function PlayerHubPage() {
   const { alert, confirm } = useAlert();
 
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   // A hook, so it belongs above the early returns below rather than beside
   // the derived values it feeds.
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);

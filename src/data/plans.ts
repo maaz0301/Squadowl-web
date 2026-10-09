@@ -1,4 +1,4 @@
-import type { PlanTier, Team } from './types';
+import { PLAN_TIERS, type PlanTier, type Team } from './types';
 
 export interface PlanFeature {
   label: string;
@@ -360,31 +360,27 @@ export function getTierRank(tier: PlanTier): number {
 }
 
 /**
- * The plan tier that should gate a team-scoped feature (exports, AI summaries,
- * Team Builder, custom rubrics, fee collection). Normally the caller's own
- * account tier — but when `team` is one delegated to them (CLUB mode), the
- * team runs at its owner's plan (see managedTeamTier).
- *
- * Falls back to `ownTier` whenever the team isn't managed, or the delegated
- * team's owner tier hasn't loaded yet — never grants more than the caller
- * actually has by default.
+ * The plan tier a team-scoped screen should gate features against (Team Builder,
+ * custom rubrics, fee collection). Normally the caller's own account tier, but
+ * on a team delegated to them (CLUB mode) a manager works at Coach level: the
+ * owning club's plan does not carry over to the people it delegates to.
  */
 export function effectiveTierForTeam(
   team: Pick<Team, 'managed' | 'ownerPlanTier'> | null | undefined,
   ownTier: PlanTier,
 ): PlanTier {
-  if (team?.managed && team.ownerPlanTier) return managedTeamTier(team.ownerPlanTier);
+  if (team?.managed) return managedTeamTier(ownTier);
   return ownTier;
 }
 
 /**
- * The level a delegated team runs at: its owner's plan, whoever is looking at
- * it. A team made on a Club account is a Club team for every manager of it, and
- * only for that team: what a manager creates under their own account stays on
- * their own plan. A manager's own plan neither lifts nor lowers the team.
+ * What a manager gets on a delegated team: Coach access. The owning club's plan
+ * (Club, Coach+) stays with the club. A manager on a free plan is lifted to Coach
+ * for that team only; one who already pays for Coach or above keeps their own
+ * plan, so delegating a team never takes anything away from them.
  */
-export function managedTeamTier(ownerTier: PlanTier): PlanTier {
-  return ownerTier;
+export function managedTeamTier(ownTier: PlanTier): PlanTier {
+  return PLAN_TIERS.indexOf(ownTier) > PLAN_TIERS.indexOf('coach') ? ownTier : 'coach';
 }
 
 /**

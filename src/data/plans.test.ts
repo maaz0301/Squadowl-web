@@ -81,21 +81,21 @@ describe('playersTowardCap', () => {
 });
 
 describe('managedTeamTier', () => {
-  it('runs a delegated team at its owner\'s plan', () => {
-    expect(managedTeamTier('club')).toBe('club');
-    expect(managedTeamTier('coach_plus')).toBe('coach_plus');
-    expect(managedTeamTier('coach')).toBe('coach');
-    expect(managedTeamTier('free')).toBe('free');
-  });
-
-  it('ignores the viewer\'s own plan, so every manager sees the owner\'s level', () => {
-    for (const own of ['free', 'coach', 'coach_plus', 'club'] as const) {
-      expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'club' }, own)).toBe('club');
-      expect(effectiveTierForTeam({ managed: true, ownerPlanTier: 'coach' }, own)).toBe('coach');
+  it('gives a manager Coach access, whatever plan the owning club is on', () => {
+    for (const owner of ['free', 'coach', 'coach_plus', 'club'] as const) {
+      expect(effectiveTierForTeam({ managed: true, ownerPlanTier: owner }, 'free')).toBe('coach');
     }
   });
 
+  it('lifts a free manager to Coach and never lowers a manager who already pays for more', () => {
+    expect(managedTeamTier('free')).toBe('coach');
+    expect(managedTeamTier('coach')).toBe('coach');
+    expect(managedTeamTier('coach_plus')).toBe('coach_plus');
+    expect(managedTeamTier('club')).toBe('club');
+  });
+
   it('leaves a team the caller owns on their own plan', () => {
+    expect(effectiveTierForTeam({ managed: false, ownerPlanTier: 'club' }, 'free')).toBe('free');
     expect(effectiveTierForTeam({ managed: false, ownerPlanTier: 'club' }, 'coach')).toBe('coach');
     expect(effectiveTierForTeam({ managed: false, ownerPlanTier: 'club' }, 'club')).toBe('club');
   });

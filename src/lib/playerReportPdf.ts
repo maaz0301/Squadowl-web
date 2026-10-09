@@ -1,6 +1,7 @@
 import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
 
 import type { PlayerFullResults } from '@/data/resultsExport';
+import type { BenchmarkLine } from '@/data/benchmarks';
 import { LOGO_BAND, drawLogoStrip, embedLogos, pdfSafe } from '@/lib/reportPdf';
 
 /**
@@ -18,6 +19,8 @@ export interface PlayerReportPdfInput {
   coachComments: string;
   aiComments: string;
   attachments: { kind: 'file' | 'video' | 'link'; name: string; url?: string }[];
+  /** The coach's rubric benchmarks beside this player's own results; the section is left out when empty. */
+  benchmarks?: BenchmarkLine[];
   logoUrls?: string[];
 }
 
@@ -127,6 +130,17 @@ export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promis
     page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font: isOverall ? bold : font, color: isOverall ? BLUE : BLACK });
     y -= 15;
   });
+
+  if (input.benchmarks?.length) {
+    heading('Benchmarks');
+    paragraph('What we are aiming for on each measure, beside the player\'s own result.', { size: 8, color: GRAY, gap: 12 });
+    for (const b of input.benchmarks) {
+      const standing = b.met == null ? '' : b.met ? '  (reached)' : '  (working towards)';
+      paragraph(`${b.label}:  ${b.result ? `player ${b.result}` : 'not yet scored'},  benchmark ${b.target}${standing}`, { size: 10, f: bold, gap: 13 });
+      if (b.note) paragraph(b.note, { size: 8.5, color: GRAY, gap: 11 });
+      y -= 5;
+    }
+  }
 
   if (card.recommendation) {
     y -= 4;

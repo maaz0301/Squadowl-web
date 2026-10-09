@@ -14,6 +14,10 @@ export interface SubSkill {
   rankingDirection?: RankingDirection;
   /** Share of the overall score this rubric carries, 1–100%. Unset = an equal share of whatever weight the explicitly weighted rubrics leave over. */
   weight?: number;
+  /** A target shown beside players' results, in this rubric's units (or its 1-5 / 1-10 scale). */
+  benchmark?: number;
+  /** What the benchmark means, in the coach's words. */
+  benchmarkNote?: string;
 }
 
 /** A weighted group of sub-skills, e.g. "Skating" → 5 sub-skills. */
@@ -111,6 +115,8 @@ export interface CustomRubricInput {
   rankingDirection?: RankingDirection;
   /** Share of the overall score this rubric carries, 1–100%. */
   weight?: number;
+  benchmark?: number;
+  benchmarkNote?: string;
   role?: string;
 }
 
@@ -119,7 +125,9 @@ function toSubSkill(r: CustomRubricInput): SubSkill {
   const scoringType: ScoringType = r.scoringType ?? 'skill';
   const rankingDirection: RankingDirection = r.rankingDirection ?? (scoringType === 'time' ? 'lower_is_better' : 'higher_is_better');
   const weight = r.weight != null && isFinite(r.weight) && r.weight > 0 ? r.weight : undefined;
-  return { key: r.key, label: r.label, scale, scoringType, unit: r.unit, minVal: r.minVal, maxVal: r.maxVal, rankingDirection, weight };
+  const benchmark = r.benchmark != null && isFinite(r.benchmark) ? r.benchmark : undefined;
+  const benchmarkNote = benchmark != null ? r.benchmarkNote?.trim() || undefined : undefined;
+  return { key: r.key, label: r.label, scale, scoringType, unit: r.unit, minVal: r.minVal, maxVal: r.maxVal, rankingDirection, weight, benchmark, benchmarkNote };
 }
 
 /**

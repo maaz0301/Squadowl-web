@@ -1,5 +1,6 @@
 'use client';
 
+import { duplicatePrompt, findPossibleDuplicates } from '@/data/duplicates';
 import { useTerms, sportLabel } from '@/lib/terms';
 import { useState } from 'react';
 import Link from 'next/link';
@@ -20,7 +21,7 @@ export default function SeasonRosterPage() {
   const terms = useTerms();
   const id = useSeasonId();
   const colors = useThemeColors();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const seasonQuery = useSeasonQuery(id);
   // The list reads its own paged query rather than season.roster: a season with
   // a club-sized roster took several round trips to assemble that array, and
@@ -61,6 +62,14 @@ export default function SeasonRosterPage() {
   const handleAdd = async () => {
     if (!firstName.trim() || !lastName.trim() || !id) return;
     const name = `${firstName.trim()} ${lastName.trim()}`;
+    const matches = findPossibleDuplicates(
+      { first: firstName, last: lastName, playerEmail, guardianEmail },
+      players.map((p) => ({ first: p.firstName, last: p.lastName, playerEmail: p.playerEmail, guardianEmail: p.guardianEmail, jersey: p.jersey })),
+    );
+    if (matches.length > 0) {
+      const ok = await confirm({ title: 'Possible duplicate', message: duplicatePrompt(matches, name), confirmLabel: 'Add anyway' });
+      if (!ok) return;
+    }
     const player = await addPlayer.mutateAsync({
       seasonId: id,
       player: {

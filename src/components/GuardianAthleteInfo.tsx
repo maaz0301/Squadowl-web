@@ -21,7 +21,7 @@ import {
   useRemoveFamilyContactMutation,
   useUpdateGuardianAthleteMutation,
 } from '@/features/queries';
-import { formatBirth } from '@/lib/birthDate';
+import { FUTURE_BIRTH_MESSAGE, formatBirth, isFutureBirth } from '@/lib/birthDate';
 
 function InfoRow({ label, value, last }: { label: string; value?: string; last?: boolean }) {
   const colors = useThemeColors();
@@ -95,6 +95,10 @@ export function GuardianAthleteInfo({
   const save = async () => {
     if (!form.first.trim() || !form.last.trim()) {
       await alert('Missing Info', 'First and last name are required.');
+      return;
+    }
+    if (isFutureBirth(form.yearOfBirth, form.dateOfBirth)) {
+      await alert('Check the date of birth', FUTURE_BIRTH_MESSAGE);
       return;
     }
     try {

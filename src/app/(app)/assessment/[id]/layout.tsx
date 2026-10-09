@@ -55,7 +55,7 @@ export default function AssessmentLayout({
   useTryoutRealtimeSync(id);
 
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const pendingRegs = usePendingRegistrationCountQuery(id).data ?? 0;
 
   // See useIsAssessorOnly: the tryout's own `viewerIsOwner` decides, so

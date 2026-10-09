@@ -15,7 +15,7 @@ export default function ComparePage() {
   const href = useAssessmentHref();
   const colors = useThemeColors();
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const aiCompare = useAiCompareMutation(id!);
   const [selected, setSelected] = useState<string[]>([]);
 

@@ -6,13 +6,12 @@ import type { Team } from '@/data/types';
 import { useUser } from '@/state/authStore';
 
 /**
- * The plan level a delegated team runs at, shown next to its name. It is the
- * team owner's plan, so every manager of the team sees the same level; upgrading
- * it is up to the owner's account.
+ * The access a manager has on a delegated team, shown next to its name: Coach
+ * access (or their own plan, if higher). The owning club's plan stays with the club.
  */
 export function TeamPlanBadge({ team }: { team: Pick<Team, 'managed' | 'ownerPlanTier'> }) {
   const user = useUser();
-  if (!team.managed || !team.ownerPlanTier) return null;
+  if (!team.managed) return null;
   const tier = effectiveTierForTeam(team, user?.planTier ?? 'free');
-  return <Badge label={`${getPlanDefinition(tier).name} level`} variant="brand" />;
+  return <Badge label={`${getPlanDefinition(tier).name} access`} variant="brand" />;
 }

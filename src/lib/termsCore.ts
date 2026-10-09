@@ -1,4 +1,5 @@
 import type { CustomLabels } from '@/data/types';
+import { sportProfile } from '@/data/sportProfile';
 
 /**
  * The few terms an account can rename. Everything defaults to the standard
@@ -30,12 +31,17 @@ export function pluralize(word: string): string {
 
 export const cleanLabel = (v: string | undefined) => (v ?? '').trim().slice(0, LABEL_MAX_LENGTH);
 
-export function resolveTerms(labels?: CustomLabels | null): Terms {
-  const player = cleanLabel(labels?.player) || DEFAULT_TERMS.player;
+/**
+ * `sport` supplies the defaults a sport has for its own words (a skating team
+ * has "Skaters", not "Players"); anything the account or evaluation renamed wins.
+ */
+export function resolveTerms(labels?: CustomLabels | null, sport?: string | null): Terms {
+  const profile = sportProfile(sport);
+  const player = cleanLabel(labels?.player) || profile.player;
   return {
     player,
-    players: cleanLabel(labels?.player) ? pluralize(player) : DEFAULT_TERMS.players,
-    jersey: cleanLabel(labels?.jersey) || DEFAULT_TERMS.jersey,
+    players: cleanLabel(labels?.player) || profile.player !== DEFAULT_TERMS.player ? pluralize(player) : DEFAULT_TERMS.players,
+    jersey: cleanLabel(labels?.jersey) || profile.numberLabel,
     sport: cleanLabel(labels?.sport) || DEFAULT_TERMS.sport,
   };
 }
@@ -81,6 +87,6 @@ export function sportLabel(sport: string | undefined, terms: Terms): string {
 }
 
 /** The wording rewriter for an evaluation's exports, straight from its own settings. */
-export function termsFor(tryout: { settings?: { customLabels?: CustomLabels } }): (text: string) => string {
-  return makeT(resolveTerms(tryout.settings?.customLabels));
+export function termsFor(tryout: { sport?: string | null; settings?: { customLabels?: CustomLabels } }): (text: string) => string {
+  return makeT(resolveTerms(tryout.settings?.customLabels, tryout.sport));
 }

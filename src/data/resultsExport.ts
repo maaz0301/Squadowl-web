@@ -1,6 +1,6 @@
 import { termsFor } from '@/lib/termsCore';
 import type { Evaluation, Player, RankingDirection, ScoringType, Tryout } from './types';
-import { computePlayerResults } from './scoring';
+import { compareResultsBestFirst, computePlayerResults } from './scoring';
 import {
   binaryLabels,
   getPlayerCategories,
@@ -201,7 +201,7 @@ function rankLabels(
 /** The ranked results table: one row per player, one column per rubric in use. */
 export function buildResultsSummary(tryout: Tryout): ResultsSummary {
   const columns = resultsColumns(tryout);
-  const results = computePlayerResults(tryout).slice().sort((a, b) => b.overall - a.overall);
+  const results = computePlayerResults(tryout).slice().sort(compareResultsBestFirst(tryout));
   const evalsByPlayer = evalsByPlayerId(tryout);
 
   const infoLines: string[][] = [
@@ -250,13 +250,87 @@ export function buildReportDocInfo(tryout: Tryout): ReportDocInfo {
 }
 
 /** How the printed report orders the players. */
-export type ReportSort = 'jersey' | 'name' | 'results';
+export type ReportSort =
+  | 'jersey'
+  | 'name'
+  | 'firstName'
+  | 'ageYoungest'
+  | 'ageOldest'
+  | 'results'
+  | 'resultsWorst'
+  | 'position';
 
-export const REPORT_SORT_OPTIONS: { key: ReportSort; label: string }[] = [
-  { key: 'jersey', label: 'Jersey #' },
-  { key: 'name', label: 'A–Z (last name)' },
-  { key: 'results', label: 'Results (best first)' },
-];
+/**
+ * The sort choices. The number option reads "Jersey #" unless the evaluation
+ * renames it (e.g. to "Skate Ontario #"), which is how that number is kept.
+ */
+export function reportSortOptions(tryout?: Tryout): { key: ReportSort; label: string }[] {
+  const numberLabel = tryout ? `${termsFor(tryout)('Jersey')} #` : 'Jersey #';
+  return [
+    { key: 'jersey', label: numberLabel },
+    { key: 'name', label: 'Last name A–Z' },
+    { key: 'firstName', label: 'First name A–Z' },
+    { key: 'ageYoungest', label: 'Age: youngest to oldest' },
+    { key: 'ageOldest', label: 'Age: oldest to youngest' },
+    { key: 'results', label: 'Results: best first' },
+    { key: 'resultsWorst', label: 'Results: worst first' },
+    { key: 'position', label: 'Position' },
+  ];
+}
+
+export const REPORT_SORT_OPTIONS = reportSortOptions();
+
+/**
+ * Which players the printed report includes. Every field is optional and they
+ * combine: a player must pass all that are set. Empty means everyone.
+ */
+export interface ReportFilter {
+  /** Only the best N players by overall result. */
+  topX?: number;
+  /** Only these positions. */
+  positions?: string[];
+  /** Only these birth years. */
+  birthYears?: string[];
+  /** Leave out players with no evaluations yet. */
+  scoredOnly?: boolean;
+  /** Only players whose overall score is at least this. */
+  minScore?: number;
+}
+
+export function isReportFilterActive(f: ReportFilter | undefined): boolean {
+  return !!f && (f.topX != null || !!f.positions?.length || !!f.birthYears?.length || !!f.scoredOnly || f.minScore != null);
+}
+
+/** Year a player was born, from the full date when known. */
+function birthYearOf(p: Player): string {
+  if (p.dateOfBirth && /^\d{4}/.test(p.dateOfBirth)) return p.dateOfBirth.slice(0, 4);
+  return (p.yearOfBirth ?? '').trim();
+}
+
+/** Birth moment as a number, for ordering by age; unknown ages come back as NaN. */
+function birthTime(p: Player): number {
+  if (p.dateOfBirth) {
+    const t = Date.parse(p.dateOfBirth);
+    if (!Number.isNaN(t)) return t;
+  }
+  const y = parseInt(p.yearOfBirth ?? '', 10);
+  return Number.isNaN(y) ? NaN : Date.UTC(y, 0, 1);
+}
+
+/** The positions and birth years present on the roster, for the filter pickers. */
+export function reportFilterChoices(tryout: Tryout): { positions: string[]; birthYears: string[] } {
+  const positions = new Set<string>();
+  const years = new Set<string>();
+  for (const p of tryout.roster) {
+    if (p.pos?.trim()) positions.add(p.pos.trim());
+    const y = birthYearOf(p);
+    if (y) years.add(y);
+  }
+  return {
+    positions: [...positions].sort((a, b) => a.localeCompare(b)),
+    birthYears: [...years].sort(),
+  };
+}
 
 /**
  * One record per roster player, ordered by jersey number (the way a coach
@@ -264,7 +338,11 @@ export const REPORT_SORT_OPTIONS: { key: ReportSort; label: string }[] = [
  * the whole roster, plus each evaluation's raw sub-skill values. Feeds both
  * the printed PDF report and the full-results CSV.
  */
-export function buildPlayerFullResults(tryout: Tryout, sort: ReportSort = 'jersey'): PlayerFullResults[] {
+export function buildPlayerFullResults(
+  tryout: Tryout,
+  sort: ReportSort = 'jersey',
+  filter?: ReportFilter,
+): PlayerFullResults[] {
   const results = computePlayerResults(tryout);
   const resultsById = new Map(results.map((r) => [r.player.id, r]));
   const evalsByPlayer = evalsByPlayerId(tryout);
@@ -283,19 +361,79 @@ export function buildPlayerFullResults(tryout: Tryout, sort: ReportSort = 'jerse
     ]),
   );
 
+  const bestFirst = compareResultsBestFirst(tryout);
   const byLastName = (a: Player, b: Player) =>
     `${a.last ?? ''} ${a.first ?? ''}`.trim().localeCompare(`${b.last ?? ''} ${b.first ?? ''}`.trim(), undefined, { sensitivity: 'base' });
-  const ordered = tryout.roster.slice().sort((a, b) => {
-    if (sort === 'name') return byLastName(a, b);
-    if (sort === 'results') {
-      // Best overall first; players with no evaluations yet go last, in name order.
-      const ra = resultsById.get(a.id);
-      const rb = resultsById.get(b.id);
-      const sa = ra?.evalCount ? ra.overall : -Infinity;
-      const sb = rb?.evalCount ? rb.overall : -Infinity;
-      if (sa !== sb) return sb - sa;
+  const byFirstName = (a: Player, b: Player) =>
+    `${a.first ?? ''} ${a.last ?? ''}`.trim().localeCompare(`${b.first ?? ''} ${b.last ?? ''}`.trim(), undefined, { sensitivity: 'base' });
+  /** Best result first; players with no evaluations yet go last, in name order. */
+  const byResults = (a: Player, b: Player) => {
+    const ra = resultsById.get(a.id);
+    const rb = resultsById.get(b.id);
+    if (!ra?.evalCount || !rb?.evalCount) {
+      if (ra?.evalCount) return -1;
+      if (rb?.evalCount) return 1;
       return byLastName(a, b);
     }
+    return bestFirst(ra, rb);
+  };
+  /** Worst result first; unscored players still go last. */
+  const byWorstResults = (a: Player, b: Player) => {
+    const ra = resultsById.get(a.id);
+    const rb = resultsById.get(b.id);
+    if (!ra?.evalCount || !rb?.evalCount) {
+      if (ra?.evalCount) return -1;
+      if (rb?.evalCount) return 1;
+      return byLastName(a, b);
+    }
+    return bestFirst(rb, ra);
+  };
+  /** Ages ascending by birth time; players with no known age go last. */
+  const byAge = (direction: 1 | -1) => (a: Player, b: Player) => {
+    const ta = birthTime(a);
+    const tb = birthTime(b);
+    if (Number.isNaN(ta) || Number.isNaN(tb)) {
+      if (!Number.isNaN(ta)) return -1;
+      if (!Number.isNaN(tb)) return 1;
+      return byLastName(a, b);
+    }
+    return ta === tb ? byLastName(a, b) : (tb - ta) * direction;
+  };
+  const byPosition = (a: Player, b: Player) => {
+    const pa = (a.pos ?? '').trim();
+    const pb = (b.pos ?? '').trim();
+    if (!pa || !pb) return pa ? -1 : pb ? 1 : byLastName(a, b);
+    return pa.localeCompare(pb) || byLastName(a, b);
+  };
+
+  // The filter looks at overall results, so "top X" is the best X of everyone
+  // who passes the rest, and ranks printed on the cards stay against the full roster.
+  let pool = tryout.roster.slice();
+  if (filter?.positions?.length) pool = pool.filter((p) => filter.positions!.includes((p.pos ?? '').trim()));
+  if (filter?.birthYears?.length) pool = pool.filter((p) => filter.birthYears!.includes(birthYearOf(p)));
+  if (filter?.scoredOnly) pool = pool.filter((p) => !!resultsById.get(p.id)?.evalCount);
+  if (filter?.minScore != null) {
+    const min = filter.minScore;
+    pool = pool.filter((p) => {
+      const r = resultsById.get(p.id);
+      return !!r?.evalCount && r.overall >= min;
+    });
+  }
+  if (filter?.topX != null && filter.topX > 0) {
+    pool = pool
+      .filter((p) => !!resultsById.get(p.id)?.evalCount)
+      .sort(byResults)
+      .slice(0, Math.floor(filter.topX));
+  }
+
+  const ordered = pool.sort((a, b) => {
+    if (sort === 'name') return byLastName(a, b);
+    if (sort === 'firstName') return byFirstName(a, b);
+    if (sort === 'results') return byResults(a, b);
+    if (sort === 'resultsWorst') return byWorstResults(a, b);
+    if (sort === 'ageYoungest') return byAge(1)(a, b);
+    if (sort === 'ageOldest') return byAge(-1)(a, b);
+    if (sort === 'position') return byPosition(a, b);
     const byJersey = jerseySortKey(a.jersey) - jerseySortKey(b.jersey);
     if (byJersey !== 0) return byJersey;
     return playerDisplayName(a).localeCompare(playerDisplayName(b));
@@ -348,7 +486,7 @@ export function buildPlayerFullResults(tryout: Tryout, sort: ReportSort = 'jerse
 const EVAL_CHUNK_SIZE = 8;
 
 /** The full-results report as CSV rows: info header, then one block of rows per player (PLYR/CAT/STR/IMP + chunked eval tables). */
-export function buildFullResultsCsvRows(tryout: Tryout): FullResultsCsv {
+export function buildFullResultsCsvRows(tryout: Tryout, sort?: ReportSort, filter?: ReportFilter): FullResultsCsv {
   const infoLines: (string | number)[][] = [
     [
       'Assessment', tryout.name,
@@ -360,7 +498,7 @@ export function buildFullResultsCsvRows(tryout: Tryout): FullResultsCsv {
     ['Generated', new Date().toISOString(), 'Format', 'Portrait full results with score/rank columns'],
   ];
 
-  const playerBlocks = buildPlayerFullResults(tryout).map((card) => {
+  const playerBlocks = buildPlayerFullResults(tryout, sort, filter).map((card) => {
     const rows: (string | number)[][] = [];
 
     rows.push([

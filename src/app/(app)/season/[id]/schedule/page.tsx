@@ -22,6 +22,7 @@ import {
   Spinner,
   TimeField,
   useAlert,
+  Switch,
 } from '@/components/ui';
 import {
   useSeasonQuery,
@@ -151,7 +152,7 @@ export default function SeasonSchedulePage() {
       }
     },
     async (errors) => {
-      const msg = errors.date?.message || errors.title?.message || errors.repeatUntil?.message || 'Please check the required fields and date format.';
+      const msg = errors.date?.message || errors.title?.message || errors.location?.message || errors.repeatUntil?.message || 'Please check the required fields and date format.';
       await alert('Validation Error', msg);
     },
   );
@@ -327,17 +328,27 @@ export default function SeasonSchedulePage() {
             <Controller
               control={control}
               name="location"
-              render={({ field }) => (
-                <div>
-                  <Input
-                    label="Location"
-                    placeholder="Venue and street address"
-                    {...field}
-                    value={field.value ?? ''}
-                  />
-                  <MapLocationHint location={field.value} />
-                </div>
-              )}
+              render={({ field, fieldState }) => {
+                const tbd = (field.value ?? '').trim().toUpperCase() === 'TBD';
+                return (
+                  <div>
+                    <Input
+                      label="Location"
+                      placeholder="Venue and street address"
+                      {...field}
+                      value={tbd ? '' : (field.value ?? '')}
+                      disabled={tbd}
+                      error={fieldState.error?.message}
+                    />
+                    <Switch
+                      checked={tbd}
+                      onChange={(on) => field.onChange(on ? 'TBD' : '')}
+                      label="Location to be decided (TBD)"
+                    />
+                    <MapLocationHint location={field.value} />
+                  </div>
+                );
+              }}
             />
             {editingEventId ? null : (
               <Controller

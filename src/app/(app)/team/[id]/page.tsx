@@ -30,6 +30,7 @@ import {
   Spinner,
   TimeField,
   useAlert,
+  Switch,
 } from '@/components/ui';
 import { DURATION_OPTIONS, durationOf, endFromDuration, formatDuration } from '@/data/timeRange';
 import {
@@ -80,7 +81,7 @@ import { useDummyDataBlockedTiers } from '@/features/useCanUseDummyData';
 import { DUMMY_LIMITS, clampOption } from '@/data/testDataGenerator';
 import { capImportRows, dropExistingPlayers, withSkippedRows } from '@/data/bulkTeamImport';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
-import { CreateEventFormSchema, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent, type TeamInviteResult } from '@/data/types';
+import { CreateEventFormSchema, SPORTS, type AddPlayerForm as AddPlayerFormValues, type CreateEventForm, type EventKind, type SeasonEvent, type Sport, type TeamInviteResult } from '@/data/types';
 import { LimitReachedModal } from '@/components/LimitReachedModal';
 import { TeamManagersCard } from '@/components/TeamManagersCard';
 import { LetterTemplatesManager } from '@/components/letters/LetterTemplatesManager';
@@ -150,7 +151,6 @@ function PlayerDetailRow({ label, value, colors }: { label: string; value?: stri
 }
 
 export default function TeamDetailPage() {
-  const terms = useTerms();
   const routeParams = useParams();
   const id = Array.isArray(routeParams?.id) ? routeParams.id[0] : (routeParams?.id as string);
   const colors = useThemeColors();
@@ -165,6 +165,8 @@ export default function TeamDetailPage() {
   const { alert, confirm } = useAlert();
   const inviteSavedContacts = useInviteSavedFamilyContacts();
   const teamsQuery = useTeamsQuery();
+  // The team's sport sets the default wording (Skaters, not Players, for skating).
+  const terms = useTerms(undefined, teamsQuery.data?.find((t) => t.id === id)?.sport);
   useDocumentTitle(teamsQuery.data?.find((t) => t.id === id)?.name);
   // A manager removed while this team is open: the team drops out of their list
   // on the next refresh. Say so and go back to Teams, rather than leave them on
@@ -210,6 +212,7 @@ export default function TeamDetailPage() {
   const qc = useQueryClient();
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
+  const [editSport, setEditSport] = useState('');
   const [name, setName] = useState('');
   const [season, setSeason] = useState('');
   const [brandColor, setBrandColor] = useState<string | null>(null);
@@ -1097,6 +1100,7 @@ export default function TeamDetailPage() {
         [
           errors.title?.message,
           errors.date?.message,
+          errors.location?.message,
           errors.endTime ? 'The event ends before it starts. Pick a duration to set a new end.' : undefined,
           errors.endDate?.message,
           errors.repeatUntil?.message,
@@ -1121,6 +1125,7 @@ export default function TeamDetailPage() {
   const startEdit = () => {
     setName(team.name);
     setSeason(team.season ?? '');
+    setEditSport(team.sport ?? '');
     setCollectsFees(team.collectsFees ?? false);
     setFeeInput(team.registrationFeeCents ? (team.registrationFeeCents / 100).toFixed(2) : '');
     setBrandColor(team.brandColor ?? null);
@@ -1145,6 +1150,8 @@ export default function TeamDetailPage() {
         updates: {
           name: name.trim(),
           season: season.trim() || undefined,
+          // Only sent when it changed, so a save never touches the column otherwise.
+          ...(editSport !== (team.sport ?? '') ? { sport: editSport } : {}),
           brandColor: brandColor ?? '',
           ...feeUpdates,
         },
@@ -2011,6 +2018,16 @@ export default function TeamDetailPage() {
           <Input label="Team name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Season" value={season} onChange={(e) => setSeason(e.target.value)} />
 
+          <div className="flex flex-col gap-2">
+            <SectionLabel>Sport</SectionLabel>
+            <div className="flex flex-wrap gap-2">
+              <Chip label="Not set" active={editSport === ''} onClick={() => setEditSport('')} />
+              {SPORTS.map((s) => (
+                <Chip key={s} label={s} active={editSport === s} onClick={() => setEditSport(s)} />
+              ))}
+            </div>
+          </div>
+
           <TeamColorPicker value={brandColor} onChange={setBrandColor} />
 
           {canCollectFees ? (
@@ -2305,6 +2322,8 @@ export default function TeamDetailPage() {
         hideDefaultFooter
       >
         <AddPlayerForm
+          existingPlayers={fullRosterQuery.data ?? listedPlayers}
+          sport={(team.sport as Sport | undefined) ?? undefined}
           loading={addManualPlayer.isPending || uploadTeamPlayerPhoto.isPending || sendInvites.isPending}
           onSubmit={submitManualPlayer}
           showInvite
@@ -2399,17 +2418,27 @@ export default function TeamDetailPage() {
             <Controller
               control={eventForm.control}
               name="location"
-              render={({ field }) => (
-                <div>
-                  <Input
-                    label="Location"
-                    placeholder="Venue and street address"
-                    {...field}
-                    value={field.value ?? ''}
-                  />
-                  <MapLocationHint location={field.value} />
-                </div>
-              )}
+              render={({ field, fieldState }) => {
+                const tbd = (field.value ?? '').trim().toUpperCase() === 'TBD';
+                return (
+                  <div>
+                    <Input
+                      label="Location"
+                      placeholder="Venue and street address"
+                      {...field}
+                      value={tbd ? '' : (field.value ?? '')}
+                      disabled={tbd}
+                      error={fieldState.error?.message}
+                    />
+                    <Switch
+                      checked={tbd}
+                      onChange={(on) => field.onChange(on ? 'TBD' : '')}
+                      label="Location to be decided (TBD)"
+                    />
+                    <MapLocationHint location={field.value} />
+                  </div>
+                );
+              }}
             />
             {editingEventId ? null : (
               <Controller

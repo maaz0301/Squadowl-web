@@ -48,7 +48,10 @@ describe('storage meter', () => {
     expect(storageFraction(quota / 2, quota)).toBe(0.5);
   });
   it('labels usage like 2.3 GB / 5 GB used', () => {
-    expect(storageMeterLabel(2.3 * BYTES_PER_GB, quota)).toBe('2.3 GB / 5.0 GB used');
+    expect(storageMeterLabel(2.3 * BYTES_PER_GB, quota)).toBe('2.3 GB / 5.0 GB used (46%)');
+    expect(storageMeterLabel(0, quota)).toBe('0 MB / 5.0 GB used (0%)');
+    expect(storageMeterLabel(1, quota)).toContain('(1%)');
+    expect(storageMeterLabel(quota * 2, quota)).toContain('(100%)');
     expect(formatBytes(480 * 1048576)).toBe('0.47 GB');
     expect(formatBytes(50 * 1048576)).toBe('50 MB');
     expect(formatBytes(0)).toBe('0 MB');

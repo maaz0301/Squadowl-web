@@ -62,6 +62,21 @@ export function withYear(parts: BirthDateParts, year: string): BirthDateParts {
   return next;
 }
 
+/**
+ * True when a birth is after today: a year past this one, or a full date later
+ * than today. Anything missing or unreadable is not "in the future".
+ */
+export function isFutureBirth(yearOfBirth?: string | null, dateOfBirth?: string | null, now: Date = new Date()): boolean {
+  const year = Number((yearOfBirth ?? '').trim());
+  if (/^\d{4}$/.test((yearOfBirth ?? '').trim()) && year > now.getFullYear()) return true;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((dateOfBirth ?? '').trim());
+  if (!m) return false;
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  return (dateOfBirth ?? '').trim() > today;
+}
+
+export const FUTURE_BIRTH_MESSAGE = 'Date of birth cannot be in the future';
+
 const MONTH_BY_NAME: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
 };

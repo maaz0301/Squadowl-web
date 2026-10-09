@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
-import { MONTHS, buildDateOfBirth, daysInMonth, splitDateOfBirth, withYear } from '@/lib/birthDate';
+import { FUTURE_BIRTH_MESSAGE, MONTHS, buildDateOfBirth, daysInMonth, isFutureBirth, splitDateOfBirth, withYear } from '@/lib/birthDate';
 import { FieldShell, useFieldStyle } from './Input';
 import { COUNTRY_CODES } from './countryCodes';
 
@@ -180,7 +180,8 @@ interface BirthDateFieldProps {
  * Year, month and day of birth. The year alone is still a complete answer (the
  * month and day are optional); choosing all three records the full date.
  */
-export function BirthDateField({ label, year = '', dateOfBirth = '', onChange, error }: BirthDateFieldProps) {
+export function BirthDateField({ label, year = '', dateOfBirth = '', onChange, error: errorProp }: BirthDateFieldProps) {
+  const error = errorProp || (isFutureBirth(year, dateOfBirth) ? FUTURE_BIRTH_MESSAGE : undefined);
   const fieldStyle = useFieldStyle(error);
   const parts = splitDateOfBirth(dateOfBirth);
   // A month and day picked before the date was complete live only here until

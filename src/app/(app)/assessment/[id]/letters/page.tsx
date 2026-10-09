@@ -55,7 +55,7 @@ export default function LettersPage() {
   const user = useUser();
 
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const teamsQuery = useTeamsQuery();
   const templatesQuery = useLetterTemplatesQuery();
   const lettersQuery = usePlayerLettersQuery(id);

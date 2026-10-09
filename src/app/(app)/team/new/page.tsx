@@ -17,7 +17,7 @@ import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { getDataSource } from '@/data';
 import { queryKeys } from '@/lib/queryClient';
 import type { DummyTeamOptions } from '@/data/testDataGenerator';
-import type { Team } from '@/data/types';
+import { SPORTS, type Sport, type Team } from '@/data/types';
 import {
   useClearDummyTeamsMutation,
   useCreateSeasonMutation,
@@ -67,6 +67,7 @@ export default function NewTeamPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [logo, setLogo] = useState<{ uri: string; type: string } | null>(null);
   const [brandColor, setBrandColor] = useState<string | null>(null);
+  const [sport, setSport] = useState<Sport>('Hockey');
   const [collectsFees, setCollectsFees] = useState(false);
   const [feeInput, setFeeInput] = useState('');
   const [managerEmail, setManagerEmail] = useState('');
@@ -163,7 +164,7 @@ export default function NewTeamPage() {
     }
     let team: Team;
     try {
-      team = await createTeam.mutateAsync({ name: data.name, season: data.season });
+      team = await createTeam.mutateAsync({ name: data.name, season: data.season, sport });
     } catch (e) {
       await alert('Error', e instanceof Error ? e.message : 'Failed to create team.');
       return;
@@ -197,7 +198,7 @@ export default function NewTeamPage() {
         .mutateAsync({
           name: data.season ? `${data.name} ${data.season}` : `${data.name} Season`,
           teamName: data.name,
-          sport: 'Hockey',
+          sport,
           year: data.season,
           teamId: team.id,
         })
@@ -337,6 +338,18 @@ export default function NewTeamPage() {
               name="season"
               render={({ field }) => <Input label="Season (optional)" {...field} value={field.value ?? ''} />}
             />
+
+            <div className="flex flex-col gap-2">
+              <SectionLabel>Sport</SectionLabel>
+              <div className="flex flex-wrap gap-2">
+                {SPORTS.map((s) => (
+                  <Chip key={s} label={s} active={sport === s} onClick={() => setSport(s)} />
+                ))}
+              </div>
+              <p className="text-xs" style={{ color: colors.inkMuted }}>
+                Player cards, labels and the sign-up form follow the sport (a skating team has Skaters, with no positions).
+              </p>
+            </div>
 
             <TeamColorPicker value={brandColor} onChange={setBrandColor} label="Team colour (optional)" />
 

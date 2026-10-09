@@ -27,7 +27,12 @@ import {
   weightedOverall,
 } from '@/data/rubrics';
 import { RECOMMENDATIONS, ScoreFormSchema, type ScoreForm } from '@/data/types';
-import { useSaveEvaluationMutation, useSessionProgressQuery, useTryoutQuery } from '@/features/queries';
+import {
+  useDeleteEvaluationMutation,
+  useSaveEvaluationMutation,
+  useSessionProgressQuery,
+  useTryoutQuery,
+} from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { useCompleteAssessing } from '@/features/useCompleteAssessing';
 import { useSessionStore } from '@/state/sessionStore';
@@ -46,10 +51,10 @@ export default function ScorePage() {
 
   const colors = useThemeColors();
   const router = useRouter();
-  const { alert } = useAlert();
+  const { alert, confirm } = useAlert();
   const [saving, setSaving] = useState(false);
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   const { canComplete, completing, complete } = useCompleteAssessing(tryoutQuery.data);
   // Same resolution as the layout's tab-hiding — see useIsAssessorOnly. Read
   // here rather than beside its first use below so setParams can keep the URL
@@ -57,6 +62,7 @@ export default function ScorePage() {
   // rewrite instead of carrying it around inertly.
   const isAssessorOnly = useIsAssessorOnly(tryoutQuery.data?.viewerIsOwner);
   const saveEval = useSaveEvaluationMutation(id!);
+  const deleteEval = useDeleteEvaluationMutation(id!);
   const workingScores = useSessionStore((s) => s.workingScores);
   const setWorkingScores = useSessionStore((s) => s.setWorkingScores);
   const clearWorkingScores = useSessionStore((s) => s.clearWorkingScores);
@@ -397,6 +403,32 @@ export default function ScorePage() {
   const isEditing = !!evalId;
   const firstUnscoredIdx = SESSIONS.findIndex((s) => !scoredSessions.has(s) && !isServerScored(s));
 
+  const removeSession = async () => {
+    if (!evalId) return;
+    const ok = await confirm({
+      title: 'Remove this session?',
+      message: `All scores for ${currentSession} will be deleted for ${playerDisplayName(player)}. This cannot be undone.`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      setSaving(true);
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+        autoSaveTimeoutRef.current = null;
+      }
+      await deleteEval.mutateAsync(evalId);
+      previousFormRef.current = '';
+      clearWorkingScores();
+      router.push(href(`player/${playerId}`));
+    } catch (err) {
+      await alert('Error', err instanceof Error ? err.message : 'Failed to remove the session.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // `closeAfter` leaves the scoring screen once saved, instead of moving on to the next session.
   const submit = (closeAfter: boolean) => handleSubmit(async (data) => {
     try {
@@ -419,6 +451,13 @@ export default function ScorePage() {
       if (previousFormRef.current !== currentFormStr) {
         const hasScores = data.scores && Object.values(data.scores).some((v) => v != null && v > 0);
         if (!hasScores) {
+          // Every score was cleared on a saved session: that means "remove it".
+          // A save needs a score, so without this a wrong session was stuck.
+          if (evalId) {
+            setSaving(false);
+            await removeSession();
+            return;
+          }
           await alert('No scores entered', 'Please grade at least one subskill before saving.');
           setSaving(false);
           return;
@@ -560,12 +599,19 @@ export default function ScorePage() {
                 unit={s.unit}
                 minVal={s.minVal}
                 maxVal={s.maxVal}
+                benchmark={s.benchmark}
+                benchmarkNote={s.benchmarkNote}
                 rankingDirection={s.rankingDirection}
                 value={scores?.[s.key]}
                 onChange={(v) => {
                   const newScores = { ...workingScores, [s.key]: v };
                   setWorkingScores(newScores);
                   setValue('scores', newScores, { shouldDirty: true });
+                }}
+                onClear={() => {
+                  const { [s.key]: _removed, ...rest } = workingScores ?? {};
+                  setWorkingScores(rest);
+                  setValue('scores', rest, { shouldDirty: true });
                 }}
               />
             ))}
@@ -611,6 +657,9 @@ export default function ScorePage() {
         </p>
         <Button label={isEditing ? 'Save & Continue' : 'Done'} onClick={onSubmit} loading={saving} size="lg" />
         <Button label="Save & Close" variant="secondary" onClick={onSaveAndClose} disabled={saving} />
+        {isEditing ? (
+          <Button label="Remove this session" variant="ghost" onClick={removeSession} disabled={saving} />
+        ) : null}
         {canComplete ? (
           <Button
             label="Complete Assessing"

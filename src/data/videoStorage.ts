@@ -126,9 +126,16 @@ export function formatBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-/** "2.3 GB / 5 GB used". */
+/** "46%": whole percent used, never "0%" while something is stored, never above 100%. */
+export function storagePercent(usedBytes: number, quotaBytes: number): string {
+  const fraction = storageFraction(usedBytes, quotaBytes);
+  const pct = fraction > 0 && fraction < 0.01 ? 1 : Math.round(fraction * 100);
+  return `${pct}%`;
+}
+
+/** "2.3 GB / 5 GB used (46%)". */
 export function storageMeterLabel(usedBytes: number, quotaBytes: number): string {
-  return `${formatBytes(usedBytes)} / ${formatBytes(quotaBytes)} used`;
+  return `${formatBytes(usedBytes)} / ${formatBytes(quotaBytes)} used (${storagePercent(usedBytes, quotaBytes)})`;
 }
 
 export function formatPlanPrice(plan: VideoStoragePlan): string {

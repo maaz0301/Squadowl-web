@@ -10,6 +10,7 @@ import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useResultsQuery } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { getScoreHeatLevel, isGoaliePosition, playerDisplayName } from '@/data/rubrics';
+import { compareResultsBestFirst, formatMetricRaw, metricSummaries } from '@/data/scoring';
 
 export default function ResultsPage() {
   const id = useAssessmentId();
@@ -18,13 +19,13 @@ export default function ResultsPage() {
   const router = useRouter();
   const { data: tryout, results, isLoading, isError, refetch } = useResultsQuery(id);
   const isAssessorOnly = useIsAssessorOnly(tryout?.viewerIsOwner);
-  const terms = useTerms(tryout?.settings.customLabels);
+  const terms = useTerms(tryout?.settings.customLabels, tryout?.sport);
 
   if (isLoading) return <LoadingState message="Loading results..." />;
   if (isError || !tryout) return <ErrorState message="Could not load results." onRetry={() => refetch()} />;
   if (!tryout.viewerIsOwner) return <CoachOnlyState what="see the results" labels={tryout.settings.customLabels} />;
 
-  const sorted = [...results].sort((a, b) => b.overall - a.overall);
+  const sorted = [...results].sort(compareResultsBestFirst(tryout));
   const skaters = sorted.filter((r) => !isGoaliePosition(r.player.pos));
   const goalies = sorted.filter((r) => isGoaliePosition(r.player.pos));
 
@@ -34,7 +35,10 @@ export default function ResultsPage() {
         <Button label="Team Builder" size="sm" onClick={() => router.push(href('team-builder'))} />
         <Button label="Compare" size="sm" variant="secondary" onClick={() => router.push(href('compare'))} />
         {!isAssessorOnly ? (
-          <Button label="Export" size="sm" variant="secondary" onClick={() => router.push(href('export'))} />
+          <>
+            <Button label="Export" size="sm" variant="secondary" onClick={() => router.push(href('export'))} />
+            <Button label="Import" size="sm" variant="secondary" onClick={() => router.push(`${href('scan-sheet')}${href('scan-sheet').includes('?') ? '&' : '?'}from=results`)} />
+          </>
         ) : null}
         {sorted.length > 0 ? (
           <span className="ml-auto flex gap-2">
@@ -79,6 +83,15 @@ export default function ResultsPage() {
                     #{item.player.jersey ?? '—'} · {item.player.pos ?? '—'} · {item.evalCount} eval
                     {item.evalCount === 1 ? '' : 's'}
                   </span>
+                  {(() => {
+                    const metrics = metricSummaries(tryout, item.player);
+                    if (!metrics.length) return null;
+                    return (
+                      <span className="block truncate text-xs" style={{ color: colors.inkMuted }}>
+                        {metrics.map((m) => `${m.label} ${formatMetricRaw(m)}${m.capped ? ' (at max)' : ''}`).join(' · ')}
+                      </span>
+                    );
+                  })()}
                 </span>
                 <span className="flex flex-col items-end gap-1">
                   <span

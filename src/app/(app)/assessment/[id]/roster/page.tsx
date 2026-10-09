@@ -62,7 +62,7 @@ export default function RosterPage() {
   const { alert, confirm } = useAlert();
   const inviteSavedContacts = useInviteSavedFamilyContacts();
   const tryoutQuery = useTryoutQuery(id);
-  const terms = useTerms(tryoutQuery.data?.settings.customLabels);
+  const terms = useTerms(tryoutQuery.data?.settings.customLabels, tryoutQuery.data?.sport);
   // A team someone else owns is run on that team's plan, not the viewer's own.
   const effectiveTier = useEffectivePlanTier(tryoutQuery.data?.teamId);
   // Free plans share one pool of players across evaluations and teams.
@@ -612,6 +612,7 @@ export default function RosterPage() {
 
       <ImportPlayersModal
         labels={tryout.settings.customLabels}
+        sport={tryout.sport}
         visible={showImport}
         onClose={() => setShowImport(false)}
         target={tryout.name}
@@ -660,6 +661,7 @@ export default function RosterPage() {
 
       <Modal visible={showAdd} title={`Add ${terms.player}`} size="lg" onClose={() => setShowAdd(false)} hideDefaultFooter>
         <AddPlayerForm
+          existingPlayers={tryout.roster}
           loading={addPlayer.isPending || uploadPhoto.isPending || inviteParticipant.isPending}
           sport={tryout.sport}
           labels={tryout.settings.customLabels}
