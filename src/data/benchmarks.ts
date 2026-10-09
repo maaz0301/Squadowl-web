@@ -28,6 +28,20 @@ export function formatBenchmarkValue(sub: Pick<SubSkill, 'scoringType' | 'scale'
   return `${n}/${sub.scale === '1-10' ? 10 : 5}`;
 }
 
+/** The highest benchmark a rubric can take: its scale for a rating, 100 for an observation, no limit for a measurement. */
+export function benchmarkMax(sub: Pick<SubSkill, 'scoringType' | 'scale'>): number | undefined {
+  if (isMetricScoringType(sub.scoringType)) return undefined;
+  if (sub.scoringType === 'observation') return OBSERVATION_MAX;
+  return sub.scale === '1-10' ? 10 : 5;
+}
+
+/** A benchmark is a positive number that does not pass the rubric's own top score. */
+export function isValidBenchmark(sub: Pick<SubSkill, 'scoringType' | 'scale'>, value: number | undefined): boolean {
+  if (value == null || isNaN(value) || value <= 0) return false;
+  const max = benchmarkMax(sub);
+  return max == null || value <= max;
+}
+
 /** Whether a benchmark makes sense for a rubric: not for a yes/no style one. */
 export function canHaveBenchmark(scoringType: SubSkill['scoringType']): boolean {
   return !isBinaryScoringType(scoringType);

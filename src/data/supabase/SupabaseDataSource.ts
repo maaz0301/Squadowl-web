@@ -8124,7 +8124,7 @@ export class SupabaseDataSource implements DataSource {
       .from('athlete_account_access')
       .select('athlete_id')
       .eq('account_id', accountId);
-    const grantedIds = (grantRows ?? []).map((g: any) => g.athlete_id);
+    const grantedIds = (grantRows ?? []).map((g: { athlete_id: string }) => g.athlete_id);
 
     // The athletes read policy is costly per row, and a name filter in the
     // query makes the database run it on every athlete before it can answer,

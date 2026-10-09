@@ -1,3 +1,4 @@
+import { sportProfile } from '@/data/sportProfile';
 import { termsFor } from '@/lib/termsCore';
 import type { Evaluation, Player, RankingDirection, ScoringType, Tryout } from './types';
 import { compareResultsBestFirst, computePlayerResults } from './scoring';
@@ -274,7 +275,8 @@ export function reportSortOptions(tryout?: Tryout): { key: ReportSort; label: st
     { key: 'ageOldest', label: 'Age: oldest to youngest' },
     { key: 'results', label: 'Results: best first' },
     { key: 'resultsWorst', label: 'Results: worst first' },
-    { key: 'position', label: 'Position' },
+    // A sport with no positions (figure skating) has nothing to sort by here.
+    ...(tryout && !sportProfile(tryout.sport).positions ? [] : [{ key: 'position' as const, label: 'Position' }]),
   ];
 }
 

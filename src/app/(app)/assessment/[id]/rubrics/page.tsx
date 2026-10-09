@@ -15,7 +15,7 @@ import {
   Switch,
   useAlert,
 } from '@/components/ui';
-import { canHaveBenchmark, formatBenchmarkValue } from '@/data/benchmarks';
+import { benchmarkMax, canHaveBenchmark, formatBenchmarkValue, isValidBenchmark } from '@/data/benchmarks';
 import { PlanGate } from '@/components/PlanGate';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
@@ -75,7 +75,7 @@ export default function RubricsPage() {
   const weightValid = weightNum == null || (!isNaN(weightNum) && weightNum >= 1 && weightNum <= 100);
   const benchmarkNum = benchmarkStr.trim() !== '' ? parseFloat(benchmarkStr) : undefined;
   const benchmarkActive = benchmarkOn && canHaveBenchmark(scoringType);
-  const benchmarkValid = !benchmarkActive || (benchmarkNum != null && !isNaN(benchmarkNum));
+  const benchmarkValid = !benchmarkActive || isValidBenchmark({ scoringType, scale }, benchmarkNum);
 
   if (tryoutQuery.isLoading || !id) return <LoadingState message="Loading rubrics..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -517,7 +517,7 @@ export default function RubricsPage() {
                   />
                   {!benchmarkValid ? (
                     <p className="text-xs font-bold" style={{ color: colors.danger }}>
-                      Enter the benchmark as a number.
+                      {benchmarkMax({ scoringType, scale }) != null ? `Enter a number above 0 and up to ${benchmarkMax({ scoringType, scale })}.` : 'Enter a number above 0.'}
                     </p>
                   ) : (
                     <p className="text-xs" style={{ color: colors.inkMuted }}>

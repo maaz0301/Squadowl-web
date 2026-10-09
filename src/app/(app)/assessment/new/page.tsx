@@ -225,6 +225,7 @@ function NewAssessmentForm() {
       return;
     }
     setSubmitting(true);
+    let navigated = false;
     try {
       // The form renders before this has landed, so on a cold load the check
       // waits for it here rather than reading a not-yet-loaded 0 and waving the
@@ -283,9 +284,11 @@ function NewAssessmentForm() {
         }
       }
 
+      // Stay locked while the next page loads, or a second click makes a duplicate.
+      navigated = true;
       router.replace(`/assessment/${tryout.id}/settings`);
     } finally {
-      setSubmitting(false);
+      if (!navigated) setSubmitting(false);
     }
   });
 

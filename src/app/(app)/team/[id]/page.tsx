@@ -1458,7 +1458,7 @@ export default function TeamDetailPage() {
                                 if (visible.length === 0) {
                                   return (
                                     <p className="p-3 text-center text-xs" style={{ color: colors.inkMuted }}>
-                                      No players match &quot;{rsvpSearch}&quot;.
+                                      No {terms.players.toLowerCase()} match &quot;{rsvpSearch}&quot;.
                                     </p>
                                   );
                                 }
@@ -1707,16 +1707,16 @@ export default function TeamDetailPage() {
           ) : displayedPlayers.length === 0 && !playerSearch.trim() ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
-                No players yet
+                No {terms.players.toLowerCase()} yet
               </span>
               <span className="text-sm" style={{ color: colors.inkMuted }}>
-                Pull players in from any evaluation roster to build this team.
+                Pull {terms.players.toLowerCase()} in from any evaluation roster to build this team.
               </span>
             </Card>
           ) : displayedPlayers.length === 0 ? (
             <Card className="flex flex-col items-center gap-1 py-8 text-center">
               <span className="font-bold" style={{ color: colors.ink }}>
-                No players match &quot;{playerSearch}&quot;.
+                No {terms.players.toLowerCase()} match &quot;{playerSearch}&quot;.
               </span>
               <Button label="Clear search" variant="ghost" size="sm" onClick={() => setPlayerSearch('')} />
             </Card>
@@ -2206,7 +2206,7 @@ export default function TeamDetailPage() {
 
             {filteredCandidates.length === 0 ? (
               <p className="py-4 text-center text-sm" style={{ color: colors.inkMuted }}>
-                No players match &quot;{candidateSearch}&quot;.
+                No {terms.players.toLowerCase()} match &quot;{candidateSearch}&quot;.
               </p>
             ) : null}
             <div className="flex flex-col gap-2">

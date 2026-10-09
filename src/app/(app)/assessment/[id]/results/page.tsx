@@ -42,7 +42,7 @@ export default function ResultsPage() {
         ) : null}
         {sorted.length > 0 ? (
           <span className="ml-auto flex gap-2">
-            <Badge label={`${skaters.length} Skaters`} variant="brand" />
+            <Badge label={tryout.sport === 'Skating' ? `${skaters.length} ${skaters.length === 1 ? terms.player : terms.players}` : `${skaters.length} Skaters`} variant="brand" />
             {tryout.sport === 'Skating' ? null : <Badge label={`${goalies.length} Goalies`} variant="info" />}
           </span>
         ) : null}

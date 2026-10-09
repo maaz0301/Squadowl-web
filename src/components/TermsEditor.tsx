@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { Button, Card, Input, useAlert } from '@/components/ui';
 import type { CustomLabels } from '@/data/types';
+import { sportProfile } from '@/data/sportProfile';
 import { DEFAULT_TERMS, LABEL_MAX_LENGTH, pluralize } from '@/lib/terms';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
@@ -24,6 +25,7 @@ export function TermsEditor({
   onSave: (labels: CustomLabels) => Promise<void>;
 }) {
   const colors = useThemeColors();
+  const profile = sportProfile(evalSport);
   const { alert } = useAlert();
   const [player, setPlayer] = useState(value?.player ?? '');
   const [jersey, setJersey] = useState(value?.jersey ?? '');
@@ -59,7 +61,7 @@ export function TermsEditor({
         Rename terms for this evaluation only. Leave a field blank to keep the standard name.
       </p>
       <Input
-        label={`Player (default: ${DEFAULT_TERMS.player})`}
+        label={`Player (default: ${profile.player})`}
         value={player}
         onChange={(e) => setPlayer(e.target.value)}
         placeholder="e.g. Skater"
@@ -67,7 +69,7 @@ export function TermsEditor({
         hint={player.trim() ? `Plural shown as "${pluralize(player.trim())}".` : undefined}
       />
       <Input
-        label={`Jersey # (default: ${DEFAULT_TERMS.jersey})`}
+        label={`Number label (default: ${profile.numberLabel})`}
         value={jersey}
         onChange={(e) => setJersey(e.target.value)}
         placeholder="e.g. Skate Ontario #"
