@@ -66,10 +66,10 @@ export function HomeIntro({ active, onEvaluations, onTeams }: HomeIntroProps) {
     },
     {
       key: 'athletes',
-      label: 'Athletes',
-      caption: 'Add, manage and track athlete profiles',
+      label: 'Athlete Hub',
+      caption: 'Find, edit and report on every athlete',
       icon: 'registrations',
-      href: '/shared-athletes',
+      href: '/athlete-hub',
     },
   ];
 

@@ -118,9 +118,10 @@ export function prefetchTeamDetail(teamId: string): void {
   warm(queryKeys.tryouts(false), () => getDataSource().listTryouts(false));
 }
 
-/** The coach's inbox of athletes guardians have shared with them. */
-export function prefetchSharedAthletes(): void {
-  warm(queryKeys.sharedAthletes, () => getDataSource().getSharedAthletesForCoach());
+/** The Athlete Hub's list: every athlete under the account. */
+export function prefetchAthleteHub(): void {
+  // Nothing to warm: the hub reads one small page, which is quicker than the hover.
+  return;
 }
 
 /**
@@ -192,7 +193,7 @@ const BY_ROUTE: Record<string, (ctx: PrefetchContext) => void> = {
   '/reports': prefetchReports,
   '/search': prefetchSearch,
   '/archived-assessments': prefetchArchivedAssessments,
-  '/shared-athletes': prefetchSharedAthletes,
+  '/athlete-hub': prefetchAthleteHub,
   '/enterprise': prefetchEnterprise,
   '/payments': prefetchPayments,
   '/organization/members': prefetchOrgMembers,

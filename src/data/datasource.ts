@@ -335,6 +335,12 @@ export interface DataSource {
    */
   getSessionProgress(tryoutId: string): Promise<Record<string, number>>;
   listAthletes(): Promise<Athlete[]>;
+  /** Lean list for the Athlete Hub: names, photo, position and contacts only. */
+  listAthleteHub(
+    search: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ rows: Athlete[]; next: number | null }>;
   /**
    * How many different players are on the account's evaluation rosters and
    * team rosters together (removed players excluded). A player on both counts
@@ -582,6 +588,22 @@ export interface DataSource {
    * RPC). Only the guardian's link is cleared; the coach's roster and records stay.
    */
   removeGuardianAthlete(athleteId: string): Promise<void>;
+  /** The athlete's own details for the guardian's Info tab (no scores, no staff tenant needed). */
+  getGuardianAthleteInfo(athleteId: string): Promise<import('./types').Athlete>;
+  updateGuardianAthlete(
+    athleteId: string,
+    patch: {
+      first?: string;
+      last?: string;
+      yearOfBirth?: string;
+      dateOfBirth?: string;
+      playerEmail?: string;
+      guardianName?: string;
+      guardianPhone?: string;
+      medicalInfo?: string;
+      aboutChild?: string;
+    },
+  ): Promise<void>;
 
   // Extra family contacts a guardian keeps on their own athlete's profile
   // (see athlete_family_contacts migration for the access model).

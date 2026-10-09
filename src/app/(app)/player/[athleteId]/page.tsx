@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -214,6 +215,24 @@ export default function PlayerProfilePage() {
           )}
         </Card>
       ) : null}
+
+      {/* The evaluation's own player page holds scores, report cards and letters;
+          the team page holds the roster. Guardians and assessors never see these. */}
+      {isGuardian || role === 'assessor' || (profile.teams.length === 0 && profile.assessments.length === 0) ? null : (
+        <Card className="mb-4 flex flex-col gap-2">
+          <p className="font-display font-bold" style={{ color: colors.ink }}>Manage Player</p>
+          {profile.teams.map((t) => (
+            <Link key={`team-${t.teamId}`} href={`/team/${t.teamId}`}>
+              <Button label={`Open ${t.teamName}`} variant="secondary" />
+            </Link>
+          ))}
+          {profile.assessments.map((a) => (
+            <Link key={`eval-${a.participantId}`} href={`/assessment/${a.tryoutId}/player/${a.participantId}`}>
+              <Button label={`Reports in ${a.tryoutName}`} variant="ghost" />
+            </Link>
+          ))}
+        </Card>
+      )}
 
       {/* Assessment history is scores: the season-over-season averages, the
           trend and every evaluation's overall. It belongs to the coach who ran

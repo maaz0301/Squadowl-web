@@ -20,6 +20,7 @@ import { EventDiscussion } from '@/components/EventDiscussion';
 import { TeamFeed } from '@/components/teamHub/TeamFeed';
 import { useUser } from '@/state/authStore';
 import { MapLink } from '@/components/MapLink';
+import { GuardianAthleteInfo } from '@/components/GuardianAthleteInfo';
 
 type FlatEvent = SeasonEvent & { seasonName: string; teamName: string; seasonId: string };
 type GuardianSeason = GuardianRosterAthlete['seasons'][number];
@@ -286,7 +287,6 @@ export default function GuardianPortalPage() {
         title="Guardian Portal"
         showBack
         backHref="/dashboard"
-        right={<Button label="Share" size="sm" variant="secondary" onClick={() => router.push(`/guardian/${playerId}/share-directory`)} />}
       />
 
       <div className="mb-4 flex items-center gap-4">
@@ -407,31 +407,7 @@ export default function GuardianPortalPage() {
           </div>
         )
       ) : (
-        <div>
-          <Card className="mb-3">
-            <p className="mb-2 text-lg font-bold" style={{ color: colors.ink }}>
-              Basic Information
-            </p>
-            <div className="flex justify-between border-b py-2" style={{ borderColor: colors.border }}>
-              <span style={{ color: colors.inkMuted }}>First Name</span>
-              <span className="font-medium" style={{ color: colors.ink }}>{athlete.firstName}</span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span style={{ color: colors.inkMuted }}>Last Name</span>
-              <span className="font-medium" style={{ color: colors.ink }}>{athlete.lastName}</span>
-            </div>
-          </Card>
-
-          <Card>
-            <p className="mb-2 text-lg font-bold" style={{ color: colors.ink }}>
-              Account Link
-            </p>
-            <p className="text-sm" style={{ color: colors.inkMuted }}>
-              This athlete is linked to your guardian account. You will receive notifications and updates
-              regarding their seasons and team events.
-            </p>
-          </Card>
-        </div>
+        <GuardianAthleteInfo athleteId={athlete.id} firstName={athlete.firstName} lastName={athlete.lastName} />
       )}
 
     </>

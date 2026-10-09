@@ -177,7 +177,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     ? []
     : [
         { href: '/archived-assessments', label: 'Archived', icon: 'archive' },
-        { href: '/shared-athletes', label: 'Shared Athletes', icon: 'share' },
+        { href: '/athlete-hub', label: 'Athlete Hub', icon: 'teams' },
         ...(canUseFeature(planTier, 'enterprise')
           ? ([{ href: '/enterprise', label: 'Dashboard', icon: 'enterprise' }] as NavItem[])
           : []),

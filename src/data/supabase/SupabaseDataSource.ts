@@ -8087,6 +8087,69 @@ export class SupabaseDataSource implements DataSource {
     return ids.size;
   }
 
+  async listAthleteHub(
+    search: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ rows: Athlete[]; next: number | null }> {
+    const { supabase, accountId } = await this.ctx();
+    const { data: grantRows } = await supabase
+      .from('athlete_account_access')
+      .select('athlete_id')
+      .eq('account_id', accountId);
+    const grantedIds = (grantRows ?? []).map((g: any) => g.athlete_id);
+
+    // The athletes read policy is costly per row, and a name filter in the
+    // query makes the database run it on every athlete before it can answer,
+    // which times out on a large account. So the list is read in small id-ordered
+    // chunks (cheap, they stop early) and names are matched here instead.
+    const CHUNK = 200;
+    const MAX_SCAN = 4000;
+    const term = search.trim().toLowerCase();
+    const take = term ? CHUNK : limit;
+    const out: Athlete[] = [];
+    let pos = offset;
+    let exhausted = false;
+    while (out.length < limit && pos - offset < (term ? MAX_SCAN : take)) {
+      let q = supabase
+        .from('athletes')
+        .select('id, first_name, last_name, avatar_url, default_position, guardian_name, guardian_email, player_email')
+        // Ordered by id, not name, so the database can stop after one chunk.
+        .order('id')
+        .range(pos, pos + take - 1);
+      q = grantedIds.length
+        ? q.or(`account_id.eq.${accountId},id.in.(${grantedIds.join(',')})`)
+        : q.eq('account_id', accountId);
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as Row[];
+      for (const a of rows) {
+        const hay = [a.first_name, a.last_name, `${a.first_name ?? ''} ${a.last_name ?? ''}`, a.guardian_name]
+          .filter(Boolean)
+          .join(' | ')
+          .toLowerCase();
+        if (term && !hay.includes(term)) continue;
+        out.push({
+          id: a.id,
+          first: a.first_name ?? '',
+          last: a.last_name ?? '',
+          avatarUrl: a.avatar_url ?? undefined,
+          currentPosition: a.default_position ?? undefined,
+          guardianName: a.guardian_name ?? undefined,
+          guardianEmail: a.guardian_email ?? undefined,
+          playerEmail: a.player_email ?? undefined,
+        });
+      }
+      pos += rows.length;
+      if (rows.length < take) {
+        exhausted = true;
+        break;
+      }
+      if (!term) break;
+    }
+    return { rows: out, next: exhausted ? null : pos };
+  }
+
   async listAthletes(): Promise<Athlete[]> {
     const { supabase, accountId } = await this.ctx();
     const { data: athletes } = await supabase
@@ -10583,6 +10646,72 @@ export class SupabaseDataSource implements DataSource {
     const supabase = getSupabase();
     const { error } = await supabase.rpc('guardian_remove_athlete', { p_athlete_id: athleteId });
     if (error) throw new Error(error.message);
+  }
+
+  async getGuardianAthleteInfo(athleteId: string): Promise<Athlete> {
+    // User-scoped client: a guardian has no staff tenant for this.ctx() to resolve.
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from('athletes')
+      .select(
+        'id, first_name, last_name, avatar_url, player_email, guardian_name, guardian_email, guardian_phone, year_of_birth, date_of_birth, medical_info, about',
+      )
+      .eq('id', athleteId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error('Athlete not found');
+    const a = data as Row;
+    return {
+      id: a.id,
+      first: a.first_name ?? '',
+      last: a.last_name ?? '',
+      yearOfBirth: a.year_of_birth != null ? String(a.year_of_birth) : undefined,
+      dateOfBirth: a.date_of_birth ?? undefined,
+      playerEmail: a.player_email ?? undefined,
+      guardianName: a.guardian_name ?? undefined,
+      guardianEmail: a.guardian_email ?? undefined,
+      guardianPhone: a.guardian_phone ?? undefined,
+      medicalInfo: a.medical_info ?? undefined,
+      aboutChild: a.about ?? undefined,
+      avatarUrl: a.avatar_url ?? undefined,
+    };
+  }
+
+  async updateGuardianAthlete(
+    athleteId: string,
+    patch: {
+      first?: string;
+      last?: string;
+      yearOfBirth?: string;
+      dateOfBirth?: string;
+      playerEmail?: string;
+      guardianName?: string;
+      guardianPhone?: string;
+      medicalInfo?: string;
+      aboutChild?: string;
+    },
+  ): Promise<void> {
+    // User-scoped client, like removeGuardianAthlete: a guardian has no staff tenant.
+    const supabase = getSupabase();
+    // Only keys the caller set are sent; the RPC leaves absent keys alone and
+    // treats an empty string as "clear this field".
+    const payload: Row = {};
+    if (patch.first !== undefined) payload.first_name = patch.first;
+    if (patch.last !== undefined) payload.last_name = patch.last;
+    if (patch.yearOfBirth !== undefined) payload.year_of_birth = patch.yearOfBirth;
+    if (patch.dateOfBirth !== undefined) payload.date_of_birth = patch.dateOfBirth;
+    if (patch.playerEmail !== undefined) payload.player_email = patch.playerEmail;
+    if (patch.guardianName !== undefined) payload.guardian_name = patch.guardianName;
+    if (patch.guardianPhone !== undefined) payload.guardian_phone = patch.guardianPhone;
+    if (patch.medicalInfo !== undefined) payload.medical_info = patch.medicalInfo;
+    if (patch.aboutChild !== undefined) payload.about = patch.aboutChild;
+    const { error } = await supabase.rpc('guardian_update_athlete', { p_athlete_id: athleteId, p_patch: payload });
+    if (error) {
+      if (error.code === 'PGRST202' || error.code === '42883') {
+        throw new Error('Editing a player is not available yet. Please try again later.');
+      }
+      throw new Error(error.message);
+    }
   }
 
   // One statement, authorized per tryout/season instead of per leaf row — the nested
