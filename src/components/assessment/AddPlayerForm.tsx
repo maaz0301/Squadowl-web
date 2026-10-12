@@ -13,6 +13,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { POSITION_OPTIONS_BY_SPORT } from '@/data/positions';
 import { sportProfile } from '@/data/sportProfile';
 import { duplicatePrompt, findPossibleDuplicates, type DuplicateCandidate } from '@/data/duplicates';
+import { heightToText } from '@/lib/height';
 
 /** A family member the coach adds alongside the primary guardian, invited once the player is saved. */
 export interface ExtraFamilyContact {
@@ -26,7 +27,7 @@ interface Props {
   loading?: boolean;
   /** Who is already on the roster being added to. When set, saving a likely duplicate asks first. Leave unset when editing. */
   existingPlayers?: (DuplicateCandidate & { jersey?: string | null })[];
-  defaultValues?: Partial<AddPlayerFormType>;
+  defaultValues?: Partial<AddPlayerFormType> & { heightCm?: number };
   /** Drives the position picker's options — Hockey positions for a Hockey evaluation, and so on. */
   sport?: Sport;
   /**
@@ -188,6 +189,7 @@ export function AddPlayerForm({
       currentLevel: defaultValues?.currentLevel || '',
       aboutChild: defaultValues?.aboutChild || '',
       medicalInfo: defaultValues?.medicalInfo || '',
+      height: defaultValues?.height ?? heightToText(defaultValues?.heightCm),
       friend1Name: defaultValues?.friend1Name || '',
       friend2Name: defaultValues?.friend2Name || '',
       avatarUrl: defaultValues?.avatarUrl || '',
@@ -224,6 +226,7 @@ export function AddPlayerForm({
     setValue('guardianEmail', a.guardianEmail || '');
     setValue('guardianPhone', a.guardianPhone || '');
     setValue('medicalInfo', a.medicalInfo || '');
+    setValue('height', heightToText(a.heightCm));
     setValue('aboutChild', a.aboutChild || '');
     const pos = a.currentPosition || (positionOptions.length > 0 || sport === 'Skating' ? '' : 'FWD');
     setPositionIsCustom(
@@ -507,6 +510,14 @@ export function AddPlayerForm({
             )}
           />
         </div>
+
+        <Controller
+          control={control}
+          name="height"
+          render={({ field, fieldState }) => (
+            <Input label="Height (optional)" placeholder={`e.g. 168 cm or 5'6"`} {...field} error={fieldState.error?.message} />
+          )}
+        />
 
         <Controller
           control={control}

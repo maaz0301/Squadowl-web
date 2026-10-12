@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatClock, parseTimeField, partsToValue, unitSeconds, valueToParts } from './timeEntry';
+import { formatClock, parseTimeField, parseTimeText, partsToValue, unitSeconds, valueToParts } from './timeEntry';
 
 describe('timeEntry', () => {
   it('turns 23 seconds into 23 in a seconds rubric, not 0', () => {
@@ -26,5 +26,19 @@ describe('timeEntry', () => {
     expect(parseTimeField('99', 's')).toBe(59);
     expect(parseTimeField('7x', 't')).toBe(7);
     expect(parseTimeField('', 'm')).toBe(0);
+  });
+
+  it('records a result under a minute, such as 15 seconds of skipping', () => {
+    expect(partsToValue({ h: 0, m: 0, s: 15, t: 0 }, 'sec')).toBe(15);
+    expect(partsToValue({ h: 0, m: 0, s: 15, t: 0 }, 'min')).toBe(0.25);
+    expect(formatClock(0.25, 'min')).toBe('0:15.0');
+  });
+
+  it('reads a typed range or benchmark either as a plain number or as a clock', () => {
+    expect(parseTimeText('45', 'sec')).toBe(45);
+    expect(parseTimeText('1:30', 'sec')).toBe(90);
+    expect(parseTimeText('1:30', 'min')).toBe(1.5);
+    expect(parseTimeText('0:15.5', 'sec')).toBe(15.5);
+    expect(parseTimeText('1:xx', 'sec')).toBeNaN();
   });
 });

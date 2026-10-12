@@ -63,7 +63,7 @@ describe('team roster export', () => {
     const grid = XLSX.utils.sheet_to_json<string[]>(XLSX.read(file.content, { type: 'base64' }).Sheets.Roster, { header: 1 });
     expect(grid[1][1]).toBe('Zoë');
     expect(grid[1][2]).toBe("O'Brien, Jr.");
-    expect(grid[1][6]).toContain('😀');
+    expect(grid[1][7]).toContain('😀');
   });
 
   it('writes a valid multi-page landscape PDF for 999 players', async () => {

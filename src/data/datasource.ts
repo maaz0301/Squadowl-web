@@ -1,4 +1,5 @@
 import type {
+  PlayerUpdate,
   AddPlayerForm,
   Assessor,
   AdminStats,
@@ -128,7 +129,7 @@ export interface DataSource {
     rows: { line: number; form: AddPlayerForm }[],
     onProgress?: (done: number) => void,
   ): Promise<import('./types').PlayerImportResult>;
-  updatePlayer(tryoutId: string, playerId: string, updates: Partial<Player>): Promise<Player>;
+  updatePlayer(tryoutId: string, playerId: string, updates: PlayerUpdate): Promise<Player>;
   deletePlayer(tryoutId: string, playerId: string): Promise<void>;
   /**
    * Delete several players from an assessment roster with bounded concurrency.

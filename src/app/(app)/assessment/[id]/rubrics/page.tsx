@@ -31,6 +31,8 @@ import {
   resolveWeights,
 } from '@/data/rubrics';
 import { SCORING_TYPES, type ScoringType, type RankingDirection } from '@/data/types';
+import { moveItem } from '@/lib/reorder';
+import { parseTimeText } from '@/lib/timeEntry';
 
 export default function RubricsPage() {
   const id = useAssessmentId();
@@ -47,6 +49,9 @@ export default function RubricsPage() {
   const [label, setLabel] = useState('');
   const [category, setCategory] = useState('');
   const [scoringType, setScoringType] = useState<ScoringType>('skill');
+  // Row being dragged in the rubric list, and the row it is hovering over.
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
   const [scale, setScale] = useState<'1-5' | '1-10'>('1-5');
   const [unit, setUnit] = useState('');
   const [minValStr, setMinValStr] = useState('');
@@ -73,7 +78,9 @@ export default function RubricsPage() {
 
   const weightNum = weightStr.trim() !== '' ? parseFloat(weightStr) : undefined;
   const weightValid = weightNum == null || (!isNaN(weightNum) && weightNum >= 1 && weightNum <= 100);
-  const benchmarkNum = benchmarkStr.trim() !== '' ? parseFloat(benchmarkStr) : undefined;
+  // A time rubric also takes a clock reading ("1:30"), turned into its own unit.
+  const readNumber = (text: string) => (scoringType === 'time' ? parseTimeText(text, unit.trim() || 'sec') : parseFloat(text));
+  const benchmarkNum = benchmarkStr.trim() !== '' ? readNumber(benchmarkStr) : undefined;
   const benchmarkActive = benchmarkOn && canHaveBenchmark(scoringType);
   const benchmarkValid = !benchmarkActive || isValidBenchmark({ scoringType, scale }, benchmarkNum);
 
@@ -133,8 +140,8 @@ export default function RubricsPage() {
       if (!defaultUnit) defaultUnit = 'mph';
     }
 
-    const minNum = minValStr.trim() !== '' ? parseFloat(minValStr) : undefined;
-    const maxNum = maxValStr.trim() !== '' ? parseFloat(maxValStr) : undefined;
+    const minNum = minValStr.trim() !== '' ? readNumber(minValStr) : undefined;
+    const maxNum = maxValStr.trim() !== '' ? readNumber(maxValStr) : undefined;
 
     const isMetric = isMetricScoringType(scoringType);
 
@@ -163,6 +170,20 @@ export default function RubricsPage() {
     // drills to the same category back to back (e.g. five Skating drills),
     // so keeping it selected saves re-picking it each time.
     resetForm();
+  };
+
+  // The order here is the order the drills are scored in, so a coach can fix a
+  // list entered out of sequence by dragging a row, or with the arrows.
+  const moveCustom = async (from: number, to: number) => {
+    if (from === to || to < 0 || to >= custom.length) return;
+    try {
+      await updateTryout.mutateAsync({
+        id: tryout.id,
+        updates: { settings: { ...tryout.settings, customRubrics: moveItem(custom, from, to) } },
+      });
+    } catch (err) {
+      await alert('Error', err instanceof Error ? err.message : 'Failed to change the order.');
+    }
   };
 
   const removeCustom = async (keyToRemove: string) => {
@@ -261,9 +282,45 @@ export default function RubricsPage() {
             return (
               <div
                 key={r.key}
+                draggable={removingKey === null && !updateTryout.isPending}
+                onDragStart={(e) => {
+                  setDragIndex(i);
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
+                onDragOver={(e) => {
+                  if (dragIndex === null) return;
+                  e.preventDefault();
+                  setOverIndex(i);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const from = dragIndex;
+                  setDragIndex(null);
+                  setOverIndex(null);
+                  if (from !== null) void moveCustom(from, i);
+                }}
+                onDragEnd={() => {
+                  setDragIndex(null);
+                  setOverIndex(null);
+                }}
                 className="flex items-center justify-between gap-2 border-b py-2"
-                style={{ borderColor: colors.border }}
+                style={{
+                  borderColor: colors.border,
+                  opacity: dragIndex === i ? 0.5 : 1,
+                  boxShadow:
+                    overIndex === i && dragIndex !== null && dragIndex !== i
+                      ? `0 ${dragIndex < i ? 2 : -2}px 0 0 ${colors.primary}`
+                      : undefined,
+                }}
               >
+                <span
+                  aria-hidden
+                  title="Drag to reorder"
+                  className="cursor-grab select-none px-1 text-lg"
+                  style={{ color: colors.inkFaint }}
+                >
+                  ⠿
+                </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-base font-bold" style={{ color: colors.ink }}>
@@ -276,6 +333,28 @@ export default function RubricsPage() {
                   <p className="text-xs" style={{ color: colors.inkMuted }}>
                     {details}
                   </p>
+                </div>
+                <div className="flex flex-col">
+                  <button
+                    type="button"
+                    onClick={() => moveCustom(i, i - 1)}
+                    disabled={i === 0 || updateTryout.isPending}
+                    aria-label={`Move ${r.label} up`}
+                    className="px-2 text-xs font-bold leading-none disabled:opacity-30"
+                    style={{ color: colors.primary }}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveCustom(i, i + 1)}
+                    disabled={i === custom.length - 1 || updateTryout.isPending}
+                    aria-label={`Move ${r.label} down`}
+                    className="px-2 text-xs font-bold leading-none disabled:opacity-30"
+                    style={{ color: colors.primary }}
+                  >
+                    ▼
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -452,14 +531,14 @@ export default function RubricsPage() {
                   label="Min Value"
                   value={minValStr}
                   onChange={(e) => setMinValStr(e.target.value)}
-                  inputMode="decimal"
+                  inputMode={scoringType === 'time' ? 'text' : 'decimal'}
                   placeholder={rankingDirection === 'lower_is_better' ? '1 (Best)' : '1 (Worst)'}
                 />
                 <Input
                   label="Max Value"
                   value={maxValStr}
                   onChange={(e) => setMaxValStr(e.target.value)}
-                  inputMode="decimal"
+                  inputMode={scoringType === 'time' ? 'text' : 'decimal'}
                   placeholder={rankingDirection === 'lower_is_better' ? '10 (Worst)' : '10 (Best)'}
                 />
               </div>
@@ -513,8 +592,8 @@ export default function RubricsPage() {
                     }
                     value={benchmarkStr}
                     onChange={(e) => setBenchmarkStr(e.target.value)}
-                    inputMode="decimal"
-                    placeholder="e.g. 30"
+                    inputMode={scoringType === 'time' ? 'text' : 'decimal'}
+                    placeholder={scoringType === 'time' ? 'e.g. 45 or 1:30' : 'e.g. 30'}
                   />
                   <Input
                     label="What this benchmark means (optional)"

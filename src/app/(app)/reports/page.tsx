@@ -9,12 +9,14 @@ import { HomePanel, PanelRow } from '@/components/home/HomePanel';
 import { NavPending } from '@/components/NavPending';
 import { useState } from 'react';
 
-import { useTryoutsQuery, useTryoutSummariesQuery } from '@/features/queries';
+import { useTeamsQuery, useTryoutsQuery, useTryoutSummariesQuery } from '@/features/queries';
 import { useSessionStore } from '@/state/sessionStore';
 import { usePermissions, useUser } from '@/state/authStore';
 import {
   buildReportSummary,
+  filterTryoutsByTeam,
   listReportRubrics,
+  listReportTeams,
   topPerformersByRubric,
   REPORT_RECOMMENDATIONS,
   type EvaluationReportRow,
@@ -63,11 +65,16 @@ export default function ReportsPage() {
 
   // Top performers can be ranked on the overall score or on any one measure.
   const [leaderFocus, setLeaderFocus] = useState('overall');
-  const rubricOptions = listReportRubrics(fullData ?? []);
+  // ...and limited to one team's evaluations, or left on everyone.
+  const [leaderTeam, setLeaderTeam] = useState('');
+  const teamsQuery = useTeamsQuery();
+  const teamOptions = listReportTeams(fullData ?? [], teamsQuery.data ?? []);
+  const leaderTryouts = filterTryoutsByTeam(fullData ?? [], leaderTeam || null);
+  const rubricOptions = listReportRubrics(leaderTryouts);
   const focusRubric = rubricOptions.find((r) => r.key === leaderFocus);
   const leaders = focusRubric
-    ? topPerformersByRubric(fullData ?? [], focusRubric.key).map((p) => ({ ...p, unit: p.unit }))
-    : summary.topPerformers.map((p) => ({ ...p, unit: undefined as string | undefined }));
+    ? topPerformersByRubric(leaderTryouts, focusRubric.key).map((p) => ({ ...p, unit: p.unit }))
+    : buildReportSummary(leaderTryouts).topPerformers.map((p) => ({ ...p, unit: undefined as string | undefined }));
   const leaderValue = (n: number, unit?: string) =>
     !focusRubric
       ? score(n)
@@ -228,6 +235,22 @@ export default function ReportsPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-2">
+              {teamOptions.length > 0 ? (
+                <select
+                  aria-label="Team for top performers"
+                  value={leaderTeam}
+                  onChange={(e) => setLeaderTeam(e.target.value)}
+                  className="rounded-md border px-2 py-2 text-sm font-semibold"
+                  style={{ backgroundColor: colors.tile, borderColor: colors.border, color: colors.ink }}
+                >
+                  <option value="">All teams</option>
+                  {teamOptions.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               <select
                 aria-label="Rank top performers by"
                 value={focusRubric ? focusRubric.key : 'overall'}
@@ -246,6 +269,11 @@ export default function ReportsPage() {
                   </optgroup>
                 ) : null}
               </select>
+              {leaders.length === 0 ? (
+                <p className="text-sm" style={{ color: colors.inkMuted }}>
+                  No scored players for this team yet.
+                </p>
+              ) : null}
               {leaders.map((p, i) => (
                 <Link
                   key={`${p.evaluationId}-${p.playerId}`}

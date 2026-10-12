@@ -112,6 +112,7 @@ import { formatBirth } from '@/lib/birthDate';
 import { ImportPlayersModal } from '@/components/roster/ImportPlayersModal';
 import { DeleteProgressModal } from '@/components/DeleteProgressModal';
 import { getDataSource } from '@/data';
+import { formatHeight, heightToText } from '@/lib/height';
 
 function feeCentsFromInput(feeInput: string): number {
   const dollars = parseFloat(feeInput);
@@ -615,6 +616,7 @@ export default function TeamDetailPage() {
         // saving other fields never blanks out medical info this account
         // isn't shown.
         medicalInfo: viewingRosterEntry.canViewMedical ? viewingRosterEntry.medicalInfo : undefined,
+        height: heightToText(viewingRosterEntry.heightCm ?? viewingFullPlayer?.heightCm),
         // Not on TeamRosterPlayer itself — only the assessment-scoped Player
         // record carries a photo on web, same as the read-only card above.
         avatarUrl: viewingFullPlayer?.avatarUrl ?? '',
@@ -2660,6 +2662,11 @@ export default function TeamDetailPage() {
               <PlayerDetailRow
                 label="Date of Birth"
                 value={formatBirth(viewingRosterEntry.dateOfBirth, viewingRosterEntry.yearOfBirth ? String(viewingRosterEntry.yearOfBirth) : undefined) || undefined}
+                colors={colors}
+              />
+              <PlayerDetailRow
+                label="Height"
+                value={formatHeight(viewingRosterEntry.heightCm ?? viewingFullPlayer?.heightCm)}
                 colors={colors}
               />
               <PlayerDetailRow

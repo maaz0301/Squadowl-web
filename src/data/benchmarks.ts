@@ -1,4 +1,5 @@
-import { OBSERVATION_MAX, getPlayerSubskills, isBinaryScoringType, isMetricScoringType, type SubSkill } from '@/data/rubrics';
+import { OBSERVATION_MAX, binaryLabels, getPlayerSubskills, isBinaryScoringType, isMetricScoringType, type SubSkill } from '@/data/rubrics';
+import { formatClock, unitSeconds } from '@/lib/timeEntry';
 import type { Player, Tryout } from '@/data/types';
 
 /**
@@ -23,9 +24,20 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 /** "30 in" for a measured rubric, "4/5" for a rating, "70/100" for an observation. */
 export function formatBenchmarkValue(sub: Pick<SubSkill, 'scoringType' | 'scale' | 'unit'>, value: number): string {
   const n = round2(value);
+  // A time of a minute or more, or one kept in minutes or hours, reads as a stopwatch ("1:05.0"); shorter ones stay in seconds.
+  if (sub.scoringType === 'time' && (unitSeconds(sub.unit) !== 1 || value >= 60)) return formatClock(value, sub.unit);
   if (isMetricScoringType(sub.scoringType)) return sub.unit ? `${n} ${sub.unit}` : String(n);
   if (sub.scoringType === 'observation') return `${n}/${OBSERVATION_MAX}`;
   return `${n}/${sub.scale === '1-10' ? 10 : 5}`;
+}
+
+/** One raw entry as a coach read it off: "19 in", "0:15.0", "4/5", or "Yes" for a two-state rubric. */
+export function formatRawResult(sub: Pick<SubSkill, 'scoringType' | 'scale' | 'unit'>, value: number): string {
+  if (isBinaryScoringType(sub.scoringType)) {
+    const [positive, negative] = binaryLabels(sub.scoringType);
+    return value > 0 ? positive : negative;
+  }
+  return formatBenchmarkValue(sub, value);
 }
 
 /** The highest benchmark a rubric can take: its scale for a rating, 100 for an observation, no limit for a measurement. */

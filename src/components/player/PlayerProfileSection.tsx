@@ -5,6 +5,7 @@ import { AssessmentHistory } from '@/components/player/AssessmentHistory';
 import { usePlayerProfileQuery } from '@/features/queries';
 import { formatBirth } from '@/lib/birthDate';
 import { useThemeColors } from '@/theme/ThemeProvider';
+import { formatHeight } from '@/lib/height';
 
 const slugify = (...parts: (string | undefined)[]) =>
   parts.filter(Boolean).join('-').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'export';
@@ -60,6 +61,7 @@ export function PlayerProfileSection({
         {row('Position', profile.currentPosition)}
         {row('Level', profile.currentLevel)}
         {row('Jersey', profile.jersey)}
+        {row('Height', formatHeight(profile.heightCm))}
         {row('Player Email', profile.playerEmail)}
         {row('Guardian', profile.guardianName)}
         {row('Guardian Email', profile.guardianEmail)}

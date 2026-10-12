@@ -202,3 +202,23 @@ export function topPerformersByRubric(tryouts: Tryout[], key: string, topLimit =
     .slice(0, topLimit)
     .map(({ lower: _lower, ...leader }) => leader);
 }
+
+/** A team whose evaluations the top performers can be limited to. */
+export interface ReportTeamOption {
+  id: string;
+  name: string;
+}
+
+/** Teams that have at least one of these evaluations, A to Z, so the picker never offers an empty team. */
+export function listReportTeams(tryouts: Tryout[], teams: { id: string; name: string }[]): ReportTeamOption[] {
+  const used = new Set(tryouts.map((t) => t.teamId).filter((id): id is string => !!id));
+  return teams
+    .filter((t) => used.has(t.id))
+    .map((t) => ({ id: t.id, name: t.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Just one team's evaluations, or all of them when no team is picked. */
+export function filterTryoutsByTeam(tryouts: Tryout[], teamId: string | null | undefined): Tryout[] {
+  return teamId ? tryouts.filter((t) => t.teamId === teamId) : tryouts;
+}

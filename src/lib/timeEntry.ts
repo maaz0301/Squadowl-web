@@ -51,3 +51,18 @@ export function parseTimeField(text: string, field: TimeField): number {
   if (isNaN(n)) return 0;
   return Math.min(field === 't' ? 9 : field === 'h' ? 99 : 59, n);
 }
+
+/**
+ * Reads a typed time into the rubric's unit. Plain numbers are already in that
+ * unit ("45" with sec, "1.5" with min); a clock reading such as "1:30" or
+ * "0:15.5" is turned into seconds first, so a coach can type a range or a
+ * benchmark the way a stopwatch shows it. NaN when it cannot be read.
+ */
+export function parseTimeText(text: string, unit?: string): number {
+  const t = text.trim();
+  if (!t.includes(':')) return parseFloat(t);
+  const parts = t.split(':');
+  if (parts.length > 3 || parts.some((p) => !/^\d+(\.\d+)?$/.test(p.trim()))) return NaN;
+  const seconds = parts.reduce((total, p) => total * 60 + parseFloat(p), 0);
+  return Math.round((seconds / unitSeconds(unit)) * 100000) / 100000;
+}

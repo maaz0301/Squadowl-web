@@ -43,7 +43,8 @@ import {
 } from '@/features/queries';
 import { describeInvite, useInviteFamilyContact } from '@/features/useInviteFamilyContact';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
-import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition } from '@/data/rubrics';
+import { playerDisplayName, weightedOverall, getPlayerCategories, isGoaliePosition, isBinaryScoringType } from '@/data/rubrics';
+import { formatRawResult } from '@/data/benchmarks';
 import { AddPlayerForm, type ExtraFamilyContact } from '@/components/assessment/AddPlayerForm';
 import { PlayerProfileSection } from '@/components/player/PlayerProfileSection';
 import { formatBirth } from '@/lib/birthDate';
@@ -715,6 +716,13 @@ export default function PlayerHubPage() {
               <div className="flex flex-col gap-2">
                 {evals.map((ev) => {
                   const overall = weightedOverall(ev.scores ?? {}, categories, weights);
+                  const rawResults = categories
+        .flatMap((c) => c.subskills)
+        .flatMap((sub) => {
+          const v = ev.scores?.[sub.key];
+          if (v == null || (!isBinaryScoringType(sub.scoringType) && !(v > 0))) return [];
+          return [{ key: sub.key, label: sub.label, text: formatRawResult(sub, v) }];
+        });
                   return (
                     <Card key={ev.id} className="flex flex-col gap-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -726,6 +734,19 @@ export default function PlayerHubPage() {
                       <span className="text-sm" style={{ color: colors.inkMuted }}>
                         {ev.evaluator}
                       </span>
+                      {/* What was actually entered for each measure, in its own units. */}
+                      {rawResults.length > 0 ? (
+                        <div className="mt-1 flex flex-col gap-0.5">
+                          {rawResults.map((r) => (
+                            <div key={r.key} className="flex justify-between gap-2 text-sm">
+                              <span style={{ color: colors.inkMuted }}>{r.label}</span>
+                              <span className="font-bold" style={{ color: colors.ink }}>
+                                {r.text}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       {ev.strengths ? (
                         <span className="mt-1 text-sm" style={{ color: colors.ink }}>
                           + {ev.strengths}

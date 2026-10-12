@@ -48,6 +48,10 @@ describe('benchmarkLines', () => {
 
   it('formats by rubric type and skips two-state rubrics', () => {
     expect(formatBenchmarkValue({ scoringType: 'observation' }, 70)).toBe('70/100');
+    // Under a minute stays in seconds; a minute or more, or a rubric kept in minutes, reads like a stopwatch.
+    expect(formatBenchmarkValue({ scoringType: 'time', unit: 'sec' }, 15)).toBe('15 sec');
+    expect(formatBenchmarkValue({ scoringType: 'time', unit: 'sec' }, 75)).toBe('1:15.0');
+    expect(formatBenchmarkValue({ scoringType: 'time', unit: 'min' }, 0.25)).toBe('0:15.0');
     expect(formatBenchmarkValue({ scoringType: 'skill', scale: '1-10' }, 7.5)).toBe('7.5/10');
     expect(canHaveBenchmark('yes_no')).toBe(false);
     expect(canHaveBenchmark('skill')).toBe(true);

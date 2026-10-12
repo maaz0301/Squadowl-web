@@ -831,7 +831,7 @@ export function useImportTryoutPlayersMutation(tryoutId: string) {
 export function useUpdatePlayerMutation(tryoutId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ playerId, updates }: { playerId: string; updates: Partial<import('@/data/types').Player> }) =>
+    mutationFn: ({ playerId, updates }: { playerId: string; updates: import('@/data/types').PlayerUpdate }) =>
       withTimeout(getDataSource().updatePlayer(tryoutId, playerId, updates), 15000),
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });

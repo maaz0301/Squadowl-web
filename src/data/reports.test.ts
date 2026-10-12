@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReportSummary, listReportRubrics, topPerformersByRubric } from './reports';
+import { buildReportSummary, filterTryoutsByTeam, listReportRubrics, listReportTeams, topPerformersByRubric } from './reports';
 import type { Evaluation, Player, Tryout } from './types';
 
 function makePlayer(overrides: Partial<Player> = {}): Player {
@@ -181,5 +181,29 @@ describe('top performers by measure', () => {
     const top = topPerformersByRubric([tryout, other], 'skating', 2);
     expect(top).toHaveLength(2);
     expect(top.some((p) => p.name === 'Xi Doe')).toBe(true);
+  });
+});
+
+describe('top performers by team', () => {
+  const a = makeTryout({ id: 'a', name: 'Star 1', teamId: 'team-a', roster: [makePlayer({ id: 'p1', first: 'Ann' })], evals: [makeEval({ id: 'ea', playerId: 'p1', scores: { skating: 5 } })] });
+  const b = makeTryout({ id: 'b', name: 'Star 2', teamId: 'team-b', roster: [makePlayer({ id: 'p2', first: 'Bea' })], evals: [makeEval({ id: 'eb', playerId: 'p2', scores: { skating: 2 } })] });
+  const none = makeTryout({ id: 'c', name: 'No team', roster: [], evals: [] });
+
+  it('lists only teams that have an evaluation, A to Z', () => {
+    const teams = [
+      { id: 'team-b', name: 'Zebras' },
+      { id: 'team-a', name: 'Aces' },
+      { id: 'team-c', name: 'Unused' },
+    ];
+    expect(listReportTeams([a, b, none], teams)).toEqual([
+      { id: 'team-a', name: 'Aces' },
+      { id: 'team-b', name: 'Zebras' },
+    ]);
+  });
+
+  it('narrows to one team, or keeps everyone when none is picked', () => {
+    expect(filterTryoutsByTeam([a, b, none], 'team-b').map((t) => t.id)).toEqual(['b']);
+    expect(filterTryoutsByTeam([a, b, none], null)).toHaveLength(3);
+    expect(buildReportSummary(filterTryoutsByTeam([a, b], 'team-a')).topPerformers.map((p) => p.name)).toEqual(['Ann Doe']);
   });
 });

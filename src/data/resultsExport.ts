@@ -123,6 +123,7 @@ function formatEvalScore(value: number | undefined, column: ResultsExportColumn)
     const [positive, negative] = binaryLabels(type);
     return value > 0 ? positive : negative;
   }
+  if (type === 'time') return formatBenchmarkValue({ scoringType: type, scale: column.scale, unit: column.unit }, value);
   const rounded = round2(value);
   return type && type !== 'skill' && column.unit ? `${rounded} ${column.unit}` : String(rounded);
 }

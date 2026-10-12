@@ -1,3 +1,4 @@
+import { isValidHeightText } from '@/lib/height';
 import { z } from 'zod';
 import { END_BEFORE_START_MESSAGE, isEndAfterStart } from './timeRange';
 
@@ -158,6 +159,8 @@ export const AthleteSchema = z.object({
   guardianEmail: z.string().optional(),
   guardianPhone: z.string().optional(),
   medicalInfo: z.string().optional(),
+  /** Height in centimetres, when the coach has recorded it. */
+  heightCm: z.number().optional(),
   aboutChild: z.string().optional(),
   currentPosition: z.string().optional(),
   currentTeam: z.string().optional(),
@@ -209,6 +212,8 @@ export const PlayerSchema = z.object({
   positionTryingOutFor: z.string().optional(),
   aboutChild: z.string().optional(),
   medicalInfo: z.string().optional(),
+  /** Height in centimetres, when the coach has recorded it. */
+  heightCm: z.number().optional(),
   friend1Name: z.string().optional(),
   friend2Name: z.string().optional(),
   sortOut: z.boolean().optional(),
@@ -431,6 +436,8 @@ export const TeamRosterPlayerSchema = z.object({
    * unless `canViewMedical` is true.
    */
   medicalInfo: z.string().optional(),
+  /** Height in centimetres, when the coach has recorded it. */
+  heightCm: z.number().optional(),
   /**
    * True when the viewer is the account this athlete actually belongs to, or
    * is the athlete's own linked guardian — computed server-side off the
@@ -649,12 +656,17 @@ export const AddPlayerFormSchema = z.object({
   currentLevel: z.string().optional(),
   aboutChild: z.string().optional(),
   medicalInfo: z.string().optional(),
+  /** Typed as cm, ft/in or inches; stored as centimetres. */
+  height: z.string().optional().refine(isValidHeightText, { message: 'Enter a height like 168 cm or 5\'6"' }),
   friend1Name: z.string().optional(),
   friend2Name: z.string().optional(),
   avatarUrl: z.string().optional(),
 });
 
 export type AddPlayerForm = z.infer<typeof AddPlayerFormSchema>;
+
+/** What an edit sends for a player: any of their fields, plus the height as typed in the form. */
+export type PlayerUpdate = Partial<Player> & { height?: string };
 
 /** Registration submit (simulated QR form) */
 export const RegistrationSubmitSchema = z.object({
@@ -965,6 +977,8 @@ export interface PlayerProfile {
   aboutChild?: string;
   /** Omitted by the server entirely unless `canViewMedical` is true — never sent to a viewer who shouldn't have it. */
   medicalInfo?: string;
+  /** Height in centimetres, when recorded. */
+  heightCm?: number;
   playerEmail?: string;
   guardianName?: string;
   guardianEmail?: string;
