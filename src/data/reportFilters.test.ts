@@ -80,3 +80,31 @@ describe('CSV and XLSX rows follow the same order and filter', () => {
   it('sorts', () => expect(firstCells('results')).toEqual(['Young', 'Adams', 'Zane', 'Xu']));
   it('filters', () => expect(firstCells('name', { scoredOnly: true, positions: ['FWD'] })).toEqual(['Adams', 'Zane']));
 });
+
+describe('report card rows in the rubric own units', () => {
+  const jumpTryout = (): Tryout => {
+    const base = tryout();
+    return {
+      ...base,
+      evals: [
+        { id: 'a', playerId: 'p1', evaluator: 'C', session: 'S1', date: '2026-10-01', scores: { jump: 30 }, createdAt: 1 },
+        { id: 'b', playerId: 'p1', evaluator: 'C', session: 'S2', date: '2026-10-02', scores: { jump: 34 }, createdAt: 2 },
+      ] as unknown as Evaluation[],
+      settings: {
+        ...base.settings,
+        customRubrics: [
+          { key: 'jump', label: 'Vertical Jump', scoringType: 'distance', unit: 'inches', minVal: 10, maxVal: 40, rankingDirection: 'higher_is_better', role: 'all', benchmark: 36 },
+        ],
+      },
+    } as unknown as Tryout;
+  };
+
+  it('shows the average jump in inches beside its benchmark and rank', () => {
+    const card = buildPlayerFullResults(jumpTryout()).find((c) => c.playerId === 'p1')!;
+    const jump = card.metrics.find((m) => m.label === 'Vertical Jump')!;
+    expect(jump.actual).toBe('32 inches');
+    expect(jump.benchmark).toBe('36 inches');
+    expect(jump.met).toBe(false);
+    expect(jump.rank).toBe('1/1');
+  });
+});

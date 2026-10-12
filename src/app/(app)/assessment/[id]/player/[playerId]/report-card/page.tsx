@@ -79,6 +79,23 @@ export default function PlayerReportCardPage() {
   const [linkIsVideo, setLinkIsVideo] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = useState(false);
+  const [printAppLogo, setPrintAppLogo] = useState(true);
+
+  // Coming back to the builder reopens the card saved last, so it does not look
+  // as though the card vanished. "New" still starts a blank one.
+  const [reopened, setReopened] = useState(false);
+  if (!reopened && cardsQuery.data) {
+    setReopened(true);
+    const latest = cardsQuery.data.filter((c) => !c.tryoutId || c.tryoutId === id).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (latest) {
+      setEditingId(latest.id);
+      setTitle(latest.title);
+      setSelected(new Set(latest.evalIds));
+      setCoachComments(latest.coachComments);
+      setAiComments(latest.aiComments);
+      setKept(latest.attachments);
+    }
+  }
 
   const tryout = tryoutQuery.data;
   const playerEvals = useMemo(
@@ -239,7 +256,7 @@ export default function PlayerReportCardPage() {
           ...kept.map((a) => ({ kind: a.kind, name: a.name, url: a.url })),
           ...files.map((f) => ({ kind: (f.type.startsWith('video/') ? 'video' : 'file') as 'video' | 'file', name: f.name })),
         ],
-        logoUrls: reportLogoUrls({ club: tier === 'club', organizationLogoUrl: user?.organizationLogoUrl, teamLogoUrl: team?.logoUrl }),
+        logoUrls: reportLogoUrls({ club: tier === 'club', organizationLogoUrl: user?.organizationLogoUrl, teamLogoUrl: team?.logoUrl, appLogo: printAppLogo }),
       });
     } catch (e) {
       await alert('Export failed', e instanceof Error ? e.message : 'Could not build the PDF.');
@@ -344,46 +361,54 @@ export default function PlayerReportCardPage() {
 
       {reportCard && reportCard.evalCount > 0 ? (
         <Card className="flex flex-col gap-2">
-          <SectionLabel>Scores from the chosen evaluations</SectionLabel>
+          <SectionLabel>Report card</SectionLabel>
           <div className="text-sm" style={{ color: colors.ink }}>
-            <div className="flex justify-between border-b py-1 font-bold" style={{ borderColor: colors.border, color: colors.primary }}>
-              <span>Overall</span>
-              <span>
-                {reportCard.overallScore} · {reportCard.overallRank}
-              </span>
+            <div
+              className="grid grid-cols-[1fr_5.5rem_5.5rem_3.5rem] gap-2 border-b py-1 text-xs font-bold"
+              style={{ borderColor: colors.border, color: colors.inkMuted }}
+            >
+              <span>MEASURE</span>
+              <span className="text-right">RESULT</span>
+              <span className="text-right">BENCHMARK</span>
+              <span className="text-right">RANK</span>
             </div>
-            {reportCard.metrics.map((m) => (
-              <div key={m.label} className="flex justify-between border-b py-1" style={{ borderColor: colors.border }}>
-                <span>{m.label}</span>
-                <span>
-                  {m.score} · {m.rank}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : null}
-
-      {benchmarks.length > 0 ? (
-        <Card className="flex flex-col gap-2">
-          <SectionLabel>Benchmarks</SectionLabel>
-          <div className="text-sm" style={{ color: colors.ink }}>
-            {benchmarks.map((b) => (
-              <div key={b.key} className="border-b py-1" style={{ borderColor: colors.border }}>
-                <div className="flex justify-between gap-2">
-                  <span className="font-bold">{b.label}</span>
-                  <span style={{ color: b.met ? colors.success : colors.ink }}>
-                    {b.result || 'Not scored'} · benchmark {b.target}
-                  </span>
+            <div
+              className="grid grid-cols-[1fr_5.5rem_5.5rem_3.5rem] gap-2 border-b py-1 font-bold"
+              style={{ borderColor: colors.border, color: colors.primary }}
+            >
+              <span>Overall</span>
+              <span className="text-right">{reportCard.overallScore}</span>
+              <span className="text-right" style={{ color: colors.inkMuted }}>
+                -
+              </span>
+              <span className="text-right">{reportCard.overallRank}</span>
+            </div>
+            {reportCard.metrics.map((m) => {
+              const note = benchmarks.find((b) => b.label === m.label)?.note;
+              return (
+                <div key={m.label} className="border-b py-1" style={{ borderColor: colors.border }}>
+                  <div className="grid grid-cols-[1fr_5.5rem_5.5rem_3.5rem] gap-2">
+                    <span>{m.label}</span>
+                    <span className="text-right font-bold" style={{ color: m.met ? colors.success : colors.ink }}>
+                      {m.actual || m.score}
+                    </span>
+                    <span className="text-right" style={{ color: colors.inkMuted }}>
+                      {m.benchmark || '-'}
+                    </span>
+                    <span className="text-right">{m.rank || '-'}</span>
+                  </div>
+                  {note ? (
+                    <p className="text-xs" style={{ color: colors.inkMuted }}>
+                      {note}
+                    </p>
+                  ) : null}
                 </div>
-                {b.note ? (
-                  <p className="text-xs" style={{ color: colors.inkMuted }}>
-                    {b.note}
-                  </p>
-                ) : null}
-              </div>
-            ))}
+              );
+            })}
           </div>
+          <p className="text-xs" style={{ color: colors.inkMuted }}>
+            Result is the player&apos;s average in the measure&apos;s own units. Rank is against the roster. Overall is the weighted score out of 5.
+          </p>
         </Card>
       ) : null}
 
@@ -507,6 +532,13 @@ export default function PlayerReportCardPage() {
           </p>
         )}
       </Card>
+
+      {(tier === 'club' && user?.organizationLogoUrl) || team?.logoUrl ? (
+        <label className="flex items-center gap-2 pb-3 text-sm" style={{ color: colors.ink }}>
+          <input type="checkbox" checked={printAppLogo} onChange={(e) => setPrintAppLogo(e.target.checked)} className="h-4 w-4" />
+          Also print the SquadOwl logo beside your team logo
+        </label>
+      ) : null}
 
       <div className="flex flex-wrap gap-3 pb-6">
         <Button label={editingId ? 'Save changes' : 'Save report card'} onClick={saveCard} loading={save.isPending} />

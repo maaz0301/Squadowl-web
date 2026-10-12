@@ -72,7 +72,7 @@ export function StorageMeterCard({ accountId, className }: { accountId?: string;
   const info = useVideoStorageQuery(accountId).data;
   if (!info || !info.entitled || !info.canManage) return null;
   return (
-    <Link href="/storage" className={className ?? 'mb-4 block'} aria-label="Open video storage settings">
+    <Link href="/library" className={className ?? 'mb-4 block'} aria-label="Open the library and video storage">
       <Card>
         <StorageMeterBar info={info} />
       </Card>

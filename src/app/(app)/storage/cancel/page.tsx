@@ -96,10 +96,10 @@ function CancelContent() {
         </h1>
         <p className="text-base" style={{ color: colors.inkMuted }}>
           Everything remains available until then. We will email you 7 days and 1 day before, and again when the videos are
-          permanently deleted. You can keep your storage any time before that from Storage.
+          permanently deleted. You can keep your storage any time before that from the Library.
         </p>
         <div>
-          <Button label="Done" onClick={() => router.push('/storage')} />
+          <Button label="Done" onClick={() => router.push('/library')} />
         </div>
       </div>
     );
@@ -125,7 +125,7 @@ function CancelContent() {
           loading={working}
           onClick={confirm}
         />
-        <Button label="Go back" variant="secondary" onClick={() => router.push('/storage')} />
+        <Button label="Go back" variant="secondary" onClick={() => router.push('/library')} />
       </div>
     );
   }
@@ -159,7 +159,7 @@ function CancelContent() {
       </Card>
 
       {/* Go Back is the loud button; Continue is deliberately small and quiet. */}
-      <Button label="Go back" size="lg" onClick={() => router.push('/storage')} />
+      <Button label="Go back" size="lg" onClick={() => router.push('/library')} />
       <div className="flex flex-col items-start gap-1">
         <Button label="Continue" size="sm" variant="ghost" onClick={() => setStep(2)} />
         {reason === 'plan' ? (

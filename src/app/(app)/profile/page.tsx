@@ -27,7 +27,6 @@ const QUICK_LINKS = [
   { href: '/search', label: 'Search' },
   { href: '/organization/members', label: 'Manage Organization Members' },
   { href: '/athlete-hub', label: 'Athlete Hub' },
-  { href: '/storage', label: 'Video Storage' },
   { href: '/archived-assessments', label: 'Archived' },
   { href: '/feedback', label: 'Send Feedback' },
   { href: '/loyalty', label: 'Loyalty Program' },

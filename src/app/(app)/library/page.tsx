@@ -28,9 +28,8 @@ import {
   useUpdateLibraryItemMutation,
   useVideoStorageQuery,
 } from '@/features/queries';
-import Link from 'next/link';
 import { getDataSource } from '@/data';
-import { StorageMeterCard } from '@/components/video/StorageMeter';
+import { VideoStoragePanel } from '@/components/video/VideoStoragePanel';
 import { compressVideo, readVideoDuration, VideoCompressError } from '@/lib/videoCompress';
 import {
   VIDEO_PHASE_LABEL,
@@ -250,7 +249,7 @@ export default function LibraryPage() {
           : 'Files, notes, videos and links shared with you.'}
       </p>
 
-      <StorageMeterCard />
+      <VideoStoragePanel />
       <Input
         label="Search the library"
         value={search}
@@ -443,16 +442,12 @@ export default function LibraryPage() {
                   </p>
                 </>
               ) : videoInfo?.canManage && videoInfo.planEligible ? (
-                <Link
-                  href="/storage"
-                  className="inline-block rounded-lg border px-3 py-2 text-center text-sm font-semibold"
-                  style={{ borderColor: colors.primary, color: colors.primary }}
-                >
-                  Add video storage to upload a video
-                </Link>
+                <p className="text-xs" style={{ color: colors.inkMuted }}>
+                  Choose a video storage size at the top of the Library to upload a video. You can still paste a link.
+                </p>
               ) : (
                 <p className="text-xs" style={{ color: colors.inkMuted }}>
-                  Uploading videos needs video storage on a Coach+ or Club plan. You can still paste a link.
+                  Uploading videos needs video storage on a Coach, Coach+ or Club plan. You can still paste a link.
                 </p>
               )}
             </div>

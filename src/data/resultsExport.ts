@@ -1,3 +1,4 @@
+import { formatBenchmarkValue } from '@/data/benchmarks';
 import { sportProfile } from '@/data/sportProfile';
 import { termsFor } from '@/lib/termsCore';
 import type { Evaluation, Player, RankingDirection, ScoringType, Tryout } from './types';
@@ -5,6 +6,7 @@ import { compareResultsBestFirst, computePlayerResults } from './scoring';
 import {
   binaryLabels,
   getPlayerCategories,
+  type SubSkill,
   getPlayerSubskills,
   isBinaryScoringType,
   playerDisplayName,
@@ -16,6 +18,10 @@ export interface ResultsExportColumn {
   label: string;
   scoringType?: string;
   unit?: string;
+  scale?: SubSkill['scale'];
+  benchmark?: number;
+  /** The key evaluations store this column's raw entry under, when it is a single rubric. */
+  rawKey?: string;
   rankingDirection?: RankingDirection;
 }
 
@@ -35,6 +41,12 @@ export interface FullResultsMetric {
   abbr: string;
   score: string;
   rank: string;
+  /** The player's average in the rubric's own terms ("31.2 in", "4.5/5"); '' when the line is a group of rubrics. */
+  actual?: string;
+  /** The rubric's benchmark in the same terms; '' when none was set. */
+  benchmark?: string;
+  /** Whether the average reaches the benchmark, null when there is nothing to compare. */
+  met?: boolean | null;
 }
 
 export interface FullResultsEvalValue {
@@ -142,6 +154,9 @@ function resultsColumns(tryout: Tryout): ResultsExportColumn[] {
         label: cat.label,
         scoringType: solo?.scoringType,
         unit: solo?.unit,
+        scale: solo?.scale,
+        benchmark: solo?.benchmark,
+        rawKey: solo?.key,
         rankingDirection: solo?.rankingDirection,
       });
     }
@@ -167,6 +182,25 @@ function playerColumns(tryout: Tryout, player: Tryout['roster'][number]): Result
     unit: s.unit,
     rankingDirection: s.rankingDirection,
   }));
+}
+
+/**
+ * The average of a player's raw entries for a single-rubric column, in the
+ * rubric's own units. A column that groups several rubrics has no one unit, so
+ * it has none, and neither does a yes/no one.
+ */
+function actualAverage(column: ResultsExportColumn, evals: Evaluation[]): number | undefined {
+  if (!column.scoringType || isBinaryScoringType(column.scoringType as ScoringType)) return undefined;
+  const values = evals.map((e) => e.scores?.[column.rawKey ?? column.key]).filter((v): v is number => typeof v === 'number' && v > 0);
+  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined;
+}
+
+/** A yes/no style rubric reads back as its own wording, "Yes" or "Effective", by what most of the player's entries said. */
+function binaryActual(column: ResultsExportColumn, evals: Evaluation[]): string {
+  const values = evals.map((e) => e.scores?.[column.rawKey ?? column.key]).filter((v): v is number => typeof v === 'number');
+  if (!values.length) return '';
+  const [positive, negative] = binaryLabels(column.scoringType as ScoringType);
+  return values.filter((v) => v > 0).length * 2 >= values.length ? positive : negative;
 }
 
 /** Numeric-aware sort key so jersey "9" sorts before "10"; non-numeric jerseys sort last. */
@@ -448,12 +482,20 @@ export function buildPlayerFullResults(
 
     const metrics: FullResultsMetric[] = columns
       .filter((c) => r.categoryScores[c.key] != null)
-      .map((c) => ({
-        label: c.label,
-        abbr: abbreviateLabel(c.label),
-        score: formatScore2(r.categoryScores[c.key]),
-        rank: columnRanks.get(c.key)?.get(player.id) ?? '',
-      }));
+      .map((c) => {
+        const actual = actualAverage(c, playerEvals);
+        const lowerBetter = c.rankingDirection === 'lower_is_better';
+        const unitInfo = { scoringType: c.scoringType as ScoringType, scale: c.scale, unit: c.unit };
+        return {
+          label: c.label,
+          abbr: abbreviateLabel(c.label),
+          score: formatScore2(r.categoryScores[c.key]),
+          rank: columnRanks.get(c.key)?.get(player.id) ?? '',
+          actual: isBinaryScoringType(c.scoringType as ScoringType) ? binaryActual(c, playerEvals) : actual == null ? '' : formatBenchmarkValue(unitInfo, actual),
+          benchmark: c.benchmark != null ? formatBenchmarkValue(unitInfo, c.benchmark) : '',
+          met: actual == null || c.benchmark == null ? null : lowerBetter ? actual <= c.benchmark : actual >= c.benchmark,
+        };
+      });
 
     const evals: FullResultsEval[] = playerEvals.map((e, idx) => ({
       index: idx + 1,

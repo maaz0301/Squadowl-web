@@ -195,7 +195,12 @@ export default function RubricsPage() {
 
   // What each rubric actually contributes: its own weight, or an even share of
   // whatever the weighted rubrics leave over.
-  const effectiveWeights = resolveWeights(custom.map((r) => r.weight));
+  // Shown as each rubric's share of the total, so the percentages always add up
+  // to 100% (with weights over 100%, or none left over for the unweighted ones,
+  // the raw numbers added up to more, which read as a mistake).
+  const rawWeights = resolveWeights(custom.map((r) => r.weight));
+  const rawTotal = rawWeights.reduce((sum, w) => sum + w, 0);
+  const effectiveWeights = rawTotal > 0 ? rawWeights.map((w) => (w / rawTotal) * 100) : rawWeights;
   const weightedCount = custom.filter((r) => r.weight != null).length;
   const unweightedCount = custom.length - weightedCount;
   const explicitTotal = custom.reduce((sum, r) => sum + (r.weight ?? 0), 0);
@@ -225,7 +230,9 @@ export default function RubricsPage() {
               Weights: {formatPct(explicitTotal)} assigned across {weightedCount}{' '}
               {weightedCount === 1 ? 'rubric' : 'rubrics'}
               {unweightedCount > 0
-                ? ` · the remaining ${unweightedCount} split ${formatPct(Math.max(0, 100 - explicitTotal))} evenly`
+                ? explicitTotal >= 100
+                  ? ` · the remaining ${unweightedCount} count equally with the others`
+                  : ` · the remaining ${unweightedCount} split ${formatPct(Math.max(0, 100 - explicitTotal))} evenly`
                 : ''}
               {explicitTotal > 100 ? ' · over 100% — weights are scaled to their share of the total.' : ''}
             </p>

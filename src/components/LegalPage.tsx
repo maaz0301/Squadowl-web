@@ -117,7 +117,7 @@ export function LegalPage({
 export function LegalLinks({ className = '' }: { className?: string }) {
   const { colors } = useTheme();
   return (
-    <p className={`text-center text-xs ${className}`} style={{ color: colors.inkMuted }}>
+    <p className={`text-center text-base ${className}`} style={{ color: colors.inkMuted }}>
       By continuing you agree to the{' '}
       <Link href="/terms" className="font-bold underline" style={{ color: colors.primary }}>
         Terms of Service

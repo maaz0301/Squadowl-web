@@ -4,7 +4,7 @@ import { APP_CONFIG } from '@/config/app';
 import { type Session, type SupabaseClient, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import type { DataSource } from '../datasource';
 import type { SearchPlayer } from '../search';
-import { PLAN_TIERS } from '../types';
+import { PLAN_TIERS, SPORTS } from '../types';
 import { friendlyVideoError } from '../videoStorage';
 import { bulkImportPlayers, IMPORT_CREATE_CHUNK } from '../bulkTeamImport';
 import type { FeedbackAttachment, FeedbackReport, FeedbackSubmission } from '../extras';
@@ -5216,7 +5216,8 @@ export class SupabaseDataSource implements DataSource {
     const withScores = options?.withScores !== false;
     const currentYear = new Date().getFullYear();
 
-    const rubrics = generateDummyRubrics();
+    const sport: Sport = options?.sport && SPORTS.includes(options.sport) ? options.sport : 'Hockey';
+    const rubrics = generateDummyRubrics(sport);
     const names = generateDummyTeamNames(teamCount);
     const result: DummyTeamResult = {
       teams: 0,
@@ -5232,13 +5233,13 @@ export class SupabaseDataSource implements DataSource {
     for (const name of names) {
       const teamOffset = teamIdx * playersPerTeam;
       teamIdx++;
-      const team = unwrap(
-        await supabase
-          .from('teams')
-          .insert({ account_id: accountId, name, season_label: `${currentYear}-${String((currentYear + 1) % 100).padStart(2, '0')}` })
-          .select()
-          .single(),
-      ) as Row;
+      const teamBase = { account_id: accountId, name, season_label: `${currentYear}-${String((currentYear + 1) % 100).padStart(2, '0')}` };
+      let createdTeam = await supabase.from('teams').insert({ ...teamBase, sport }).select().single();
+      // A database without the team sport column yet: make the team without it.
+      if (createdTeam.error && /sport/i.test(createdTeam.error.message)) {
+        createdTeam = await supabase.from('teams').insert(teamBase).select().single();
+      }
+      const team = unwrap(createdTeam) as Row;
       result.teams++;
 
       const tryoutRow = unwrap(
@@ -5249,7 +5250,7 @@ export class SupabaseDataSource implements DataSource {
             team_id: team.id,
             name: `${name} Tryout`,
             event_type: 'tryout',
-            sport: 'Hockey',
+            sport,
             tryout_date: new Date().toISOString().slice(0, 10),
             head_coach: profile.displayName,
             head_assessor: profile.displayName,

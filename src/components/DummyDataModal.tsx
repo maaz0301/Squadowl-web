@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Button, Chip, Input, Modal, ModalFooter, Switch } from '@/components/ui';
+import { SPORTS, type Sport } from '@/data/types';
 import {
   DUMMY_LIMITS,
   clampOption,
@@ -70,6 +71,8 @@ interface TeamProps {
   teamsBlockedBy?: 'teams' | 'evaluations' | 'loading';
   /** How many players one team's roster can hold on this plan. Infinity when unlimited. */
   maxPlayersPerTeam: number;
+  /** The sport picked on the New Team form, so dummy teams start out for the same sport. */
+  defaultSport?: Sport;
   onClose: () => void;
   onSubmit: (options: DummyTeamOptions) => void;
 }
@@ -79,6 +82,8 @@ export type DummyDataModalProps = AssessmentProps | TeamProps;
 export function DummyDataModal(props: DummyDataModalProps) {
   const colors = useThemeColors();
   const isTeam = props.variant === 'team';
+  const [sportChoice, setSportChoice] = useState<Sport | null>(null);
+  const sport: Sport = sportChoice ?? (props.variant === 'team' ? props.defaultSport : undefined) ?? 'Hockey';
 
   const [target, setTarget] = useState<DummyTarget>('registrations');
   const [count, setCount] = useState('25');
@@ -124,6 +129,7 @@ export function DummyDataModal(props: DummyDataModalProps) {
     setJustClicked(true);
     if (props.variant === 'team') {
       props.onSubmit({
+        sport,
         teams: teamsN,
         playersPerTeam: countN,
         withScores: scoring,
@@ -176,10 +182,23 @@ export function DummyDataModal(props: DummyDataModalProps) {
     >
       <div className="flex flex-col gap-5 py-1">
         {isTeam ? (
-          <p className="text-sm" style={{ color: colors.inkMuted }}>
-            Teams hold no roster of their own, so each dummy team is created with a linked evaluation —
-            seeded with rubrics covering skill, time, distance, and speed — and the players are added there.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              Teams hold no roster of their own, so each dummy team is created with a linked evaluation —
+              seeded with rubrics covering skill, time, distance, and speed — and the players are added there.
+            </p>
+            <p className="text-sm font-bold" style={{ color: colors.ink }}>
+              Sport
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {SPORTS.map((s) => (
+                <Chip key={s} label={s} active={sport === s} onClick={() => setSportChoice(s)} />
+              ))}
+            </div>
+            <p className="text-xs" style={{ color: colors.inkMuted }}>
+              Players, positions and rubric names follow the sport. Scores are randomized.
+            </p>
+          </div>
         ) : (
           <div className="flex flex-col gap-2">
             <p className="text-sm font-bold" style={{ color: colors.ink }}>

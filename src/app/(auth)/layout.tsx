@@ -1,15 +1,15 @@
 'use client';
 
 import { useEffect, type ReactNode } from 'react';
-import Image from 'next/image';
 import { usePathname } from 'next/navigation';
+import { BrandLogo } from '@/components/BrandLogo';
 import { GuestGate } from '@/components/AuthGate';
 import { ThemeToggle } from '@/components/ui';
 import { useTheme } from '@/theme/ThemeProvider';
 import { trackVisit } from '@/lib/analytics';
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   return (
     <GuestGate>
       <VisitTracker />
@@ -35,16 +35,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
 
         <div className="w-full max-w-[420px]">
           <div className="mb-7 flex flex-col items-center gap-3">
-            <div style={{ width: 'min(260px, 70vw)' }}>
-              <Image
-                src={isDark ? '/images/squadowl_logo_dark.png' : '/images/squadowl_logo_light.png'}
-                alt="SquadOwl"
-                width={1200}
-                height={1073}
-                priority
-                style={{ height: 'auto', width: '100%', display: 'block' }}
-              />
-            </div>
+            <BrandLogo />
           </div>
 
           <div

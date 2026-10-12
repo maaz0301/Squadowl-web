@@ -31,6 +31,7 @@ const GRAY = rgb(0.45, 0.45, 0.45);
 const BLACK = rgb(0, 0, 0);
 const RULE = rgb(0.8, 0.8, 0.8);
 const BLUE = rgb(0.1, 0.32, 0.6);
+const GREEN = rgb(0.1, 0.5, 0.25);
 
 function wrap(text: string, f: PDFFont, size: number, maxWidth: number): string[] {
   const lines: string[] = [];
@@ -114,32 +115,34 @@ export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promis
 
   // ── Scores ────────────────────────────────────────────────────────────────
   heading('Scoring and Ranking');
-  const scoreX = MARGIN + 270;
-  const rankX = MARGIN + 390;
+  const resultX = MARGIN + 200;
+  const benchX = MARGIN + 290;
+  const rankX = MARGIN + 400;
+  const header = (t: string, x: number) => page.drawText(t, { x, y, size: 8, font: bold, color: GRAY });
   ensure(16);
-  page.drawText('METRIC', { x: MARGIN, y, size: 8, font: bold, color: GRAY });
-  page.drawText('SCORE', { x: scoreX, y, size: 8, font: bold, color: GRAY });
-  page.drawText('RANK', { x: rankX, y, size: 8, font: bold, color: GRAY });
+  header('MEASURE', MARGIN);
+  header('RESULT', resultX);
+  header('BENCHMARK', benchX);
+  header('RANK', rankX);
   y -= 14;
-  const rows = [{ label: 'Overall', score: card.overallScore, rank: card.overallRank }, ...card.metrics];
+  const rows = [{ label: 'Overall', actual: card.overallScore, benchmark: '', met: null as boolean | null | undefined, rank: card.overallRank }].concat(
+    card.metrics.map((m) => ({ label: m.label, actual: m.actual || m.score, benchmark: m.benchmark ?? '', met: m.met, rank: m.rank })),
+  );
   rows.forEach((m, i) => {
     ensure(15);
     const isOverall = i === 0;
-    page.drawText(pdfSafe(m.label), { x: MARGIN, y, size: 10, font: isOverall ? bold : font, color: isOverall ? BLUE : BLACK });
-    page.drawText(pdfSafe(m.score || '-'), { x: scoreX, y, size: 10, font: isOverall ? bold : font, color: isOverall ? BLUE : BLACK });
-    page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font: isOverall ? bold : font, color: isOverall ? BLUE : BLACK });
+    const f = isOverall ? bold : font;
+    const color = isOverall ? BLUE : BLACK;
+    page.drawText(pdfSafe(m.label.length > 34 ? `${m.label.slice(0, 33)}...` : m.label), { x: MARGIN, y, size: 10, font: f, color });
+    page.drawText(pdfSafe(m.actual || '-'), { x: resultX, y, size: 10, font: bold, color: m.met ? GREEN : color });
+    page.drawText(pdfSafe(m.benchmark || '-'), { x: benchX, y, size: 10, font, color: m.benchmark ? BLACK : GRAY });
+    page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font: f, color });
     y -= 15;
   });
-
-  if (input.benchmarks?.length) {
-    heading('Benchmarks');
-    paragraph('What we are aiming for on each measure, beside the player\'s own result.', { size: 8, color: GRAY, gap: 12 });
-    for (const b of input.benchmarks) {
-      const standing = b.met == null ? '' : b.met ? '  (reached)' : '  (working towards)';
-      paragraph(`${b.label}:  ${b.result ? `player ${b.result}` : 'not yet scored'},  benchmark ${b.target}${standing}`, { size: 10, f: bold, gap: 13 });
-      if (b.note) paragraph(b.note, { size: 8.5, color: GRAY, gap: 11 });
-      y -= 5;
-    }
+  const notes = (input.benchmarks ?? []).filter((b) => b.note);
+  if (notes.length) {
+    y -= 4;
+    for (const b of notes) paragraph(`${b.label}: ${b.note}`, { size: 8.5, color: GRAY, gap: 11 });
   }
 
   if (card.recommendation) {

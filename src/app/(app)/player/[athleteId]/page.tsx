@@ -9,6 +9,7 @@ import { Avatar, Button, Card, ErrorState, Input, LoadingState, Modal, PageHeade
 import { AssessmentHistory } from '@/components/player/AssessmentHistory';
 import {
   usePlayerProfileQuery,
+  usePlayerReportCardsQuery,
   useFamilyContactsQuery,
   useAddFamilyContactMutation,
   useRemoveFamilyContactMutation,
@@ -50,6 +51,8 @@ export default function PlayerProfilePage() {
   // Other athlete records that are the same person, passed in by Search.
   const also = (useSearchParams().get('also') ?? '').split(',').filter(Boolean);
   const profileQuery = usePlayerProfileQuery(athleteId, also);
+  const reportCardsQuery = usePlayerReportCardsQuery(isGuardian || role === 'assessor' ? undefined : athleteId);
+  const reportCards = reportCardsQuery.data ?? [];
   const profile = profileQuery.data;
 
   // Same extra-family-members feature as the assessment player page, added
@@ -229,6 +232,29 @@ export default function PlayerProfilePage() {
           {profile.assessments.map((a) => (
             <Link key={`eval-${a.participantId}`} href={`/assessment/${a.tryoutId}/player/${a.participantId}`}>
               <Button label={`Reports in ${a.tryoutName}`} variant="ghost" />
+            </Link>
+          ))}
+        </Card>
+      )}
+
+      {/* Saved report cards, listed here so a coach finds them again from the
+          player card, not only inside an evaluation. */}
+      {isGuardian || role === 'assessor' || profile.assessments.length === 0 ? null : (
+        <Card className="mb-4 flex flex-col gap-2">
+          <p className="font-display font-bold" style={{ color: colors.ink }}>Report Cards</p>
+          <p className="text-sm" style={{ color: colors.inkMuted }}>
+            {reportCards.length === 0
+              ? 'No report cards yet. Create one from an evaluation to share with the family.'
+              : `${reportCards.length} saved report card${reportCards.length === 1 ? '' : 's'}.`}
+          </p>
+          {reportCards.slice(0, 5).map((c) => (
+            <p key={c.id} className="truncate text-sm" style={{ color: colors.ink }}>
+              {c.title} · {new Date(c.updatedAt).toLocaleDateString()}
+            </p>
+          ))}
+          {profile.assessments.map((a) => (
+            <Link key={`rc-${a.participantId}`} href={`/assessment/${a.tryoutId}/player/${a.participantId}/report-card`}>
+              <Button label={`Report cards in ${a.tryoutName}`} variant="secondary" />
             </Link>
           ))}
         </Card>

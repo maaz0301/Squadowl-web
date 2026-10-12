@@ -12,6 +12,118 @@ import {
 import { themeTokens } from '@/theme/tokens';
 import type { RankingDirection, ScoringType } from '@/data/types';
 import { formatBenchmarkValue } from '@/data/benchmarks';
+import { formatClock, parseTimeField, partsToValue, valueToParts, type TimeField, type TimeParts } from '@/lib/timeEntry';
+
+const TIME_FIELDS: { key: TimeField; label: string }[] = [
+  { key: 'h', label: 'Hr' },
+  { key: 'm', label: 'Min' },
+  { key: 's', label: 'Sec' },
+  { key: 't', label: '1/10' },
+];
+
+/**
+ * A timed result typed as hours, minutes, seconds and tenths. The coach turns
+ * on the fields the event needs; the entry is stored in the rubric's own unit.
+ */
+function TimeFields({
+  value,
+  unit,
+  onValue,
+  onClear,
+}: {
+  value?: number;
+  unit?: string;
+  onValue: (v: number) => void;
+  onClear?: () => void;
+}) {
+  const colors = useThemeColors();
+  const [shown, setShown] = useState<Record<TimeField, boolean>>({ h: valueToParts(value, unit).h > 0, m: true, s: true, t: true });
+  const [parts, setParts] = useState<TimeParts>(() => valueToParts(value, unit));
+  const [texts, setTexts] = useState<Partial<Record<TimeField, string>>>({});
+
+  // Follow a value changed from outside, but not the one these fields just
+  // produced, so a half-typed "05" is left alone. Done while rendering, which
+  // React allows, rather than in an effect.
+  const [seen, setSeen] = useState({ value, unit });
+  if (seen.value !== value || seen.unit !== unit) {
+    setSeen({ value, unit });
+    if (value == null) {
+      setParts({ h: 0, m: 0, s: 0, t: 0 });
+      setTexts({});
+    } else if (partsToValue(parts, unit) !== value) {
+      setParts(valueToParts(value, unit));
+      setTexts({});
+    }
+  }
+
+  const commit = (next: TimeParts) => {
+    setParts(next);
+    const v = partsToValue(next, unit);
+    if (v > 0) onValue(v);
+    else onClear?.();
+  };
+
+  // A field switched off counts as zero, so hiding hours cannot leave a stray hour in the total.
+  const toggle = (key: TimeField) => {
+    const on = !shown[key];
+    setShown((prev) => ({ ...prev, [key]: on }));
+    if (!on && parts[key] !== 0) {
+      setTexts((prev) => ({ ...prev, [key]: '' }));
+      commit({ ...parts, [key]: 0 });
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {TIME_FIELDS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            role="switch"
+            aria-checked={shown[f.key]}
+            aria-label={`Use ${f.label}`}
+            onClick={() => toggle(f.key)}
+            className="h-8 rounded-full border px-3 text-xs font-bold"
+            style={{
+              backgroundColor: shown[f.key] ? colors.primary : colors.field,
+              borderColor: shown[f.key] ? colors.primary : colors.border,
+              color: shown[f.key] ? '#fff' : colors.inkMuted,
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
+        <span className="ml-auto text-sm font-extrabold" style={{ color: colors.primary }}>
+          {formatClock(partsToValue(parts, unit), unit)}
+        </span>
+      </div>
+      <div className="flex items-end gap-2">
+        {TIME_FIELDS.filter((f) => shown[f.key]).map((f) => (
+          <label key={f.key} className="flex flex-1 flex-col">
+            <span className="mb-1 text-[10px] font-bold uppercase" style={{ color: colors.inkMuted }}>
+              {f.label}
+            </span>
+            <input
+              value={texts[f.key] ?? (parts[f.key] ? String(parts[f.key]) : '')}
+              inputMode="numeric"
+              maxLength={f.key === 't' ? 1 : 2}
+              placeholder="0"
+              aria-label={f.label}
+              onChange={(e) => {
+                const txt = e.target.value.replace(/\D/g, '');
+                setTexts((prev) => ({ ...prev, [f.key]: txt }));
+                commit({ ...parts, [f.key]: parseTimeField(txt, f.key) });
+              }}
+              className="h-12 w-full rounded-xl border px-3 text-center text-base font-bold outline-none focus:border-[color:var(--c-primary)]"
+              style={{ backgroundColor: colors.field, borderColor: colors.border, color: colors.ink }}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 interface ScorePadProps {
   rubricKey?: string;
@@ -242,27 +354,42 @@ export function ScorePad({
             </span>
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            value={textVal}
-            inputMode="decimal"
-            onChange={(e) => {
-              setTextVal(e.target.value);
-              const p = parseFloat(e.target.value);
-              if (!isNaN(p)) onChange(p);
-              else if (e.target.value.trim() === '') onClear?.();
+        {scoringType === 'time' ? (
+          <TimeFields
+            value={value}
+            unit={unit}
+            onValue={(v) => {
+              setTextVal(String(v));
+              onChange(v);
             }}
-            placeholder={`Enter numeric ${scoringType}...`}
-            className="h-12 flex-1 rounded-xl border px-3 text-base font-bold outline-none focus:border-[color:var(--c-primary)]"
-            style={{ backgroundColor: colors.field, borderColor: colors.border, color: colors.ink }}
+            onClear={() => {
+              setTextVal('');
+              onClear?.();
+            }}
           />
-          <span
-            className="flex h-12 items-center justify-center rounded-xl border px-4 text-sm font-bold"
-            style={{ backgroundColor: colors.tile, borderColor: colors.border, color: colors.primary }}
-          >
-            {unitText}
-          </span>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <input
+              value={textVal}
+              inputMode="decimal"
+              onChange={(e) => {
+                setTextVal(e.target.value);
+                const p = parseFloat(e.target.value);
+                if (!isNaN(p)) onChange(p);
+                else if (e.target.value.trim() === '') onClear?.();
+              }}
+              placeholder={`Enter numeric ${scoringType}...`}
+              className="h-12 flex-1 rounded-xl border px-3 text-base font-bold outline-none focus:border-[color:var(--c-primary)]"
+              style={{ backgroundColor: colors.field, borderColor: colors.border, color: colors.ink }}
+            />
+            <span
+              className="flex h-12 items-center justify-center rounded-xl border px-4 text-sm font-bold"
+              style={{ backgroundColor: colors.tile, borderColor: colors.border, color: colors.primary }}
+            >
+              {unitText}
+            </span>
+          </div>
+        )}
         {minVal != null && maxVal != null ? (
           <p className="mt-1 text-xs" style={{ color: colors.inkMuted }}>
             Benchmarked Range: Min = {minVal} {unitText} · Max = {maxVal} {unitText}

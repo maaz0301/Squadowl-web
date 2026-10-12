@@ -44,12 +44,6 @@ export function TeamHubHeader({ name, subtitle, logoUrl, backHref, onChat, chatB
         <Icon name="chevronLeft" size={16} color={colors.ink} />
       </button>
 
-      {logoUrl ? (
-        <img src={logoUrl} alt="" width={44} height={44} className="h-11 w-11 shrink-0 rounded-full object-cover" />
-      ) : (
-        <Image src="/images/squadowl_emblem.png" alt="" width={44} height={44} className="h-11 w-11 shrink-0" />
-      )}
-
       <div className="min-w-0 flex-1">
         <h1
           className="line-clamp-2 break-words text-lg leading-tight font-bold sm:text-2xl"
@@ -63,6 +57,22 @@ export function TeamHubHeader({ name, subtitle, logoUrl, backHref, onChat, chatB
           </p>
         ) : null}
       </div>
+
+      {/* The team's own logo sits in the upper right corner; clicking it opens
+          Edit so a coach can change it. The SquadOwl mark stands in until one is set. */}
+      <button
+        type="button"
+        onClick={onEdit}
+        disabled={!onEdit}
+        aria-label={onEdit ? 'Team logo, click to change' : 'Team logo'}
+        className="shrink-0"
+      >
+        {logoUrl ? (
+          <img src={logoUrl} alt="" width={56} height={56} className="h-14 w-14 rounded-full object-cover" />
+        ) : (
+          <Image src="/images/squadowl_emblem.png" alt="" width={56} height={56} className="h-14 w-14" />
+        )}
+      </button>
 
       {/* On a phone the actions drop to their own row so the name keeps the full line. */}
       <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto sm:gap-3">

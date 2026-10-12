@@ -179,12 +179,22 @@ export async function embedLogos(pdfDoc: PDFDocument, urls: string[] | undefined
 
 /**
  * The logos a printed report carries, left to right: the organization's, the
- * team's, then the app's own. The organization and team logos are a Club-plan
- * touch; the app logo is on every report.
+ * team's, then the app's own (which a coach can leave off once they have a
+ * logo of their own). The team's logo prints on every plan, since a
+ * coach uploads it for their own team; the organization logo is a Club-plan
+ * touch, and the app logo is on every report.
  */
-export function reportLogoUrls(opts: { club: boolean; organizationLogoUrl?: string; teamLogoUrl?: string }): string[] {
-  const own = opts.club ? [opts.organizationLogoUrl, opts.teamLogoUrl] : [];
-  return [...own, BRAND_LOGO_DATA_URI].filter((u): u is string => !!u);
+export function reportLogoUrls(opts: {
+  club: boolean;
+  organizationLogoUrl?: string;
+  teamLogoUrl?: string;
+  /** Print the SquadOwl logo too. On unless a coach turns it off; only honoured when they have a logo of their own to print. */
+  appLogo?: boolean;
+}): string[] {
+  const own = [opts.club ? opts.organizationLogoUrl : undefined, opts.teamLogoUrl].filter((u): u is string => !!u);
+  // A report with no logo of its own always keeps the SquadOwl one, so a page is never left bare.
+  const showApp = opts.appLogo !== false || own.length === 0;
+  return showApp ? [...own, BRAND_LOGO_DATA_URI] : own;
 }
 
 /**

@@ -48,6 +48,7 @@ export default function ExportPage() {
   const [continuous, setContinuous] = useState(false);
   const [sortBy, setSortBy] = useState<ReportSort>('jersey');
   const [printLogo, setPrintLogo] = useState(true);
+  const [printAppLogo, setPrintAppLogo] = useState(true);
   const [layout, setLayout] = useState<ReportLayout>('cards');
   const [content, setContent] = useState<ReportContent>(DEFAULT_REPORT_CONTENT);
   const [topX, setTopX] = useState('');
@@ -110,7 +111,12 @@ export default function ExportPage() {
           ? {
               playersPerPage,
               continuous: continuous && playersPerPage === 1 && layout === 'cards',
-              logoUrls: reportLogoUrls({ club: clubMode && printLogo, organizationLogoUrl, teamLogoUrl }),
+              logoUrls: reportLogoUrls({
+                club: clubMode,
+                organizationLogoUrl: printLogo ? organizationLogoUrl : undefined,
+                teamLogoUrl: printLogo ? teamLogoUrl : undefined,
+                appLogo: printAppLogo,
+              }),
               sortBy,
               filter,
               content,
@@ -328,7 +334,7 @@ export default function ExportPage() {
                   </span>
                 ) : null}
               </div>
-              {clubMode && (organizationLogoUrl || teamLogoUrl) ? (
+              {(clubMode && organizationLogoUrl) || teamLogoUrl ? (
                 <label className="flex items-center gap-2 text-sm" style={{ color: colors.ink }}>
                   <input
                     type="checkbox"
@@ -336,7 +342,18 @@ export default function ExportPage() {
                     onChange={(e) => setPrintLogo(e.target.checked)}
                     className="h-4 w-4"
                   />
-                  Print the organization and team logos at the top of every page
+                  Print the team logo at the top of every page
+                </label>
+              ) : null}
+              {(clubMode && organizationLogoUrl) || teamLogoUrl ? (
+                <label className="flex items-center gap-2 text-sm" style={{ color: colors.ink }}>
+                  <input
+                    type="checkbox"
+                    checked={printAppLogo}
+                    onChange={(e) => setPrintAppLogo(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  Also print the SquadOwl logo
                 </label>
               ) : null}
             </Card>

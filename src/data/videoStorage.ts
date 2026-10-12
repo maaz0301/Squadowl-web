@@ -10,25 +10,28 @@
 
 export const BYTES_PER_GB = 1073741824;
 
-export type VideoStorageGb = 1 | 5 | 20;
+export type VideoStorageGb = 1 | 5 | 25 | 100;
 
 export interface VideoStoragePlan {
   gb: VideoStorageGb;
+  /** "Starter", "Standard", "Pro" or "Elite". */
+  name: string;
   label: string;
   priceCents: number;
 }
 
 export const VIDEO_STORAGE_PLANS: VideoStoragePlan[] = [
-  { gb: 1, label: '1 GB', priceCents: 1500 },
-  { gb: 5, label: '5 GB', priceCents: 2500 },
-  { gb: 20, label: '20 GB', priceCents: 4000 },
+  { gb: 1, name: 'Starter', label: '1 GB', priceCents: 2500 },
+  { gb: 5, name: 'Standard', label: '5 GB', priceCents: 5000 },
+  { gb: 25, name: 'Pro', label: '25 GB', priceCents: 15000 },
+  { gb: 100, name: 'Elite', label: '100 GB', priceCents: 35000 },
 ];
 
-/** Plan tiers that may buy video storage. */
-export const VIDEO_STORAGE_TIERS = ['coach_plus', 'club'] as const;
+/** Plan tiers that may buy video storage. There is no free storage on any plan. */
+export const VIDEO_STORAGE_TIERS = ['coach', 'coach_plus', 'club'] as const;
 
 export function isVideoStorageTier(tier: string | null | undefined): boolean {
-  return tier === 'coach_plus' || tier === 'club';
+  return tier === 'coach' || tier === 'coach_plus' || tier === 'club';
 }
 
 /** Where a video can be attached. Every one counts against the same quota. */
@@ -38,7 +41,7 @@ export type VideoContext = 'library' | 'report_card' | 'evaluation' | 'team_post
 export interface VideoStorageInfo {
   accountId: string;
   planTier: string;
-  /** The plan is Coach+ or Club, so the add-on can be bought. */
+  /** The plan is Coach, Coach+ or Club, so the add-on can be bought. */
   planEligible: boolean;
   /** Purchased size, 0 when there is no add-on. */
   gb: number;

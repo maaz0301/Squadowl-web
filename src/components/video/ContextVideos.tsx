@@ -188,7 +188,7 @@ export function ContextVideos({ context, contextId, accountId: accountIdProp, ti
       ) : null}
 
       {!readOnly && info?.canManage && info.planEligible && !info.entitled ? (
-        <Link href="/storage" className="inline-block rounded-lg border px-3 py-2 text-center text-sm font-semibold" style={{ borderColor: colors.primary, color: colors.primary }}>
+        <Link href="/library" className="inline-block rounded-lg border px-3 py-2 text-center text-sm font-semibold" style={{ borderColor: colors.primary, color: colors.primary }}>
           Add video storage
         </Link>
       ) : null}

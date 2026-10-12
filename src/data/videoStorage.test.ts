@@ -13,19 +13,20 @@ import {
 } from './videoStorage';
 
 describe('video storage plans', () => {
-  it('sells 1, 5 and 20 GB at $15, $25 and $40 a year', () => {
-    expect(VIDEO_STORAGE_PLANS.map((p) => [p.gb, p.priceCents])).toEqual([
-      [1, 1500],
-      [5, 2500],
-      [20, 4000],
+  it('sells Starter, Standard, Pro and Elite at $25, $50, $150 and $350 a year', () => {
+    expect(VIDEO_STORAGE_PLANS.map((p) => [p.name, p.gb, p.priceCents])).toEqual([
+      ['Starter', 1, 2500],
+      ['Standard', 5, 5000],
+      ['Pro', 25, 15000],
+      ['Elite', 100, 35000],
     ]);
-    expect(formatPlanPrice(VIDEO_STORAGE_PLANS[1])).toBe('$25/year');
+    expect(formatPlanPrice(VIDEO_STORAGE_PLANS[1])).toBe('$50/year');
   });
 
-  it('is only for Coach+ and Club', () => {
+  it('is for Coach, Coach+ and Club, with no free storage', () => {
+    expect(isVideoStorageTier('coach')).toBe(true);
     expect(isVideoStorageTier('coach_plus')).toBe(true);
     expect(isVideoStorageTier('club')).toBe(true);
-    expect(isVideoStorageTier('coach')).toBe(false);
     expect(isVideoStorageTier('free')).toBe(false);
     expect(isVideoStorageTier(undefined)).toBe(false);
   });

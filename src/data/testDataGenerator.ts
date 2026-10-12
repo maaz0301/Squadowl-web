@@ -90,6 +90,8 @@ export interface DummyDataOptions {
 
 /** Options for the New Team screen's dummy button. */
 export interface DummyTeamOptions {
+  /** The sport the dummy teams, their players' positions and rubrics are made for. Hockey when unset. */
+  sport?: Sport;
   /** Teams to create. Each gets one linked assessment. */
   teams: number;
   playersPerTeam: number;
@@ -275,22 +277,32 @@ export function generateDummyTeamNames(count: number): string[] {
  * assessments ship with `customRubrics: []`, and scoring needs at least one
  * rubric — these give the ranking/report pipeline something to chew on.
  */
-export function generateDummyRubrics(): CustomRubric[] {
-  // The five weighted rubrics below add up to 100% and are deliberately all
-  // different, so the generated data exercises weighted ranking rather than a
-  // flat average; the remaining four are left unweighted on purpose, to also
-  // cover the "share whatever is left over" path.
+export function generateDummyRubrics(sport: Sport = 'Hockey'): CustomRubric[] {
+  // Every rubric carries an explicit weight and the nine add up to exactly 100%,
+  // so the rubric list never shows percentages that total more than that.
   return [
-    { key: 'dummy_skating', label: 'Skating / Movement', scoringType: 'skill', scale: '1-5', rankingDirection: 'higher_is_better', weight: 30, role: 'all' },
-    { key: 'dummy_skills', label: 'Technical Skills', scoringType: 'skill', scale: '1-5', rankingDirection: 'higher_is_better', weight: 25, role: 'all' },
-    { key: 'dummy_compete', label: 'Compete Level', scoringType: 'skill', scale: '1-10', rankingDirection: 'higher_is_better', weight: 20, role: 'all' },
-    { key: 'dummy_gamesense', label: 'Game Sense (Observed)', scoringType: 'observation', scale: '1-5', rankingDirection: 'higher_is_better', weight: 15, role: 'all' },
+    { key: 'dummy_skating', label: dummyMovementLabel(sport), scoringType: 'skill', scale: '1-5', rankingDirection: 'higher_is_better', weight: 20, role: 'all' },
+    { key: 'dummy_skills', label: 'Technical Skills', scoringType: 'skill', scale: '1-5', rankingDirection: 'higher_is_better', weight: 15, role: 'all' },
+    { key: 'dummy_compete', label: 'Compete Level', scoringType: 'skill', scale: '1-10', rankingDirection: 'higher_is_better', weight: 10, role: 'all' },
+    { key: 'dummy_gamesense', label: 'Game Sense (Observed)', scoringType: 'observation', scale: '1-5', rankingDirection: 'higher_is_better', weight: 10, role: 'all' },
     { key: 'dummy_sprint', label: 'Sprint Time', scoringType: 'time', scale: '1-5', unit: 's', minVal: 4.5, maxVal: 7.5, rankingDirection: 'lower_is_better', weight: 10, role: 'all' },
-    { key: 'dummy_jump', label: 'Vertical Jump', scoringType: 'distance', scale: '1-5', unit: 'in', minVal: 8, maxVal: 40, rankingDirection: 'higher_is_better', role: 'all' },
-    { key: 'dummy_topspeed', label: 'Top Speed', scoringType: 'speed', scale: '1-5', unit: 'km/h', minVal: 8, maxVal: 24, rankingDirection: 'higher_is_better', role: 'all' },
-    { key: 'dummy_coachable', label: 'Coachable', scoringType: 'yes_no', scale: '1-5', rankingDirection: 'higher_is_better', role: 'all' },
-    { key: 'dummy_forecheck', label: 'Forecheck', scoringType: 'effectiveness', scale: '1-5', rankingDirection: 'higher_is_better', role: 'all' },
+    { key: 'dummy_jump', label: 'Vertical Jump', scoringType: 'distance', scale: '1-5', unit: 'in', minVal: 8, maxVal: 40, rankingDirection: 'higher_is_better', weight: 10, role: 'all' },
+    { key: 'dummy_topspeed', label: 'Top Speed', scoringType: 'speed', scale: '1-5', unit: 'km/h', minVal: 8, maxVal: 24, rankingDirection: 'higher_is_better', weight: 10, role: 'all' },
+    { key: 'dummy_coachable', label: 'Coachable', scoringType: 'yes_no', scale: '1-5', rankingDirection: 'higher_is_better', weight: 8, role: 'all' },
+    { key: 'dummy_forecheck', label: dummyEffectLabel(sport), scoringType: 'effectiveness', scale: '1-5', rankingDirection: 'higher_is_better', weight: 7, role: 'all' },
   ];
+}
+
+/** The first dummy rubric reads naturally for the sport the dummy team was made for. */
+function dummyMovementLabel(sport: Sport): string {
+  if (sport === 'Hockey' || sport === 'Ringette') return 'Skating';
+  if (sport === 'Skating') return 'Edge Control';
+  return 'Movement';
+}
+
+/** "Forecheck" only makes sense on the ice. */
+function dummyEffectLabel(sport: Sport): string {
+  return sport === 'Hockey' || sport === 'Ringette' ? 'Forecheck' : 'Defensive Effort';
 }
 
 /**

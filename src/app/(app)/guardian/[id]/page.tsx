@@ -298,6 +298,9 @@ export default function GuardianPortalPage() {
           <p className="mt-1 text-base" style={{ color: colors.inkMuted }}>
             {athlete.seasons.length} Active Assignments
           </p>
+          <p className="mt-0.5 text-sm font-bold" style={{ color: colors.primary }}>
+            {[...new Set(athlete.seasons.map((se) => se.teamName).filter(Boolean))].join(' · ') || 'Not on a team yet'}
+          </p>
         </div>
       </div>
 
