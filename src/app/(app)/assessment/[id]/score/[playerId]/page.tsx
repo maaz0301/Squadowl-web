@@ -477,7 +477,8 @@ export default function ScorePage() {
 
       if (playerId && !notAttemptedOnly) markSessionCompleted(playerId, data.session);
 
-      const currentIdx = SESSIONS.indexOf(data.session);
+      // Skipping a session moves on from the one on screen, whatever the form last stored.
+      const currentIdx = SESSIONS.indexOf(notAttemptedOnly ? currentSession : data.session);
       if (!closeAfter && currentIdx !== -1 && currentIdx < SESSIONS.length - 1) {
         const nextSess = SESSIONS[currentIdx + 1];
         // A session skipped entirely moves on empty, so its N/A marks are not carried over.
