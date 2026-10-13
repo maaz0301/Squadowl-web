@@ -72,11 +72,41 @@ async function accountsByCustomer(admin: SupabaseClient, customerIds: string[]) 
   return map;
 }
 
-/** Stripe customers of accounts hidden from the founder console, left out of every Stripe-backed view. */
-async function hiddenCustomerIds(admin: SupabaseClient): Promise<Set<string>> {
-  const { data } = await admin.from('accounts').select('stripe_customer_id').eq('hidden_from_founder', true).not('stripe_customer_id', 'is', null);
-  return new Set((data ?? []).map((a: { stripe_customer_id: string }) => a.stripe_customer_id));
+/**
+ * What the founder console must not show: Stripe customers of hidden accounts,
+ * plus any other Stripe customer or charge under the same people's emails
+ * (older sandbox customers, one-off charges).
+ */
+async function hiddenScope(admin: SupabaseClient): Promise<{ ids: Set<string>; emails: Set<string> }> {
+  const ids = new Set<string>();
+  const emails = new Set<string>();
+  const { data: accounts } = await admin.from('accounts').select('id, stripe_customer_id').eq('hidden_from_founder', true);
+  const accountIds = (accounts ?? []).map((a: { id: string }) => a.id);
+  for (const a of accounts ?? []) if (a.stripe_customer_id) ids.add(a.stripe_customer_id);
+  if (accountIds.length) {
+    const { data: members } = await admin.from('memberships').select('user_id').in('account_id', accountIds);
+    const userIds = [...new Set((members ?? []).map((m: { user_id: string }) => m.user_id))];
+    if (userIds.length) {
+      const { data: profiles } = await admin.from('profiles').select('email').in('id', userIds);
+      for (const p of profiles ?? []) if (p.email) emails.add(String(p.email).toLowerCase());
+    }
+  }
+  for (const email of emails) {
+    try {
+      const res = await stripe.customers.list({ email, limit: 100 });
+      for (const c of res.data) ids.add(c.id);
+    } catch (err) {
+      console.error('founder-billing: customer lookup by email failed', (err as Error).message);
+    }
+  }
+  return { ids, emails };
 }
+
+const isHiddenCharge = (c: Stripe.Charge, scope: { ids: Set<string>; emails: Set<string> }): boolean => {
+  const customer = typeof c.customer === 'object' && c.customer && !('deleted' in c.customer && c.customer.deleted) ? (c.customer as Stripe.Customer) : null;
+  const email = (customer?.email ?? c.billing_details?.email ?? c.receipt_email ?? '').toLowerCase();
+  return scope.ids.has(idOf(c.customer) ?? '') || (!!email && scope.emails.has(email));
+};
 
 const idOf = (ref: unknown): string | null =>
   typeof ref === 'string' ? ref : ((ref as { id?: string } | null)?.id ?? null);
@@ -229,8 +259,8 @@ async function listPayments({ admin, body }: Ctx) {
     );
   }
 
-  const hidden = await hiddenCustomerIds(admin);
-  charges = charges.filter((c) => !hidden.has(idOf(c.customer) ?? ''));
+  const scope = await hiddenScope(admin);
+  charges = charges.filter((c) => !isHiddenCharge(c, scope));
   const accounts = await accountsByCustomer(admin, charges.map((c) => idOf(c.customer) ?? ''));
   return { items: charges.map((c) => chargeRow(c, accounts)), nextCursor };
 }
@@ -240,7 +270,7 @@ async function getPayment({ admin, body }: Ctx) {
   const charge = await stripe.charges.retrieve(String(body.chargeId), {
     expand: ['customer', 'refunds', 'invoice'],
   });
-  if ((await hiddenCustomerIds(admin)).has(idOf(charge.customer) ?? '')) throw new HttpError('Payment not found.', 404);
+  if (isHiddenCharge(charge, await hiddenScope(admin))) throw new HttpError('Payment not found.', 404);
   const accounts = await accountsByCustomer(admin, [idOf(charge.customer) ?? '']);
   const invoice = typeof charge.invoice === 'object' ? charge.invoice : null;
   return {
@@ -536,7 +566,7 @@ const MAX_CHARGES = 10000;
  * themselves are computed client-side so the maths is unit-tested.
  */
 async function revenueData({ admin, body }: Ctx) {
-  const hidden = await hiddenCustomerIds(admin);
+  const hidden = (await hiddenScope(admin)).ids;
   const months = Math.max(3, Math.min(36, Math.round(Number(body.months) || 12)));
 
   const subscriptions = [];
