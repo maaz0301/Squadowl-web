@@ -29,10 +29,16 @@ import {
 } from '@/features/founderQueries';
 import { daysUntil, type AccountAccessStatus } from '@/lib/accountAccess';
 import { useDebouncedValue } from '@/lib/hooks';
+import { FounderDashboard } from '@/components/founder/FounderDashboard';
 import { ViewAsButton } from '@/components/founder/ViewAsButton';
 import { scrollToTop } from '@/lib/scrollToTop';
 
 const PAGE_SIZE = 25;
+
+const HOME_TABS = [
+  { key: 'dashboard', label: 'Dashboard' },
+  { key: 'organizations', label: 'Organizations' },
+];
 
 const STATUS_TABS = [
   { key: 'all', label: 'All' },
@@ -50,6 +56,7 @@ const STATUS_TABS = [
 export default function FounderPage() {
   const founderQuery = useIsFounderQuery();
   const [creating, setCreating] = useState(false);
+  const [view, setView] = useState('dashboard');
 
   if (founderQuery.isLoading) return <LoadingState message="Loading..." />;
 
@@ -66,10 +73,11 @@ export default function FounderPage() {
     <>
       <PageHeader
         title="Founder Console"
-        subtitle="Organizations, access and pilot onboarding"
+        subtitle="Mission control, organizations and access"
         right={<Button label="+ New Organization" size="sm" onClick={() => setCreating(true)} />}
       />
-      <OrganizationsView />
+      <Tabs tabs={HOME_TABS} activeKey={view} onChange={setView} className="mb-4" />
+      {view === 'dashboard' ? <FounderDashboard /> : <OrganizationsView />}
       <CreateOrganizationModal visible={creating} onClose={() => setCreating(false)} />
     </>
   );

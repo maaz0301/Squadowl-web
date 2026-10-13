@@ -360,7 +360,7 @@ function subscriptionRow(sub: Stripe.Subscription) {
 
 async function accountSubscriptions({ admin, body }: Ctx) {
   const account = await accountById(admin, String(body.accountId ?? ''));
-  if (!account.stripe_customer_id) return { customerId: null, subscriptions: [] };
+  if (!account.stripe_customer_id) return { customerId: null, balanceCents: 0, subscriptions: [] };
   // Stripe caps `expand` at 4 levels, and nothing here needs the product name
   // beyond the tier resolved from the price itself.
   const res = await stripe.subscriptions.list({
@@ -368,7 +368,10 @@ async function accountSubscriptions({ admin, body }: Ctx) {
     status: 'all',
     limit: 30,
   });
-  return { customerId: account.stripe_customer_id, subscriptions: res.data.map(subscriptionRow) };
+  const customer = await stripe.customers.retrieve(account.stripe_customer_id);
+  // A negative Stripe balance is credit the customer holds against future invoices.
+  const balanceCents = customer.deleted ? 0 : -(customer.balance ?? 0);
+  return { customerId: account.stripe_customer_id, balanceCents, subscriptions: res.data.map(subscriptionRow) };
 }
 
 /** A subscription that belongs to this account's customer — never trust a bare subscription id from the client. */
@@ -462,6 +465,53 @@ async function resumeSubscription(ctx: Ctx) {
   if (!sub.cancel_at_period_end) throw new HttpError('This subscription is not scheduled to cancel.');
   const updated = await stripe.subscriptions.update(sub.id, { cancel_at_period_end: false });
   await audit(ctx, 'resume_subscription', account.id, account.name, strOrNull(body.note), { subscription_id: sub.id });
+  return subscriptionRow(updated);
+}
+
+/** Credit applied to the customer's next invoices (Stripe customer balance). */
+async function addCredit(ctx: Ctx) {
+  const { admin, body } = ctx;
+  const account = await accountById(admin, String(body.accountId ?? ''));
+  if (!account.stripe_customer_id) throw new HttpError('This account has no Stripe customer yet.');
+  const amountCents = Math.round(Number(body.amountCents));
+  if (!Number.isFinite(amountCents) || amountCents < 100 || amountCents > 100000) {
+    throw new HttpError('Credit must be between $1.00 and $1,000.00.');
+  }
+  const note = strOrNull(body.note);
+  if (!note || !note.trim()) throw new HttpError('A note is required for credits.');
+  const tx = await stripe.customers.createBalanceTransaction(
+    account.stripe_customer_id,
+    { amount: -amountCents, currency: 'cad', description: `Credit from founder console: ${note.trim()}`.slice(0, 350) },
+    { idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey : undefined },
+  );
+  await audit(ctx, 'add_credit', account.id, account.name, note, { amount_cents: amountCents, currency: 'cad' });
+  return { balanceCents: -tx.ending_balance, amountCents };
+}
+
+/**
+ * Pushes the next charge back to a later date. Nothing is billed until then
+ * (Stripe treats it as a free stretch before the next invoice); the date must
+ * be after the current period ends and within a year.
+ */
+async function setBillingDate(ctx: Ctx) {
+  const { admin, body } = ctx;
+  const { account, sub } = await ownedSubscription(admin, String(body.accountId ?? ''), String(body.subscriptionId ?? ''));
+  if (!['active', 'trialing'].includes(sub.status)) throw new HttpError('Only a live subscription can move its billing date.');
+  const target = Date.parse(`${String(body.date ?? '')}T12:00:00Z`);
+  if (!Number.isFinite(target)) throw new HttpError('Enter the new billing date.');
+  const now = Date.now();
+  const periodEnd = (sub.trial_end ?? sub.current_period_end ?? 0) * 1000;
+  if (target <= Math.max(now, periodEnd)) throw new HttpError('The new date must be after the current billing date.');
+  if (target > now + 366 * 24 * 60 * 60 * 1000) throw new HttpError('The new date must be within a year.');
+  const updated = await stripe.subscriptions.update(sub.id, {
+    trial_end: Math.floor(target / 1000),
+    proration_behavior: 'none',
+  });
+  await audit(ctx, 'set_billing_date', account.id, account.name, strOrNull(body.note), {
+    subscription_id: sub.id,
+    from: periodEnd ? new Date(periodEnd).toISOString() : null,
+    to: new Date(target).toISOString(),
+  });
   return subscriptionRow(updated);
 }
 
@@ -560,6 +610,8 @@ const ACTIONS: Record<string, (ctx: Ctx) => Promise<unknown>> = {
   change_plan: changePlan,
   cancel_subscription: cancelSubscription,
   resume_subscription: resumeSubscription,
+  add_credit: addCredit,
+  set_billing_date: setBillingDate,
   revenue: revenueData,
 };
 

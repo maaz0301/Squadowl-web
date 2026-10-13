@@ -18,6 +18,15 @@ export function auditDetail(entry: FounderAuditEntry): string {
         after.trial_ends_at ? ` · trial to ${formatDate(Date.parse(after.trial_ends_at as string))}` : ''
       }`;
     }
+    case 'update_limits': {
+      const after = (d.after ?? {}) as Record<string, unknown>;
+      return ` · extra team licenses now ${after.extra_team_licenses}`;
+    }
+    case 'merge_users': {
+      const from = (d.from ?? {}) as Record<string, unknown>;
+      const into = (d.into ?? {}) as Record<string, unknown>;
+      return ` · ${from.email} into ${into.email}`;
+    }
     case 'suspend':
     case 'reactivate':
       return d.from ? ` · ${d.from} → ${d.to}` : '';

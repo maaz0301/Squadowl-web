@@ -12,6 +12,8 @@ export interface FounderOrganization {
   suspendedReason?: string;
   trialEndsAt?: number;
   isComp: boolean;
+  /** Team licenses granted on top of the plan's own allowance. */
+  extraTeamLicenses?: number;
   ownerEmail?: string;
   memberCount: number;
   teamCount: number;
@@ -202,6 +204,10 @@ export type FounderAuditAction =
   | 'reactivate'
   | 'create_org'
   | 'update_access'
+  | 'update_limits'
+  | 'merge_users'
+  | 'add_credit'
+  | 'set_billing_date'
   | 'impersonate_start'
   | 'impersonate_end'
   | 'update_user_role'
@@ -654,4 +660,48 @@ export interface BillingPaymentDetail extends BillingPayment {
     discountCents: number;
     lines: { description: string | null; amountCents: number; periodStart: number | null; periodEnd: number | null }[];
   } | null;
+}
+
+// ─── Dashboard & activity ────────────────────────────────────────────────────
+
+export interface FounderDashboardStats {
+  clubs_total: number;
+  clubs_new_7d: number;
+  clubs_new_30d: number;
+  paying: number;
+  trial: number;
+  comp: number;
+  suspended: number;
+  past_due: number;
+  canceling: number;
+  canceled: number;
+  users_total: number;
+  signups_7d: number;
+  signups_prev_7d: number;
+  users_active_7d: number;
+  users_active_30d: number;
+  evaluations_today: number;
+  evaluations_7d: number;
+  tryouts_today: number;
+  db_size_bytes: number;
+  top_clubs: { accountId: string; name: string; evaluations: number; tryouts: number }[];
+}
+
+export interface FounderOrgActivityEvent {
+  at: string;
+  kind: 'signup' | 'trial' | 'paid' | 'suspended' | 'member' | 'tryout' | 'team' | 'login' | 'evaluation';
+  label: string;
+}
+
+export interface FounderOrgActivity {
+  lastLoginAt: string | null;
+  lastEvaluationAt: string | null;
+  events: FounderOrgActivityEvent[];
+}
+
+export interface FounderMergeResult {
+  moved: number;
+  dropped: number;
+  fromEmail: string;
+  intoEmail: string;
 }

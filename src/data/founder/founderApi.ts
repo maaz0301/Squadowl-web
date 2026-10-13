@@ -23,6 +23,9 @@ import {
 import { founderError } from './errors';
 import type {
   FounderAccessKind,
+  FounderDashboardStats,
+  FounderMergeResult,
+  FounderOrgActivity,
   FounderAuditEntry,
   FounderAuditFilter,
   FounderAuditPage,
@@ -394,6 +397,7 @@ export async function getFounderOrganization(accountId: string): Promise<Founder
       suspendedAt: account.suspended_at ? toMs(account.suspended_at) : undefined,
       suspendedReason: account.suspended_reason ?? undefined,
       trialEndsAt: account.trial_ends_at ? toMs(account.trial_ends_at) : undefined,
+      extraTeamLicenses: typeof account.extra_team_licenses === 'number' ? account.extra_team_licenses : 0,
       isComp: !!account.is_comp,
       ownerEmail: owner?.email,
       memberCount: members.length,
@@ -1203,4 +1207,37 @@ function analyticsError(error: { message: string; code?: string }) {
     });
   }
   return founderError(error);
+}
+
+// ─── Dashboard, activity, limits and merge ──────────────────────────────────
+
+export async function getFounderDashboardStats(): Promise<FounderDashboardStats> {
+  const { data, error } = await getSupabase().rpc('founder_dashboard_stats');
+  if (error) throw founderError(error);
+  return data as FounderDashboardStats;
+}
+
+export async function getFounderOrgActivity(accountId: string): Promise<FounderOrgActivity> {
+  const { data, error } = await getSupabase().rpc('founder_org_activity', { p_account_id: accountId });
+  if (error) throw founderError(error);
+  return data as FounderOrgActivity;
+}
+
+export async function setOrganizationLimits(accountId: string, extraTeamLicenses: number): Promise<number> {
+  const { data, error } = await getSupabase().rpc('founder_set_org_limits', {
+    p_account_id: accountId,
+    p_extra_team_licenses: extraTeamLicenses,
+  });
+  if (error) throw founderError(error);
+  return data as number;
+}
+
+export async function mergeFounderUsers(fromUserId: string, intoUserId: string, reason?: string): Promise<FounderMergeResult> {
+  const { data, error } = await getSupabase().rpc('founder_merge_users', {
+    p_from: fromUserId,
+    p_into: intoUserId,
+    p_reason: reason?.trim() || null,
+  });
+  if (error) throw founderError(error);
+  return data as FounderMergeResult;
 }

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, EmptyState, ErrorState, Input, LoadingState, PageHeader, Tabs, useAlert } from '@/components/ui';
 import { FounderNotAvailable } from '@/components/founder/FounderUi';
-import { SetUserRoleModal, UserReasonModal } from '@/components/founder/UserModals';
+import { MergeUserModal, SetUserRoleModal, UserReasonModal } from '@/components/founder/UserModals';
 import { ROLE_BADGE_VARIANT, formatDate, isUserBanned, roleLabel } from '@/components/founder/labels';
 import type { FounderUser } from '@/data/founder/types';
 import {
@@ -46,6 +46,7 @@ function UsersView() {
   const [roleEditing, setRoleEditing] = useState<{ user: FounderUser; accountId: string } | null>(null);
   const [banning, setBanning] = useState<FounderUser | null>(null);
   const [deleting, setDeleting] = useState<FounderUser | null>(null);
+  const [merging, setMerging] = useState<FounderUser | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
@@ -194,6 +195,7 @@ function UsersView() {
                 onBan={() => setBanning(u)}
                 onUnban={() => handleUnban(u)}
                 onDelete={() => setDeleting(u)}
+                onMerge={() => setMerging(u)}
                 onEditRole={(accountId) => setRoleEditing({ user: u, accountId })}
               />
             ))}
@@ -228,6 +230,7 @@ function UsersView() {
         </>
       )}
 
+      <MergeUserModal user={merging} onClose={() => setMerging(null)} />
       <SetUserRoleModal
         user={roleEditing?.user ?? null}
         accountId={roleEditing?.accountId ?? null}
@@ -264,6 +267,7 @@ function UserRow({
   onBan,
   onUnban,
   onDelete,
+  onMerge,
   onEditRole,
 }: {
   user: FounderUser;
@@ -273,6 +277,7 @@ function UserRow({
   onBan: () => void;
   onUnban: () => void;
   onDelete: () => void;
+  onMerge: () => void;
   onEditRole: (accountId: string) => void;
 }) {
   const colors = useThemeColors();
@@ -334,6 +339,7 @@ function UserRow({
         ) : (
           <Button label="Ban" size="sm" variant="danger" disabled={busy} onClick={onBan} />
         )}
+        <Button label="Merge into another account" size="sm" variant="secondary" disabled={busy} onClick={onMerge} />
         <Button label="Delete" size="sm" variant="danger" disabled={busy} onClick={onDelete} />
       </div>
     </Card>

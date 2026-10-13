@@ -18,6 +18,7 @@ import { EditAccessModal, SuspendOrganizationModal } from '@/components/founder/
 import { AUDIT_ACTION_LABEL, STATUS_BADGE, formatDate, planLabel } from '@/components/founder/labels';
 import type { FounderOrganizationDetail } from '@/data/founder/types';
 import {
+  useFounderOrgActivityQuery,
   useFounderOrgEvaluationsQuery,
   useFounderOrganizationQuery,
   useIsFounderQuery,
@@ -250,6 +251,8 @@ function OrganizationDetail({ detail }: { detail: FounderOrganizationDetail }) {
 
       {tab === 'evaluations' ? <OrgEvaluationsTab orgId={org.id} /> : null}
 
+      {tab === 'activity' ? <OrgTimeline orgId={org.id} /> : null}
+
       {tab === 'activity' ? (
         <FounderSection title="Founder activity">
           {detail.auditLog.length === 0 ? (
@@ -357,6 +360,59 @@ function OrgEvaluationsTab({ orgId }: { orgId: string }) {
             ) : null}
           </FounderLinkCard>
         ))
+      )}
+    </FounderSection>
+  );
+}
+
+const TIMELINE_KIND: Record<string, string> = {
+  signup: 'Sign-up',
+  trial: 'Trial',
+  paid: 'Billing',
+  suspended: 'Access',
+  member: 'People',
+  tryout: 'Events',
+  team: 'Teams',
+  login: 'Sign-in',
+  evaluation: 'Scoring',
+};
+
+/** When the club signed up, ran events and last signed in, read from the database, not from founder edits. */
+function OrgTimeline({ orgId }: { orgId: string }) {
+  const colors = useThemeColors();
+  const query = useFounderOrgActivityQuery(orgId);
+  const data = query.data;
+  return (
+    <FounderSection title="Club activity timeline">
+      {query.isLoading ? (
+        <LoadingState message="Loading activity..." />
+      ) : query.isError || !data ? (
+        <ErrorState message="Could not load this club's activity." onRetry={() => query.refetch()} />
+      ) : (
+        <>
+          <Card className="flex flex-col gap-1">
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              Last sign-in by a member: {data.lastLoginAt ? formatDate(Date.parse(data.lastLoginAt), true) : 'never'}
+            </p>
+            <p className="text-sm" style={{ color: colors.inkMuted }}>
+              Last evaluation submitted:{' '}
+              {data.lastEvaluationAt ? formatDate(Date.parse(data.lastEvaluationAt), true) : 'none yet'}
+            </p>
+          </Card>
+          {data.events.map((e, i) => (
+            <Card key={`${e.kind}-${e.at}-${i}`} className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="min-w-0 break-words text-sm" style={{ color: colors.ink }}>
+                <span className="mr-2 text-xs font-bold uppercase" style={{ color: colors.inkFaint }}>
+                  {TIMELINE_KIND[e.kind] ?? e.kind}
+                </span>
+                {e.label}
+              </p>
+              <span className="text-xs" style={{ color: colors.inkFaint }}>
+                {formatDate(Date.parse(e.at), true)}
+              </span>
+            </Card>
+          ))}
+        </>
       )}
     </FounderSection>
   );

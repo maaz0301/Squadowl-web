@@ -33,6 +33,8 @@ import {
   useFounderSubscriptionsQuery,
   useInvalidateBilling,
   useResumeStripeSubscriptionMutation,
+  useAddAccountCreditMutation,
+  useSetBillingDateMutation,
   useStripeSubscriptionsQuery,
   useSubscriptionCountsQuery,
   useUpdateOrganizationAccessMutation,
@@ -285,6 +287,10 @@ function ManageSubscriptionModal({ account, onClose }: { account: FounderSubscri
         )}
       </FounderSection>
 
+      {account.stripeCustomerId && !stripeQuery.isLoading && !stripeQuery.isError ? (
+        <CreditSection accountId={account.id} balanceCents={stripeQuery.data?.balanceCents ?? 0} />
+      ) : null}
+
       <ManualAccessSection account={account} hasLiveStripe={live.some((s) => s.kind === 'plan')} />
     </Modal>
   );
@@ -298,6 +304,8 @@ function StripeSubscriptionCard({ accountId, sub }: { accountId: string; sub: St
   const resume = useResumeStripeSubscriptionMutation();
   const [newTier, setNewTier] = useState<string>(sub.tier ?? 'club');
   const [prorate, setProrate] = useState(false);
+  const setBillingDate = useSetBillingDateMutation();
+  const [billingDate, setBillingDateValue] = useState('');
   const isLive = LIVE.includes(sub.status);
   const badge = subscriptionStatusBadge(sub.status);
 
@@ -408,6 +416,36 @@ function StripeSubscriptionCard({ accountId, sub }: { accountId: string; sub: St
               />
             </div>
           ) : null}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <Input
+              label={`Next billing date${sub.currentPeriodEnd ? ` (now ${formatDate(sub.currentPeriodEnd)})` : ''}`}
+              type="date"
+              value={billingDate}
+              onChange={(e) => setBillingDateValue(e.target.value)}
+              containerClassName="sm:w-56"
+            />
+            <Button
+              label="Move Billing Date"
+              size="sm"
+              variant="secondary"
+              disabled={!billingDate}
+              loading={setBillingDate.isPending}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Move Billing Date',
+                  message: `Nothing will be charged until ${billingDate}. The date must be after the current billing date and within a year.`,
+                  confirmLabel: 'Move',
+                });
+                if (!ok) return;
+                await run(
+                  'Move Billing Date',
+                  () => setBillingDate.mutateAsync({ accountId, subscriptionId: sub.id, date: billingDate }),
+                  `Next billing date is now ${billingDate}.`,
+                );
+                setBillingDateValue('');
+              }}
+            />
+          </div>
           <div className="flex flex-wrap gap-2">
             {sub.cancelAtPeriodEnd ? (
               <Button
@@ -429,6 +467,60 @@ function StripeSubscriptionCard({ accountId, sub }: { accountId: string; sub: St
     </div>
   );
 }
+
+function CreditSection({ accountId, balanceCents }: { accountId: string; balanceCents: number }) {
+  const colors = useThemeColors();
+  const { alert, confirm, toast } = useAlert();
+  const add = useAddAccountCreditMutation();
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+
+  const submit = async () => {
+    const dollars = Number(amount);
+    if (!Number.isFinite(dollars) || dollars < 1 || dollars > 1000) {
+      await alert('Check Amount', 'Enter a credit from $1 to $1,000.');
+      return;
+    }
+    if (!note.trim()) {
+      await alert('Add a Note', 'Say why this credit is being given.');
+      return;
+    }
+    const ok = await confirm({
+      title: 'Add Credit',
+      message: `Give ${formatDollars(dollars)} credit? It is taken off the next invoices automatically.`,
+      confirmLabel: 'Add Credit',
+    });
+    if (!ok) return;
+    try {
+      await add.mutateAsync({
+        accountId,
+        amountCents: Math.round(dollars * 100),
+        note: note.trim(),
+        idempotencyKey: `credit-${accountId}-${Date.now()}`,
+      });
+      toast('Credit added.', 'success');
+      setAmount('');
+      setNote('');
+    } catch (e) {
+      await alert('Could Not Add Credit', errorMessage(e));
+    }
+  };
+
+  return (
+    <FounderSection title="Account credit">
+      <p className="text-sm" style={{ color: colors.inkMuted }}>
+        Credit on file: {formatDollars(balanceCents / 100)}
+      </p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <Input label="Amount (CAD)" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} containerClassName="sm:w-36" />
+        <Input label="Reason" value={note} onChange={(e) => setNote(e.target.value)} containerClassName="sm:flex-1" />
+        <Button label="Add Credit" size="sm" variant="secondary" loading={add.isPending} onClick={submit} />
+      </div>
+    </FounderSection>
+  );
+}
+
+const formatDollars = (dollars: number) => `$${dollars.toFixed(2)}`;
 
 function ManualAccessSection({ account, hasLiveStripe }: { account: FounderSubscriptionAccount; hasLiveStripe: boolean }) {
   const colors = useThemeColors();

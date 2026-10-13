@@ -161,7 +161,7 @@ export async function getSubscriptionCounts(): Promise<SubscriptionTierCount[]> 
 
 export function getAccountStripeSubscriptions(
   accountId: string,
-): Promise<{ customerId: string | null; subscriptions: StripeSubscription[] }> {
+): Promise<{ customerId: string | null; balanceCents?: number; subscriptions: StripeSubscription[] }> {
   return invokeBilling('account_subscriptions', { accountId }, 'Could not load Stripe subscriptions');
 }
 
@@ -190,6 +190,25 @@ export function resumeStripeSubscription(input: {
   note?: string;
 }): Promise<StripeSubscription> {
   return invokeBilling('resume_subscription', input, 'Could not resume the subscription');
+}
+
+export function addAccountCredit(input: {
+  accountId: string;
+  amountCents: number;
+  note: string;
+  idempotencyKey: string;
+}): Promise<{ balanceCents: number; amountCents: number }> {
+  return invokeBilling('add_credit', input, 'Could not add the credit');
+}
+
+export function setSubscriptionBillingDate(input: {
+  accountId: string;
+  subscriptionId: string;
+  /** yyyy-mm-dd */
+  date: string;
+  note?: string;
+}): Promise<StripeSubscription> {
+  return invokeBilling('set_billing_date', input, 'Could not change the billing date');
 }
 
 // ─── Payments & refunds ─────────────────────────────────────────────────────

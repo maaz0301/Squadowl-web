@@ -6,6 +6,7 @@ import type { FounderAccessKind, FounderOrganization } from '@/data/founder/type
 import {
   useCreateFounderOrganizationMutation,
   useSetOrganizationSuspendedMutation,
+  useSetOrganizationLimitsMutation,
   useUpdateOrganizationAccessMutation,
 } from '@/features/founderQueries';
 import { daysUntil } from '@/lib/accountAccess';
@@ -82,17 +83,27 @@ export function EditAccessModal({ org, onClose }: { org: FounderOrganization | n
   // Access is no longer editable here: the account's current setting is sent back unchanged,
   // so saving a plan change never alters comp, trial or normal billing.
   const access: FounderAccessKind = org?.isComp ? 'comp' : org?.trialEndsAt ? 'trial' : 'active';
-  const trialDays = String(org?.trialEndsAt ? Math.max(1, daysUntil(org.trialEndsAt)) : 30);
+  const [trialDays, setTrialDays] = useState(String(org?.trialEndsAt ? Math.max(1, daysUntil(org.trialEndsAt)) : 30));
+  const [licenses, setLicenses] = useState(String(org?.extraTeamLicenses ?? 0));
+  const setLimits = useSetOrganizationLimitsMutation();
 
   const submit = async () => {
     if (!org) return;
     const days = parseTrialDays(trialDays);
+    const extra = Number(licenses);
+    if (org.extraTeamLicenses !== undefined && (!Number.isInteger(extra) || extra < 0 || extra > 500)) {
+      await alert('Check Team Licenses', 'Enter a whole number from 0 to 500.');
+      return;
+    }
     if (access === 'trial' && days == null) {
       await alert('Check Trial Length', 'Enter a whole number of days from 1 to 365.');
       return;
     }
     try {
       await update.mutateAsync({ accountId: org.id, planTier, access, trialDays: days ?? undefined });
+      if (org.extraTeamLicenses !== undefined && extra !== org.extraTeamLicenses) {
+        await setLimits.mutateAsync({ accountId: org.id, extraTeamLicenses: extra });
+      }
       toast(`${org.name} updated.`, 'success');
       onClose();
     } catch (e) {
@@ -110,7 +121,7 @@ export function EditAccessModal({ org, onClose }: { org: FounderOrganization | n
       footer={
         <ModalFooter>
           <Button label="Cancel" variant="ghost" onClick={onClose} />
-          <Button label="Save" loading={update.isPending} onClick={submit} />
+          <Button label="Save" loading={update.isPending || setLimits.isPending} onClick={submit} />
         </ModalFooter>
       }
     >
@@ -119,6 +130,24 @@ export function EditAccessModal({ org, onClose }: { org: FounderOrganization | n
           <strong>{org?.name}</strong>
         </p>
         <Select label="Plan tier" value={planTier} onChange={(e) => setPlanTier(e.target.value)} options={PLAN_OPTIONS} />
+        {access === 'trial' ? (
+          <Input
+            label="Trial ends in (days from today)"
+            inputMode="numeric"
+            value={trialDays}
+            onChange={(e) => setTrialDays(e.target.value)}
+            hint="Raise this to extend the trial, or lower it to end it sooner."
+          />
+        ) : null}
+        {org?.extraTeamLicenses !== undefined ? (
+          <Input
+            label="Extra team licenses"
+            inputMode="numeric"
+            value={licenses}
+            onChange={(e) => setLicenses(e.target.value)}
+            hint="Teams allowed on top of what the plan includes."
+          />
+        ) : null}
         {org?.accessStatus === 'suspended' ? (
           <p className="text-xs">This does not lift the suspension — use Reactivate for that.</p>
         ) : null}

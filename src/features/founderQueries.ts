@@ -55,6 +55,8 @@ export const founderKeys = {
     ['founder', 'analytics', 'features', days, platform, feature] as const,
   referrals: ['founder', 'analytics', 'referrals'] as const,
   referralBalances: ['founder', 'analytics', 'referralBalances'] as const,
+  dashboard: ['founder', 'dashboard'] as const,
+  orgActivity: (accountId: string) => ['founder', 'organizations', 'activity', accountId] as const,
   billing: ['founder', 'billing'] as const,
   discountCodes: ['founder', 'billing', 'discountCodes'] as const,
   discountRedemptions: (codeId: string) => ['founder', 'billing', 'discountCodes', codeId] as const,
@@ -550,6 +552,16 @@ export function useResumeStripeSubscriptionMutation() {
   return useMutation({ mutationFn: billingApi.resumeStripeSubscription, onSuccess: () => invalidateBilling(qc) });
 }
 
+export function useAddAccountCreditMutation() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: billingApi.addAccountCredit, onSuccess: () => invalidateBilling(qc) });
+}
+
+export function useSetBillingDateMutation() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: billingApi.setSubscriptionBillingDate, onSuccess: () => invalidateBilling(qc) });
+}
+
 /** Refreshes the billing tab's lists after a manual plan/access change. */
 export function useInvalidateBilling() {
   const qc = useQueryClient();
@@ -591,5 +603,42 @@ export function useRevenueQuery(months: number) {
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
     retry: false,
+  });
+}
+
+export function useFounderDashboardQuery() {
+  return useQuery({
+    queryKey: founderKeys.dashboard,
+    queryFn: () => founderApi.getFounderDashboardStats(),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useFounderOrgActivityQuery(accountId: string) {
+  return useQuery({
+    queryKey: founderKeys.orgActivity(accountId),
+    queryFn: () => founderApi.getFounderOrgActivity(accountId),
+    enabled: !!accountId,
+  });
+}
+
+export function useSetOrganizationLimitsMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, extraTeamLicenses }: { accountId: string; extraTeamLicenses: number }) =>
+      founderApi.setOrganizationLimits(accountId, extraTeamLicenses),
+    onSuccess: () => invalidateFounder(qc),
+  });
+}
+
+export function useMergeFounderUsersMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fromUserId, intoUserId, reason }: { fromUserId: string; intoUserId: string; reason?: string }) =>
+      founderApi.mergeFounderUsers(fromUserId, intoUserId, reason),
+    onSuccess: () => {
+      invalidateFounder(qc);
+      invalidateFounderUsers(qc);
+    },
   });
 }
