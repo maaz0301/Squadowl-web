@@ -514,7 +514,7 @@ export function renderListResults(
         page.drawText(fitText(card.overallScore || '-', bold, 10, overallW - 4), { x: colX.overall, y, size: 10, font: bold, color: BLUE });
         chunk.forEach((label, ci) => {
           const m = card.metrics.find((x) => x.label === label);
-          page.drawText(fitText(m?.score || '-', font, 9, metricW - 4), { x: colX.metric + ci * metricW, y, size: 9, font, color: BLACK });
+          page.drawText(fitText(m?.display || m?.score || '-', font, 9, metricW - 4), { x: colX.metric + ci * metricW, y, size: 9, font, color: BLACK });
         });
         y -= rowH;
       });

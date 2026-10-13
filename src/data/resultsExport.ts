@@ -9,6 +9,7 @@ import {
   type SubSkill,
   getPlayerSubskills,
   isBinaryScoringType,
+  isMetricScoringType,
   playerDisplayName,
 } from './rubrics';
 
@@ -23,6 +24,8 @@ export interface ResultsExportColumn {
   /** The key evaluations store this column's raw entry under, when it is a single rubric. */
   rawKey?: string;
   rankingDirection?: RankingDirection;
+  /** The rubric has a min and max, so its score is a 1 to 5 mark. Without them the "score" is just the raw figure. */
+  ranged?: boolean;
 }
 
 export interface ResultsSummary {
@@ -41,6 +44,8 @@ export interface FullResultsMetric {
   abbr: string;
   score: string;
   rank: string;
+  /** What the printed results table shows for this line: the raw result with its unit or clock reading for a measured test with no range (its 1-5 score would just be the raw number), otherwise the score. */
+  display?: string;
   /** The player's average in the rubric's own terms ("31.2 in", "4.5/5"); '' when the line is a group of rubrics. */
   actual?: string;
   /** The rubric's benchmark in the same terms; '' when none was set. */
@@ -159,6 +164,7 @@ function resultsColumns(tryout: Tryout): ResultsExportColumn[] {
         benchmark: solo?.benchmark,
         rawKey: solo?.key,
         rankingDirection: solo?.rankingDirection,
+        ranged: solo ? solo.minVal != null && solo.maxVal != null && solo.maxVal !== solo.minVal : undefined,
       });
     }
   }
@@ -487,10 +493,14 @@ export function buildPlayerFullResults(
         const actual = actualAverage(c, playerEvals);
         const lowerBetter = c.rankingDirection === 'lower_is_better';
         const unitInfo = { scoringType: c.scoringType as ScoringType, scale: c.scale, unit: c.unit };
+        // A measured test with no min and max has no 1-5 score, so the table would print its raw
+        // figure as a bare number (273.00 for 4:33, 14.60 with no unit). Print it as it was read instead.
+        const rawShown = isMetricScoringType(c.scoringType as ScoringType) && c.ranged === false && actual != null;
         return {
           label: c.label,
           abbr: abbreviateLabel(c.label),
           score: formatScore2(r.categoryScores[c.key]),
+          display: rawShown ? formatBenchmarkValue(unitInfo, actual) : undefined,
           rank: columnRanks.get(c.key)?.get(player.id) ?? '',
           actual: isBinaryScoringType(c.scoringType as ScoringType) ? binaryActual(c, playerEvals) : actual == null ? '' : formatBenchmarkValue(unitInfo, actual),
           benchmark: c.benchmark != null ? formatBenchmarkValue(unitInfo, c.benchmark) : '',

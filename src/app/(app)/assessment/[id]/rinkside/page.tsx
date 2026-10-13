@@ -529,6 +529,10 @@ export default function RinksidePage() {
                 rankingDirection={s.rankingDirection}
                 value={workingScores[s.key]}
                 onChange={(v) => setWorkingScores({ ...workingScores, [s.key]: v })}
+                onClear={() => {
+                  const { [s.key]: _removed, ...rest } = workingScores;
+                  setWorkingScores(rest);
+                }}
               />
             ))}
           </div>

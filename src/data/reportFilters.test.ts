@@ -107,4 +107,34 @@ describe('report card rows in the rubric own units', () => {
     expect(jump.met).toBe(false);
     expect(jump.rank).toBe('1/1');
   });
+
+  // A measured test with no min and max has no 1-5 score, so its table cell would be the bare
+  // raw number: a 4:33 sit printed as 273.00, and 14.6 seconds with nothing to say seconds.
+  const timedTryout = (range: boolean): Tryout => {
+    const base = tryout();
+    return {
+      ...base,
+      evals: [
+        { id: 'a', playerId: 'p1', evaluator: 'C', session: 'S1', date: '2026-10-01', scores: { sit: 273, spin: 14.6 }, createdAt: 1 },
+      ] as unknown as Evaluation[],
+      settings: {
+        ...base.settings,
+        customRubrics: [
+          { key: 'sit', label: 'Longest Sit', scoringType: 'time', unit: 'sec', ...(range ? { minVal: 60, maxVal: 600 } : {}), rankingDirection: 'higher_is_better', role: 'all' },
+          { key: 'spin', label: 'Longest Spin', scoringType: 'time', unit: 'sec', ...(range ? { minVal: 5, maxVal: 30 } : {}), rankingDirection: 'higher_is_better', role: 'all' },
+        ],
+      },
+    } as unknown as Tryout;
+  };
+
+  it('prints an unranged time as a clock reading or with its unit, not a bare number', () => {
+    const card = buildPlayerFullResults(timedTryout(false)).find((c) => c.playerId === 'p1')!;
+    expect(card.metrics.find((m) => m.label === 'Longest Sit')!.display).toBe('4:33.0');
+    expect(card.metrics.find((m) => m.label === 'Longest Spin')!.display).toBe('14.6 sec');
+  });
+
+  it('leaves a ranged measured test showing its 1-5 score', () => {
+    const card = buildPlayerFullResults(timedTryout(true)).find((c) => c.playerId === 'p1')!;
+    expect(card.metrics.find((m) => m.label === 'Longest Sit')!.display).toBeUndefined();
+  });
 });
