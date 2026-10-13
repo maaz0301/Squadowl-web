@@ -2,7 +2,7 @@
 'use no memo';
 
 import { NotAttemptedAll } from '@/components/ui/NotAttemptedAll';
-import { isNotAttempted, withNotAttempted, withScore, withoutScore } from '@/lib/notAttempted';
+import { NOT_ATTEMPTED_SUFFIX, isNotAttempted, withNotAttempted, withScore, withoutScore } from '@/lib/notAttempted';
 import { useTerms } from '@/lib/terms';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -449,6 +449,7 @@ export default function ScorePage() {
         }
       }
 
+      let notAttemptedOnly = false;
       const currentFormStr = JSON.stringify(data);
       if (previousFormRef.current !== currentFormStr) {
         const hasScores = data.scores && Object.values(data.scores).some((v) => v != null && v > 0);
@@ -460,20 +461,27 @@ export default function ScorePage() {
             await removeSession();
             return;
           }
-          await alert('No scores entered', 'Please grade at least one subskill before saving.');
-          setSaving(false);
-          return;
+          // Every test was marked "did not attempt": there is nothing to save, so move on
+          // quietly instead of asking for a score.
+          if (!Object.keys(data.scores ?? {}).some((k) => k.endsWith(NOT_ATTEMPTED_SUFFIX))) {
+            await alert('No scores entered', 'Please grade at least one subskill before saving.');
+            setSaving(false);
+            return;
+          }
+          notAttemptedOnly = true;
+        } else {
+          await saveEval.mutateAsync({ playerId: playerId!, form: data, evalId: evalId ?? undefined });
+          previousFormRef.current = currentFormStr;
         }
-
-        await saveEval.mutateAsync({ playerId: playerId!, form: data, evalId: evalId ?? undefined });
-        previousFormRef.current = currentFormStr;
       }
 
-      if (playerId) markSessionCompleted(playerId, data.session);
+      if (playerId && !notAttemptedOnly) markSessionCompleted(playerId, data.session);
 
       const currentIdx = SESSIONS.indexOf(data.session);
       if (!closeAfter && currentIdx !== -1 && currentIdx < SESSIONS.length - 1) {
         const nextSess = SESSIONS[currentIdx + 1];
+        // A session skipped entirely moves on empty, so its N/A marks are not carried over.
+        if (notAttemptedOnly) clearWorkingScores();
         setParams({ evalId: scoredSessions.get(nextSess) || null, session: nextSess });
       } else {
         clearWorkingScores();
