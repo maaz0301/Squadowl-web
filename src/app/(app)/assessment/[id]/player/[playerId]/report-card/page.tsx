@@ -363,7 +363,7 @@ export default function PlayerReportCardPage() {
         </div>
       </Card>
 
-      {reportCard && reportCard.evalCount > 0 ? (
+      {reportCard && (reportCard.evalCount > 0 || reportCard.metrics.length > 0) ? (
         <Card className="flex flex-col gap-2">
           <SectionLabel>Report card</SectionLabel>
           <div className="text-sm" style={{ color: colors.ink }}>
@@ -381,11 +381,11 @@ export default function PlayerReportCardPage() {
               style={{ borderColor: colors.border, color: colors.primary }}
             >
               <span>Overall</span>
-              <span className="text-right">{reportCard.overallScore}</span>
+              <span className="text-right">{reportCard.overallScore || '-'}</span>
               <span className="text-right" style={{ color: colors.inkMuted }}>
                 -
               </span>
-              <span className="text-right">{reportCard.overallRank}</span>
+              <span className="text-right">{reportCard.overallRank || '-'}</span>
             </div>
             {reportCard.metrics.map((m) => {
               const note = benchmarks.find((b) => b.label === m.label)?.note;
