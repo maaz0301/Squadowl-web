@@ -1,5 +1,7 @@
 'use client';
 
+import { NotAttemptedAll } from '@/components/ui/NotAttemptedAll';
+import { isNotAttempted, withNotAttempted, withScore, withoutScore } from '@/lib/notAttempted';
 import { useTerms } from '@/lib/terms';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -499,6 +501,8 @@ export default function RinksidePage() {
         </Card>
       ) : null}
 
+      <NotAttemptedAll keys={categories.flatMap((c) => c.subskills.map((s) => s.key))} scores={workingScores} onChange={setWorkingScores} />
+
       {categories.map((cat) => {
         const catAvg = categoryAverage(workingScores, cat.subskills);
         return (
@@ -528,11 +532,10 @@ export default function RinksidePage() {
                 benchmarkNote={s.benchmarkNote}
                 rankingDirection={s.rankingDirection}
                 value={workingScores[s.key]}
-                onChange={(v) => setWorkingScores({ ...workingScores, [s.key]: v })}
-                onClear={() => {
-                  const { [s.key]: _removed, ...rest } = workingScores;
-                  setWorkingScores(rest);
-                }}
+                notAttempted={isNotAttempted(workingScores, s.key)}
+                onChange={(v) => setWorkingScores(withScore(workingScores, s.key, v))}
+                onClear={() => setWorkingScores(withoutScore(workingScores, s.key))}
+                onNotAttempted={() => setWorkingScores(withNotAttempted(workingScores, s.key))}
               />
             ))}
           </div>

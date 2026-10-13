@@ -138,6 +138,10 @@ interface ScorePadProps {
   onChange: (value: number) => void;
   /** Called when a measured entry is emptied, so a wrong figure can be taken back out. */
   onClear?: () => void;
+  /** Marks the test as not attempted: no result, and reports print N/A for it. */
+  onNotAttempted?: () => void;
+  /** The test is marked as not attempted. */
+  notAttempted?: boolean;
   /** The coach's target for this rubric, shown under the entry with its explanation. */
   benchmark?: number;
   benchmarkNote?: string;
@@ -440,22 +444,38 @@ interface ScoreButtonProps {
  */
 export function ScorePad(props: ScorePadProps) {
   const colors = useThemeColors();
-  const { value, onClear } = props;
-  if (!onClear) return <ScorePadBase {...props} />;
+  const { value, onClear, onNotAttempted, notAttempted } = props;
+  const markNotAttempted = onNotAttempted ?? onClear;
+  if (!markNotAttempted) return <ScorePadBase {...props} />;
   return (
     <div>
       <ScorePadBase {...props} />
       <div className="-mt-3 mb-4 flex items-center justify-between gap-2 text-xs">
-        {value == null ? (
-          <span className="italic" style={{ color: colors.inkMuted }}>
-            Not scored: left out of the overall score
-          </span>
+        {notAttempted ? (
+          <>
+            <span className="font-bold" style={{ color: colors.inkMuted }}>
+              N/A: did not attempt, left out of the overall score
+            </span>
+            {onClear ? (
+              <button
+                type="button"
+                onClick={onClear}
+                aria-label={`Undo not attempted for ${props.label}`}
+                className="font-bold underline-offset-2 hover:underline"
+                style={{ color: colors.primary }}
+              >
+                Undo
+              </button>
+            ) : null}
+          </>
         ) : (
           <>
-            <span style={{ color: colors.inkMuted }}>Counts toward the overall score</span>
+            <span className={value == null ? 'italic' : undefined} style={{ color: colors.inkMuted }}>
+              {value == null ? 'Not scored: left out of the overall score' : 'Counts toward the overall score'}
+            </span>
             <button
               type="button"
-              onClick={onClear}
+              onClick={markNotAttempted}
               aria-label={`Mark ${props.label} as not attempted`}
               className="font-bold underline-offset-2 hover:underline"
               style={{ color: colors.primary }}

@@ -1,6 +1,7 @@
 import { formatBenchmarkValue } from '@/data/benchmarks';
 import { sportProfile } from '@/data/sportProfile';
 import { termsFor } from '@/lib/termsCore';
+import { isNotAttempted, notAttemptedKey } from '@/lib/notAttempted';
 import type { Evaluation, Player, RankingDirection, ScoringType, Tryout } from './types';
 import { compareResultsBestFirst, computePlayerResults } from './scoring';
 import {
@@ -46,6 +47,8 @@ export interface FullResultsMetric {
   rank: string;
   /** What the printed results table shows for this line: the raw result with its unit or clock reading for a measured test with no range (its 1-5 score would just be the raw number), otherwise the score. */
   display?: string;
+  /** Every evaluation marked this test as not attempted, so the line reads N/A. */
+  notAttempted?: boolean;
   /** The player's average in the rubric's own terms ("31.2 in", "4.5/5"); '' when the line is a group of rubrics. */
   actual?: string;
   /** The rubric's benchmark in the same terms; '' when none was set. */
@@ -487,9 +490,16 @@ export function buildPlayerFullResults(
     const playerEvals = evalsByPlayer.get(player.id) ?? [];
     const evalColumns = playerColumns(tryout, player);
 
+    // A single-rubric test with no result in any evaluation, but marked as not attempted in at
+    // least one, still gets a line (N/A) so the report says it was skipped rather than leaving it out.
+    const skipped = (c: ResultsExportColumn) =>
+      r.categoryScores[c.key] == null && !!c.rawKey && playerEvals.some((e) => e.scores?.[notAttemptedKey(c.rawKey!)] !== undefined);
     const metrics: FullResultsMetric[] = columns
-      .filter((c) => r.categoryScores[c.key] != null)
-      .map((c) => {
+      .filter((c) => r.categoryScores[c.key] != null || skipped(c))
+      .map((c): FullResultsMetric => {
+        if (r.categoryScores[c.key] == null) {
+          return { label: c.label, abbr: abbreviateLabel(c.label), score: '', rank: '', actual: 'N/A', display: 'N/A', benchmark: '', met: null, notAttempted: true };
+        }
         const actual = actualAverage(c, playerEvals);
         const lowerBetter = c.rankingDirection === 'lower_is_better';
         const unitInfo = { scoringType: c.scoringType as ScoringType, scale: c.scale, unit: c.unit };
@@ -516,7 +526,10 @@ export function buildPlayerFullResults(
       recommendation: e.recommendation || '',
       strengths: (e.strengths ?? '').trim(),
       improve: (e.improve ?? '').trim(),
-      values: evalColumns.map((c) => ({ abbr: abbreviateLabel(c.label), text: formatEvalScore(e.scores?.[c.key], c) })),
+      values: evalColumns.map((c) => ({
+        abbr: abbreviateLabel(c.label),
+        text: isNotAttempted(e.scores, c.key) ? 'N/A' : formatEvalScore(e.scores?.[c.key], c),
+      })),
     }));
 
     return {

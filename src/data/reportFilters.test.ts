@@ -137,4 +137,41 @@ describe('report card rows in the rubric own units', () => {
     const card = buildPlayerFullResults(timedTryout(true)).find((c) => c.playerId === 'p1')!;
     expect(card.metrics.find((m) => m.label === 'Longest Sit')!.display).toBeUndefined();
   });
+
+  // A test marked "did not attempt" has no result, so it stays out of the overall, but the
+  // report says N/A rather than leaving the test out as if it did not exist.
+  const skippedTryout = (): Tryout => {
+    const base = tryout();
+    return {
+      ...base,
+      evals: [
+        { id: 'a', playerId: 'p1', evaluator: 'C', session: 'S1', date: '2026-10-01', scores: { skating: 4, 'sit~na': 0 }, createdAt: 1 },
+      ] as unknown as Evaluation[],
+      settings: {
+        ...base.settings,
+        customRubrics: [
+          { key: 'skating', label: 'Skating', scoringType: 'skill', scale: '1-5', rankingDirection: 'higher_is_better', role: 'all' },
+          { key: 'sit', label: 'Longest Sit', scoringType: 'time', unit: 'sec', minVal: 60, maxVal: 600, rankingDirection: 'higher_is_better', role: 'all' },
+        ],
+      },
+    } as unknown as Tryout;
+  };
+
+  it('prints N/A for a test marked as not attempted and leaves it out of the overall', () => {
+    const card = buildPlayerFullResults(skippedTryout()).find((c) => c.playerId === 'p1')!;
+    const sit = card.metrics.find((m) => m.label === 'Longest Sit')!;
+    expect(sit.display).toBe('N/A');
+    expect(sit.actual).toBe('N/A');
+    expect(sit.notAttempted).toBe(true);
+    expect(sit.rank).toBe('');
+    expect(card.evals[0].values.find((v) => v.abbr === 'LS')?.text).toBe('N/A');
+    expect(card.overallScore).toBe('4.00');
+  });
+
+  it('shows no line at all for a test that was simply left empty', () => {
+    const t = skippedTryout();
+    (t.evals[0] as unknown as { scores: Record<string, number> }).scores = { skating: 4 };
+    const card = buildPlayerFullResults(t).find((c) => c.playerId === 'p1')!;
+    expect(card.metrics.find((m) => m.label === 'Longest Sit')).toBeUndefined();
+  });
 });
