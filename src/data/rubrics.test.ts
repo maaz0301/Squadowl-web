@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SCORING_TYPE_LABELS,
+  isMetricScoringType,
   buildDefaultWeights,
   categoryAverage,
   categoryAverageAcrossEvals,
@@ -435,5 +437,16 @@ describe('weighted overall with per-rubric weights', () => {
       },
     ];
     expect(categoryAverage({ x: 4, y: 8 }, grouped[0].subskills)).toBe(4.25);
+  });
+});
+
+describe('quantity scoring', () => {
+  it('is a measured type scored against its min and max like the other measurements', () => {
+    expect(isMetricScoringType('quantity')).toBe(true);
+    expect(SCORING_TYPE_LABELS.quantity).toBe('Quantity');
+    expect(normalizeScore(0, '1-5', 'quantity', 0, 40)).toBe(1);
+    expect(normalizeScore(40, '1-5', 'quantity', 0, 40)).toBe(5);
+    expect(normalizeScore(20, '1-5', 'quantity', 0, 40)).toBe(3);
+    expect(normalizeScore(10, '1-5', 'quantity', 10, 20, 'lower_is_better')).toBe(5);
   });
 });

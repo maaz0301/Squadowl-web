@@ -1,4 +1,4 @@
-import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
+import { PDFArray, PDFDocument, PDFFont, PDFName, PDFString, StandardFonts, rgb } from 'pdf-lib';
 
 import type { PlayerFullResults } from '@/data/resultsExport';
 import type { BenchmarkLine } from '@/data/benchmarks';
@@ -51,6 +51,9 @@ function wrap(text: string, f: PDFFont, size: number, maxWidth: number): string[
   return lines;
 }
 
+/** Only web addresses become tappable links; anything else is left as plain text. */
+const isWebUrl = (url: string) => /^https?:\/\//i.test(url);
+
 export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promise<string> {
   const { card } = input;
   const pdfDoc = await PDFDocument.create();
@@ -89,6 +92,35 @@ export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promis
       text(line, { size, f: o.f, color: o.color, gap: o.gap ?? size + 4 });
     }
   };
+  /** Makes the rectangle a tappable link in any PDF viewer. */
+  const addLink = (url: string, x: number, baseline: number, width: number, size: number) => {
+    const link = pdfDoc.context.register(
+      pdfDoc.context.obj({
+        Type: 'Annot',
+        Subtype: 'Link',
+        Rect: [x, baseline - 2, x + width, baseline + size],
+        Border: [0, 0, 0],
+        A: { Type: 'Action', S: 'URI', URI: PDFString.of(url) },
+      }),
+    );
+    const existing = page.node.lookup(PDFName.of('Annots'));
+    if (existing instanceof PDFArray) existing.push(link);
+    else page.node.set(PDFName.of('Annots'), pdfDoc.context.obj([link]));
+  };
+  /** Wrapped text in link colour; every line of it opens `url`. */
+  const linkParagraph = (value: string, url: string, o: { size?: number; f?: PDFFont; gap?: number } = {}) => {
+    const size = o.size ?? 10;
+    const f = o.f ?? font;
+    for (const line of wrap(value, f, size, PAGE_WIDTH - MARGIN * 2)) {
+      ensure(size + 4);
+      const shown = pdfSafe(line);
+      const width = f.widthOfTextAtSize(shown, size);
+      page.drawText(shown, { x: MARGIN, y, size, font: f, color: BLUE });
+      page.drawLine({ start: { x: MARGIN, y: y - 1.5 }, end: { x: MARGIN + width, y: y - 1.5 }, thickness: 0.5, color: BLUE });
+      addLink(url, MARGIN, y, width, size);
+      y -= o.gap ?? size + 4;
+    }
+  };
   const heading = (value: string) => {
     y -= 6;
     ensure(30);
@@ -114,29 +146,33 @@ export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promis
   y -= 24;
 
   // ── Scores ────────────────────────────────────────────────────────────────
+  // The player's place among everyone scored, then each rubric's raw result, its
+  // benchmark and the rank on that rubric alone. No blended overall score.
   heading('Scoring and Ranking');
+  if (card.overallRank) {
+    const [place, outOf] = card.overallRank.split('/');
+    ensure(24);
+    page.drawText('Overall rank (all rubrics)', { x: MARGIN, y, size: 10, font: bold, color: GRAY });
+    page.drawText(pdfSafe(outOf ? `${place} of ${outOf}` : card.overallRank), { x: MARGIN + 200, y: y - 1, size: 13, font: bold, color: BLUE });
+    y -= 22;
+  }
   const resultX = MARGIN + 200;
   const benchX = MARGIN + 290;
   const rankX = MARGIN + 400;
   const header = (t: string, x: number) => page.drawText(t, { x, y, size: 8, font: bold, color: GRAY });
   ensure(16);
-  header('MEASURE', MARGIN);
-  header('RESULT', resultX);
+  header('RUBRIC', MARGIN);
+  header('RAW SCORE', resultX);
   header('BENCHMARK', benchX);
   header('RANK', rankX);
   y -= 14;
-  const rows = [{ label: 'Overall', actual: card.overallScore, benchmark: '', met: null as boolean | null | undefined, rank: card.overallRank }].concat(
-    card.metrics.map((m) => ({ label: m.label, actual: m.actual || m.score, benchmark: m.benchmark ?? '', met: m.met, rank: m.rank })),
-  );
-  rows.forEach((m, i) => {
+  const rows = card.metrics.map((m) => ({ label: m.label, actual: m.actual || m.score, benchmark: m.benchmark ?? '', met: m.met, rank: m.rank }));
+  rows.forEach((m) => {
     ensure(15);
-    const isOverall = i === 0;
-    const f = isOverall ? bold : font;
-    const color = isOverall ? BLUE : BLACK;
-    page.drawText(pdfSafe(m.label.length > 34 ? `${m.label.slice(0, 33)}...` : m.label), { x: MARGIN, y, size: 10, font: f, color });
-    page.drawText(pdfSafe(m.actual || '-'), { x: resultX, y, size: 10, font: bold, color: m.met ? GREEN : color });
+    page.drawText(pdfSafe(m.label.length > 34 ? `${m.label.slice(0, 33)}...` : m.label), { x: MARGIN, y, size: 10, font, color: BLACK });
+    page.drawText(pdfSafe(m.actual || '-'), { x: resultX, y, size: 10, font: bold, color: m.met ? GREEN : BLACK });
     page.drawText(pdfSafe(m.benchmark || '-'), { x: benchX, y, size: 10, font, color: m.benchmark ? BLACK : GRAY });
-    page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font: f, color });
+    page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font, color: BLACK });
     y -= 15;
   });
   const notes = (input.benchmarks ?? []).filter((b) => b.note);
@@ -186,10 +222,15 @@ export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promis
     heading('Videos, files and links');
     for (const a of input.attachments) {
       const kind = a.kind === 'video' ? 'Video' : a.kind === 'link' ? 'Link' : 'File';
-      paragraph(`${kind}: ${a.name}`, { size: 10, f: bold, gap: 12 });
-      // Only addresses that stay valid are printed; an uploaded file's signed
-      // address expires, so it is listed by name and shared another way.
-      if (a.url) paragraph(a.url, { size: 8.5, color: BLUE, gap: 12 });
+      const url = a.url && isWebUrl(a.url) ? a.url : '';
+      // The name opens the file, video or link when the card is viewed on a screen.
+      if (url) {
+        linkParagraph(`${kind}: ${a.name}`, url, { size: 10, f: bold, gap: 12 });
+        // The address itself is printed too, when short enough, for a paper copy.
+        if (url.length <= 90 && url !== a.name) linkParagraph(url, url, { size: 8.5, gap: 12 });
+      } else {
+        paragraph(`${kind}: ${a.name}`, { size: 10, f: bold, gap: 12 });
+      }
     }
   }
 

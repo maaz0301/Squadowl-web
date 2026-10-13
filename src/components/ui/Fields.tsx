@@ -210,14 +210,20 @@ export function BirthDateField({ label, year = '', dateOfBirth = '', onChange, e
     ...fieldStyle,
     backgroundImage: arrow,
     backgroundRepeat: 'no-repeat',
-    backgroundPosition: 'right 12px center',
-    backgroundSize: '16px',
+    backgroundPosition: 'right 8px center',
+    backgroundSize: '14px',
+    // Inline so the tight padding always beats the shared control padding; the
+    // three selects share a half-width column in the Add Player form and
+    // "Year" / "Day" were being clipped to "Yea" / "D".
+    paddingLeft: 10,
+    paddingRight: 26,
+    textOverflow: 'clip',
   } as const;
-  const selectClass = `${CONTROL} cursor-pointer appearance-none pr-9`;
+  const selectClass = `${CONTROL} min-w-0 cursor-pointer appearance-none`;
 
   return (
     <FieldShell label={label} error={error}>
-      <div className="grid grid-cols-[1.1fr_1.4fr_0.9fr] gap-2">
+      <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-1.5">
         <select
           aria-label="Year of birth"
           value={year}

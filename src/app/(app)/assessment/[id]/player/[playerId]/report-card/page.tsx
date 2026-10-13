@@ -1,6 +1,7 @@
 'use client';
 
 import { ContextVideos } from '@/components/video/ContextVideos';
+import { TaggedVideos } from '@/components/video/TaggedVideos';
 
 import { useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
@@ -33,6 +34,7 @@ import {
 } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
+import { getDataSource } from '@/data';
 import { buildPlayerFullResults } from '@/data/resultsExport';
 import { benchmarkLines } from '@/data/benchmarks';
 import { playerDisplayName } from '@/data/rubrics';
@@ -245,6 +247,8 @@ export default function PlayerReportCardPage() {
     setExporting(true);
     try {
       const { exportPlayerReportCard } = await import('@/lib/exportData');
+      // Saved uploads get a long-lived address so the exported PDF can open them.
+      const fileLinks = await getDataSource().getReportCardFileLinks(kept.map((a) => a.path).filter((x): x is string => !!x));
       await exportPlayerReportCard({
         title,
         subtitle: [team?.name, tryout.name].filter(Boolean).join(' | '),
@@ -253,7 +257,7 @@ export default function PlayerReportCardPage() {
         coachComments,
         aiComments,
         attachments: [
-          ...kept.map((a) => ({ kind: a.kind, name: a.name, url: a.url })),
+          ...kept.map((a) => ({ kind: a.kind, name: a.name, url: a.url ?? (a.path ? fileLinks[a.path] : undefined) })),
           ...files.map((f) => ({ kind: (f.type.startsWith('video/') ? 'video' : 'file') as 'video' | 'file', name: f.name })),
         ],
         logoUrls: reportLogoUrls({ club: tier === 'club', organizationLogoUrl: user?.organizationLogoUrl, teamLogoUrl: team?.logoUrl, appLogo: printAppLogo }),
@@ -519,6 +523,7 @@ export default function PlayerReportCardPage() {
       </Card>
 
       <Card className="flex flex-col gap-3">
+        <TaggedVideos athleteId={player.athleteId} />
         {editingId ? (
           <ContextVideos
             context="report_card"

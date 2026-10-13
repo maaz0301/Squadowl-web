@@ -43,7 +43,7 @@ export function isBinaryScoringType(type: ScoringType | undefined): boolean {
 
 /** Scoring types entered as a raw measurement against min/max benchmarks. */
 export function isMetricScoringType(type: ScoringType | undefined): boolean {
-  return type === 'time' || type === 'distance' || type === 'speed';
+  return type === 'time' || type === 'distance' || type === 'speed' || type === 'quantity';
 }
 
 /** Builder-facing name for each scoring type, shared by every "add a rubric" form. */
@@ -52,6 +52,7 @@ export const SCORING_TYPE_LABELS: Record<ScoringType, string> = {
   time: 'Time-based',
   distance: 'Distance-based',
   speed: 'Speed-based',
+  quantity: 'Quantity',
   observation: 'Observation (1-100)',
   yes_no: 'Yes / No',
   effectiveness: 'Effective / Not Effective',

@@ -2321,6 +2321,17 @@ export function useAthletesQuery() {
   });
 }
 
+/** Name search for pickers: a few matches from the server, never the whole athlete list. */
+export function useSearchAthletesQuery(term: string) {
+  const trimmed = term.trim();
+  return useQuery({
+    queryKey: ['athletes', 'search', trimmed.toLowerCase()],
+    queryFn: () => getDataSource().searchAthletes(trimmed),
+    enabled: trimmed.length >= 2,
+    staleTime: 30_000,
+  });
+}
+
 // ---- Phase 4: Enterprise & Admin ----
 export function useOrgQuery() {
   return useQuery({

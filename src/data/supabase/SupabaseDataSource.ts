@@ -8195,32 +8195,68 @@ export class SupabaseDataSource implements DataSource {
 
     if (!athletes) return [];
 
-    return athletes.map(a => {
-      const parts = (a.tryout_participants as Row[])?.sort((p1, p2) =>
-        new Date(p1.created_at).getTime() - new Date(p2.created_at).getTime()
-      ) || [];
-      const recentPart = parts.length > 0 ? parts[parts.length - 1] : null;
+    return athletes.map((a) => this.rowToListedAthlete(a));
+  }
 
-      return {
-        id: a.id,
-        first: a.first_name ?? '',
-        last: a.last_name ?? '',
-        yearOfBirth: a.year_of_birth != null ? String(a.year_of_birth) : undefined,
-        dateOfBirth: a.date_of_birth ?? undefined,
-        playerEmail: a.player_email ?? undefined,
-        guardianName: a.guardian_name ?? undefined,
-        guardianEmail: a.guardian_email ?? undefined,
-        guardianPhone: a.guardian_phone ?? undefined,
-        medicalInfo: a.medical_info ?? undefined,
-        heightCm: a.height_cm != null ? Number(a.height_cm) : undefined,
-        aboutChild: a.about ?? undefined,
-        currentPosition: a.default_position ?? undefined,
-        currentTeam: recentPart?.current_team ?? undefined,
-        currentLevel: recentPart?.current_level ?? undefined,
-        jersey: recentPart?.jersey ?? undefined,
-        pastSeasonsCount: parts.length,
-      };
-    });
+  /**
+   * Finds players by name on the server, returning only a handful. The full list is
+   * far too large to load just to search it (an account can hold tens of thousands).
+   */
+  async searchAthletes(term: string, limit = 8): Promise<Athlete[]> {
+    const { supabase, accountId } = await this.ctx();
+    const tokens = term.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+    if (!tokens.length) return [];
+    // Wildcards and the characters that structure a PostgREST filter are dropped, not escaped.
+    const clean = (t: string) => t.replace(/[%_,()\\*]/g, '');
+    const [one, two] = tokens.map(clean);
+    if (!one) return [];
+
+    // Preferred: a database function that checks the caller's role once instead of every row
+    // (row level security on a very large account runs past the request time limit).
+    const viaRpc = await supabase.rpc('search_athletes', { p_account_id: accountId, p_term: tokens.join(' '), p_limit: limit });
+    if (!viaRpc.error) return ((viaRpc.data ?? []) as Row[]).map((a) => this.rowToListedAthlete(a));
+    // Not deployed yet (or the caller is not staff): fall back to reading the table directly.
+    if (viaRpc.error.code !== 'PGRST202' && viaRpc.error.code !== '42883') throw new Error(viaRpc.error.message);
+
+    let q = supabase
+      .from('athletes')
+      .select('*, tryout_participants(current_team, current_level, jersey, created_at)')
+      .eq('account_id', accountId)
+      .order('first_name')
+      .limit(Math.min(Math.max(limit, 1), 25));
+    q = two
+      ? q.ilike('first_name', `${one}%`).ilike('last_name', `${two}%`)
+      : q.or(`first_name.ilike.${one}*,last_name.ilike.${one}*`);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as Row[]).map((a) => this.rowToListedAthlete(a));
+  }
+
+  private rowToListedAthlete(a: Row): Athlete {
+    const parts = (a.tryout_participants as Row[])?.sort((p1, p2) =>
+      new Date(p1.created_at).getTime() - new Date(p2.created_at).getTime()
+    ) || [];
+    const recentPart = parts.length > 0 ? parts[parts.length - 1] : null;
+
+    return {
+      id: a.id,
+      first: a.first_name ?? '',
+      last: a.last_name ?? '',
+      yearOfBirth: a.year_of_birth != null ? String(a.year_of_birth) : undefined,
+      dateOfBirth: a.date_of_birth ?? undefined,
+      playerEmail: a.player_email ?? undefined,
+      guardianName: a.guardian_name ?? undefined,
+      guardianEmail: a.guardian_email ?? undefined,
+      guardianPhone: a.guardian_phone ?? undefined,
+      medicalInfo: a.medical_info ?? undefined,
+      heightCm: a.height_cm != null ? Number(a.height_cm) : undefined,
+      aboutChild: a.about ?? undefined,
+      currentPosition: a.default_position ?? undefined,
+      currentTeam: recentPart?.current_team ?? undefined,
+      currentLevel: recentPart?.current_level ?? undefined,
+      jersey: recentPart?.jersey ?? undefined,
+      pastSeasonsCount: parts.length,
+    };
   }
 
   async getSessionProgress(tryoutId: string): Promise<Record<string, number>> {
@@ -9298,6 +9334,17 @@ export class SupabaseDataSource implements DataSource {
     return this.rowToReportCard(supabase, res.data as Row);
   }
 
+  async getReportCardFileLinks(paths: string[]): Promise<Record<string, string>> {
+    if (!paths.length) return {};
+    const supabase = getSupabase();
+    // One year: a printed or emailed report card has to keep working long after it is made.
+    const { data, error } = await supabase.storage.from(REPORT_CARD_FILES_BUCKET).createSignedUrls(paths, 60 * 60 * 24 * 365);
+    if (error) throw new Error(error.message);
+    const out: Record<string, string> = {};
+    for (const s of data ?? []) if (s.path && s.signedUrl) out[s.path] = s.signedUrl;
+    return out;
+  }
+
   async deletePlayerReportCard(card: import('@/data/types').PlayerReportCard): Promise<void> {
     assertNotViewingAs();
     const { supabase } = await this.userCtx();
@@ -9360,6 +9407,7 @@ export class SupabaseDataSource implements DataSource {
         players: !!r.for_players,
         guardians: !!r.for_guardians,
       },
+      athleteId: r.athlete_id ?? undefined,
       createdAt: toMs(r.created_at),
       updatedAt: toMs(r.updated_at),
     };
@@ -9429,6 +9477,7 @@ export class SupabaseDataSource implements DataSource {
         for_assessors: input.audience.assessors,
         for_players: input.audience.players,
         for_guardians: input.audience.guardians,
+        athlete_id: input.athleteId || null,
       })
       .select('*, accounts(name)')
       .single();
@@ -9453,6 +9502,7 @@ export class SupabaseDataSource implements DataSource {
     }
     if (updates.body !== undefined) patch.body = updates.body.trim();
     if (updates.url !== undefined) patch.url = updates.url.trim() || null;
+    if (updates.athleteId !== undefined) patch.athlete_id = updates.athleteId || null;
     if (updates.audience) {
       patch.for_coaches = updates.audience.coaches;
       patch.for_managers = updates.audience.managers;
@@ -9679,11 +9729,11 @@ export class SupabaseDataSource implements DataSource {
     if (error) throw new Error(friendlyVideoError(error.message));
   }
 
-  async createVideoStorageCheckoutSession(gb: number, options?: { applyCredits?: boolean }): Promise<{ url: string }> {
+  async createVideoStorageCheckoutSession(gb: number, options?: { applyCredits?: boolean; discountCode?: string }): Promise<{ url: string }> {
     assertNotViewingAs();
     const { supabase } = await this.ctx();
     const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-      body: { addOn: 'video_storage', storageGb: gb, interval: 'year', origin: webOrigin(), applyCredits: options?.applyCredits === true },
+      body: { addOn: 'video_storage', storageGb: gb, interval: 'year', origin: webOrigin(), applyCredits: options?.applyCredits === true, discountCode: options?.discountCode?.trim() || undefined },
     });
     if (error) {
       let detail = '';

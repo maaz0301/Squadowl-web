@@ -35,7 +35,7 @@ import {
 import { formatDate, planLabel } from '../labels';
 import { discountLabel, discountState, discountTiersLabel, errorMessage, formatMoney } from './format';
 
-const PAID_TIERS: PaidPlanTier[] = ['coach', 'coach_plus', 'club'];
+const PAID_TIERS: PaidPlanTier[] = ['coach', 'coach_plus', 'club', 'video_storage'];
 
 function inputOf(d: DiscountCode): DiscountCodeInput {
   return {
@@ -449,7 +449,7 @@ function DiscountCodeModal({ code, onClose }: { code: DiscountCode | null; onClo
             Plans
           </p>
           <p className="mb-1 text-xs" style={{ color: colors.inkFaint }}>
-            Leave all unticked for every paid plan.
+            Leave all unticked for every paid plan (plan upgrades only). Tick Video storage to make a code for the storage add-on.
           </p>
           <div className="flex flex-wrap gap-x-5">
             {PAID_TIERS.map((tier) => (

@@ -482,7 +482,8 @@ export interface FounderReferralBalance {
 
 export type DiscountKind = 'percent' | 'amount';
 export type DiscountDuration = 'once' | 'forever' | 'repeating';
-export type PaidPlanTier = 'coach' | 'coach_plus' | 'club';
+/** 'video_storage' ties a code to the video storage add-on instead of a plan. */
+export type PaidPlanTier = 'coach' | 'coach_plus' | 'club' | 'video_storage';
 
 export interface DiscountCodeInput {
   code: string;

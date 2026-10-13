@@ -1,11 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useEffect, useMemo } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
 
-import { Badge, Button, Card, Switch, useAlert } from '@/components/ui';
+import { Badge, Button, Card, Input, Switch, useAlert } from '@/components/ui';
 import { StorageMeterBar } from '@/components/video/StorageMeter';
 import {
   useAccountVideosQuery,
@@ -23,6 +23,9 @@ import {
   type AccountVideo,
   type VideoContext,
   type VideoStorageGb,
+  discountedPriceCents,
+  formatCents,
+  type StorageDiscount,
 } from '@/data/videoStorage';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
@@ -72,9 +75,32 @@ function StorageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [justPaid]);
 
+  // A founder-issued discount code for the add-on. Checked here for the price shown; checkout checks it again.
+  const [codeInput, setCodeInput] = useState('');
+  const [applied, setApplied] = useState<(StorageDiscount & { code: string; duration: string }) | null>(null);
+  const [checkingCode, setCheckingCode] = useState(false);
+  const applyCode = async () => {
+    const value = codeInput.trim();
+    if (!value) return;
+    setCheckingCode(true);
+    try {
+      const r = await getDataSource().previewDiscountCode(value, 'video_storage');
+      if (!r.valid) {
+        await alert('Discount code', r.message);
+        return;
+      }
+      setApplied({ code: r.code, kind: r.kind, percentOff: r.percentOff, amountOffCents: r.amountOffCents, duration: r.duration });
+      setCodeInput('');
+    } catch (e) {
+      await alert('Discount code', e instanceof Error ? e.message : 'That code could not be checked.');
+    } finally {
+      setCheckingCode(false);
+    }
+  };
+
   const buy = useMutation({
     mutationFn: async (gb: VideoStorageGb) => {
-      const res = await getDataSource().createVideoStorageCheckoutSession(gb);
+      const res = await getDataSource().createVideoStorageCheckoutSession(gb, { discountCode: applied?.code });
       if (res?.url) window.location.href = res.url;
     },
     onError: (e) => alert('Could not start the purchase', e instanceof Error ? e.message : 'Try again.'),
@@ -180,6 +206,29 @@ function StorageContent() {
             One yearly add-on, shared by every team on your account. Videos are compressed to 720p before they upload, and are
             never deleted because of age.
           </p>
+          {applied ? (
+            <div className="flex items-center justify-between gap-2 rounded-xl border p-3" style={{ borderColor: colors.primary }}>
+              <p className="text-sm font-bold" style={{ color: colors.ink }}>
+                Code {applied.code} applied:{' '}
+                {applied.kind === 'percent' ? `${applied.percentOff}% off` : `${formatCents(applied.amountOffCents ?? 0)} off`}
+                {applied.duration === 'once' ? ' your first year' : applied.duration === 'forever' ? ' every year' : ''}
+              </p>
+              <Button size="sm" variant="ghost" label="Remove" onClick={() => setApplied(null)} />
+            </div>
+          ) : (
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input
+                  label="Discount code"
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                  placeholder="Enter a code"
+                  autoComplete="off"
+                />
+              </div>
+              <Button size="sm" variant="secondary" label="Apply" loading={checkingCode} disabled={!codeInput.trim()} onClick={applyCode} />
+            </div>
+          )}
           {VIDEO_STORAGE_PLANS.map((plan) => (
             <div key={plan.gb} className="flex items-center justify-between rounded-xl border p-3" style={{ borderColor: colors.border }}>
               <div>
@@ -187,7 +236,16 @@ function StorageContent() {
                   {plan.name} · {plan.label}
                 </p>
                 <p className="text-sm" style={{ color: colors.inkMuted }}>
-                  {formatPlanPrice(plan)}
+                  {applied ? (
+                    <>
+                      <span style={{ textDecoration: 'line-through' }}>{formatPlanPrice(plan)}</span>{' '}
+                      <span className="font-bold" style={{ color: colors.primary }}>
+                        {formatCents(discountedPriceCents(plan.priceCents, applied))}
+                      </span>
+                    </>
+                  ) : (
+                    formatPlanPrice(plan)
+                  )}
                 </p>
               </div>
               <Button

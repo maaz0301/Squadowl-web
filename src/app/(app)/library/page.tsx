@@ -30,6 +30,7 @@ import {
 } from '@/features/queries';
 import { getDataSource } from '@/data';
 import { VideoStoragePanel } from '@/components/video/VideoStoragePanel';
+import { PlayerTagField } from '@/components/video/PlayerTagField';
 import { compressVideo, readVideoDuration, VideoCompressError } from '@/lib/videoCompress';
 import {
   VIDEO_PHASE_LABEL,
@@ -59,6 +60,8 @@ interface FormState {
   body: string;
   url: string;
   audience: LibraryAudienceFlags;
+  /** The player a video is tagged to, shown on that player's report card screen. */
+  athleteId: string | null;
   file: File | null;
   /** A video chosen from the computer, compressed and uploaded to account storage on save. */
   video: File | null;
@@ -70,6 +73,7 @@ const emptyForm = (): FormState => ({
   body: '',
   url: '',
   audience: { ...DEFAULT_LIBRARY_AUDIENCE },
+  athleteId: null,
   file: null,
   video: null,
 });
@@ -126,6 +130,7 @@ export default function LibraryPage() {
       body: item.body,
       url: item.url ?? '',
       audience: { ...item.audience },
+      athleteId: item.athleteId ?? null,
       file: null,
       video: null,
     });
@@ -155,7 +160,7 @@ export default function LibraryPage() {
       });
       videoId = uploaded.id;
       const item = await createItem.mutateAsync({
-        input: { kind: 'video', title: form.title, body: form.body, url: form.url, audience: form.audience, uploadedVideo: true },
+        input: { kind: 'video', title: form.title, body: form.body, url: form.url, audience: form.audience, athleteId: form.athleteId, uploadedVideo: true },
       });
       await getDataSource().attachAccountVideo(uploaded.id, 'library', item.id);
       invalidateVideos();
@@ -185,14 +190,14 @@ export default function LibraryPage() {
           return;
         }
         await createItem.mutateAsync({
-          input: { kind: form.kind, title: form.title, body: form.body, url: form.url, audience: form.audience },
+          input: { kind: form.kind, title: form.title, body: form.body, url: form.url, audience: form.audience, athleteId: form.kind === 'video' ? form.athleteId : null },
           file: form.kind === 'file' || form.kind === 'video' ? (form.file ?? undefined) : undefined,
         });
         toast('Added to the library', 'success');
       } else if (editing) {
         await updateItem.mutateAsync({
           id: editing.id,
-          updates: { title: form.title, body: form.body, url: form.url, audience: form.audience },
+          updates: { title: form.title, body: form.body, url: form.url, audience: form.audience, ...(form.kind === 'video' ? { athleteId: form.athleteId } : {}) },
         });
         toast('Saved', 'success');
       }
@@ -451,6 +456,10 @@ export default function LibraryPage() {
                 </p>
               )}
             </div>
+          ) : null}
+
+          {form.kind === 'video' ? (
+            <PlayerTagField value={form.athleteId} onChange={(athleteId) => setForm((f) => ({ ...f, athleteId }))} />
           ) : null}
 
           <div className="rounded-xl border p-3" style={{ borderColor: colors.border }}>

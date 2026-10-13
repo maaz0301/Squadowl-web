@@ -39,11 +39,14 @@ export function EventDiscussion({
   seasonId,
   eventId,
   canManage = false,
+  hideVideo = false,
   currentUserId,
 }: {
   seasonId: string;
   eventId: string;
   canManage?: boolean;
+  /** Guardians do not get video options; those live on the subscriber's hub screens. */
+  hideVideo?: boolean;
   /** Lets a user remove their own comment. */
   currentUserId?: string;
 }) {
@@ -96,10 +99,11 @@ export function EventDiscussion({
     }
   };
 
+  const visibleFiles = hideVideo ? files.data?.filter((f) => kindOf(f) !== 'video') : files.data;
   const counts = { video: 0, info: 0, image: 0 };
-  for (const f of files.data ?? []) counts[kindOf(f)] += 1;
+  for (const f of visibleFiles ?? []) counts[kindOf(f)] += 1;
   const indicators: { key: string; icon: IconName; label: string; count: number | undefined }[] = [
-    { key: 'video', icon: 'video', label: 'Video', count: files.data ? counts.video : undefined },
+    ...(hideVideo ? [] : [{ key: 'video', icon: 'video' as const, label: 'Video', count: files.data ? counts.video : undefined }]),
     { key: 'info', icon: 'info', label: 'Info', count: files.data ? counts.info : undefined },
     { key: 'image', icon: 'image', label: 'Photo', count: files.data ? counts.image : undefined },
     { key: 'comments', icon: 'chat', label: 'Comments', count: comments.data?.length },
@@ -144,10 +148,10 @@ export function EventDiscussion({
           <div className="flex flex-col gap-1.5">
             <p className="text-xs font-bold uppercase" style={{ color: colors.inkMuted }}>Files</p>
             {files.isLoading ? <p className="text-sm" style={{ color: colors.inkFaint }}>Loading…</p> : null}
-            {files.data?.length === 0 ? (
+            {visibleFiles?.length === 0 ? (
               <p className="text-sm" style={{ color: colors.inkFaint }}>No files attached.</p>
             ) : null}
-            {files.data?.map((f) => (
+            {visibleFiles?.map((f) => (
               <div key={f.id} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2" style={box}>
                 <div className="min-w-0 flex-1">
                   {f.url ? (

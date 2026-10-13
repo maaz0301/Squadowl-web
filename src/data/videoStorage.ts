@@ -145,6 +145,23 @@ export function formatPlanPrice(plan: VideoStoragePlan): string {
   return `$${plan.priceCents / 100}/year`;
 }
 
+/** A discount code's effect on one storage plan, as the price the first payment will be. */
+export interface StorageDiscount {
+  kind: 'percent' | 'amount';
+  percentOff?: number;
+  amountOffCents?: number;
+}
+
+export function discountedPriceCents(priceCents: number, d: StorageDiscount | null | undefined): number {
+  if (!d) return priceCents;
+  const off = d.kind === 'percent' ? Math.round((priceCents * (d.percentOff ?? 0)) / 100) : (d.amountOffCents ?? 0);
+  return Math.max(0, priceCents - off);
+}
+
+export function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
+}
+
 /** The server marks a refused upload with this prefix (errcode 53100). */
 export function isStorageFullMessage(message: string | undefined | null): boolean {
   return !!message && /storage_full|storage is full/i.test(message);

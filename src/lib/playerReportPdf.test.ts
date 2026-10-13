@@ -1,4 +1,4 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 
 import type { PlayerFullResults } from '@/data/resultsExport';
@@ -46,6 +46,33 @@ describe('renderPlayerReportPdf', () => {
     const base64 = await renderPlayerReportPdf(input);
     const doc = await PDFDocument.load(Buffer.from(base64, 'base64'));
     expect(doc.getPageCount()).toBeGreaterThan(1);
+  });
+
+  it('makes attached links tappable and leads with the overall rank rather than a score', async () => {
+    const base64 = await renderPlayerReportPdf({
+      ...input,
+      card: { ...card, evals: [] },
+      coachComments: '',
+      aiComments: '',
+      attachments: [
+        { kind: 'video', name: 'Game clip', url: 'https://youtu.be/abc123' },
+        { kind: 'file', name: 'Skills sheet.pdf', url: 'https://example.com/signed/skills.pdf?token=' + 'x'.repeat(200) },
+        { kind: 'file', name: 'Not uploaded yet.pdf' },
+      ],
+    });
+    const doc = await PDFDocument.load(Buffer.from(base64, 'base64'));
+    const uris: string[] = [];
+    for (const page of doc.getPages()) {
+      const annots = page.node.Annots();
+      for (let i = 0; i < (annots?.size() ?? 0); i++) {
+        const a = annots!.lookup(i, PDFDict);
+        const action = a.lookup(PDFName.of('A'), PDFDict);
+        uris.push(String(action.lookup(PDFName.of('URI'), PDFString).decodeText()));
+      }
+    }
+    expect(uris).toContain('https://youtu.be/abc123');
+    expect(uris.some((u) => u.startsWith('https://example.com/signed/skills.pdf'))).toBe(true);
+    expect(uris.every((u) => u.startsWith('https://'))).toBe(true);
   });
 
   it('renders a card with no comments, evaluations or attachments', async () => {

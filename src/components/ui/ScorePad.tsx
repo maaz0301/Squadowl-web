@@ -313,7 +313,7 @@ export function ScorePad({
   }
 
   if (scoringType && scoringType !== 'skill') {
-    const unitText = unit ?? (scoringType === 'time' ? 'sec' : scoringType === 'speed' ? 'mph' : 'ft');
+    const unitText = unit ?? (scoringType === 'time' ? 'sec' : scoringType === 'speed' ? 'mph' : scoringType === 'quantity' ? 'reps' : 'ft');
     const isLower = rankingDirection === 'lower_is_better' || (scoringType === 'time' && !rankingDirection);
     const ruleText = isLower
       ? scoringType === 'time'
@@ -323,6 +323,8 @@ export function ScorePad({
         ? 'Fastest speed = highest score'
         : scoringType === 'distance'
           ? 'Largest distance = highest score'
+          : scoringType === 'quantity'
+            ? 'Highest count = highest score'
           : 'Highest number = highest score';
 
     const parsed = parseFloat(textVal);

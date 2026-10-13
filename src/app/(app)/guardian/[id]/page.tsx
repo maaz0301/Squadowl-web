@@ -189,7 +189,7 @@ function EventCard({ item, playerId, colors }: { item: FlatEvent; playerId: stri
             {rsvpMutation.isPending && rsvpMutation.variables?.response === 'no' ? <Spinner size={16} /> : 'No'}
           </button>
         </div>
-        <EventDiscussion seasonId={item.seasonId} eventId={item.id} currentUserId={user?.id} />
+        <EventDiscussion seasonId={item.seasonId} eventId={item.id} currentUserId={user?.id} hideVideo />
       </div>
     </Card>
   );
@@ -261,7 +261,7 @@ export default function GuardianPortalPage() {
   if (!athlete) {
     return (
       <>
-        <PageHeader title="Guardian Portal" showBack backHref="/dashboard" />
+        <PageHeader title="My Athletes" showBack backHref="/dashboard" />
         <EmptyState title="Player not found" message="We couldn't find this player in your roster." />
       </>
     );
@@ -284,7 +284,7 @@ export default function GuardianPortalPage() {
   return (
     <>
       <PageHeader
-        title="Guardian Portal"
+        title="My Athletes"
         showBack
         backHref="/dashboard"
       />

@@ -20,6 +20,7 @@ export const PLAN_OPTIONS = PLAN_TIERS.map((tier) => ({ value: tier, label: getP
 
 export function planLabel(tier: string | undefined): string {
   if (!tier) return 'No plan';
+  if (tier === 'video_storage') return 'Video storage';
   return (PLAN_TIERS as readonly string[]).includes(tier)
     ? getPlanDefinition(tier as PlanTier).name
     : `${tier.charAt(0).toUpperCase()}${tier.slice(1)} (legacy)`;

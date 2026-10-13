@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useThemeColors } from '@/theme/ThemeProvider';
 import {
   Badge,
@@ -31,8 +31,10 @@ import {
   resolveWeights,
 } from '@/data/rubrics';
 import { SCORING_TYPES, type ScoringType, type RankingDirection } from '@/data/types';
-import { moveItem } from '@/lib/reorder';
+import { moveItem, useOptimisticOrder } from '@/lib/reorder';
 import { parseTimeText } from '@/lib/timeEntry';
+
+const NO_RUBRICS: never[] = [];
 
 export default function RubricsPage() {
   const id = useAssessmentId();
@@ -44,14 +46,17 @@ export default function RubricsPage() {
   // the loading render would change hook order. A delegated team's tryout
   // gates against the owning club's tier, not the viewer's own.
   const tier = useEffectivePlanTier(tryoutQuery.data?.teamId);
+  // Also a hook, so before the guards below.
+  const [orderedCustom, setOrder] = useOptimisticOrder(tryoutQuery.data?.settings.customRubrics ?? NO_RUBRICS);
 
   const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [category, setCategory] = useState('');
   const [scoringType, setScoringType] = useState<ScoringType>('skill');
-  // Row being dragged in the rubric list, and the row it is hovering over.
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [overIndex, setOverIndex] = useState<number | null>(null);
+  // Key of the row being dragged. Rows swap places live as it passes over them,
+  // and the order is saved once, when it is dropped.
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const dragStartOrder = useRef<string>('');
   const [scale, setScale] = useState<'1-5' | '1-10'>('1-5');
   const [unit, setUnit] = useState('');
   const [minValStr, setMinValStr] = useState('');
@@ -91,7 +96,7 @@ export default function RubricsPage() {
 
   const tryout = tryoutQuery.data;
   if (!tryout.viewerIsOwner) return <CoachOnlyState what="change this evaluation’s rubrics" />;
-  const custom = tryout.settings.customRubrics ?? [];
+  const custom = orderedCustom;
   const existingCategories = Array.from(new Set(custom.map((r) => r.category).filter((c): c is string => !!c)));
   const plan = getPlanDefinition(tier);
   const customLimit = plan.limits.customRubrics;
@@ -138,6 +143,8 @@ export default function RubricsPage() {
       if (!defaultUnit) defaultUnit = 'ft';
     } else if (scoringType === 'speed') {
       if (!defaultUnit) defaultUnit = 'mph';
+    } else if (scoringType === 'quantity') {
+      if (!defaultUnit) defaultUnit = 'reps';
     }
 
     const minNum = minValStr.trim() !== '' ? readNumber(minValStr) : undefined;
@@ -174,17 +181,24 @@ export default function RubricsPage() {
 
   // The order here is the order the drills are scored in, so a coach can fix a
   // list entered out of sequence by dragging a row, or with the arrows.
-  const moveCustom = async (from: number, to: number) => {
-    if (from === to || to < 0 || to >= custom.length) return;
+  const saveOrder = async (next: typeof custom) => {
     try {
       await updateTryout.mutateAsync({
         id: tryout.id,
-        updates: { settings: { ...tryout.settings, customRubrics: moveItem(custom, from, to) } },
+        updates: { settings: { ...tryout.settings, customRubrics: [...next] } },
       });
     } catch (err) {
+      setOrder(null);
       await alert('Error', err instanceof Error ? err.message : 'Failed to change the order.');
     }
   };
+  const moveCustom = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= custom.length) return;
+    const next = moveItem(custom, from, to);
+    setOrder(next);
+    void saveOrder(next);
+  };
+  const orderKey = (list: typeof custom) => list.map((r) => r.key).join('|');
 
   const removeCustom = async (keyToRemove: string) => {
     const next = custom.filter((r) => r.key !== keyToRemove);
@@ -282,35 +296,28 @@ export default function RubricsPage() {
             return (
               <div
                 key={r.key}
-                draggable={removingKey === null && !updateTryout.isPending}
+                draggable={removingKey === null}
                 onDragStart={(e) => {
-                  setDragIndex(i);
+                  setDragKey(r.key);
+                  dragStartOrder.current = orderKey(custom);
                   e.dataTransfer.effectAllowed = 'move';
                 }}
                 onDragOver={(e) => {
-                  if (dragIndex === null) return;
+                  if (dragKey === null) return;
                   e.preventDefault();
-                  setOverIndex(i);
+                  const from = custom.findIndex((c) => c.key === dragKey);
+                  if (from !== -1 && from !== i) setOrder(moveItem(custom, from, i));
                 }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const from = dragIndex;
-                  setDragIndex(null);
-                  setOverIndex(null);
-                  if (from !== null) void moveCustom(from, i);
-                }}
+                onDrop={(e) => e.preventDefault()}
                 onDragEnd={() => {
-                  setDragIndex(null);
-                  setOverIndex(null);
+                  setDragKey(null);
+                  if (orderKey(custom) !== dragStartOrder.current) void saveOrder(custom);
                 }}
                 className="flex items-center justify-between gap-2 border-b py-2"
                 style={{
                   borderColor: colors.border,
-                  opacity: dragIndex === i ? 0.5 : 1,
-                  boxShadow:
-                    overIndex === i && dragIndex !== null && dragIndex !== i
-                      ? `0 ${dragIndex < i ? 2 : -2}px 0 0 ${colors.primary}`
-                      : undefined,
+                  opacity: dragKey === r.key ? 0.5 : 1,
+                  backgroundColor: dragKey === r.key ? colors.tile : undefined,
                 }}
               >
                 <span
@@ -338,7 +345,7 @@ export default function RubricsPage() {
                   <button
                     type="button"
                     onClick={() => moveCustom(i, i - 1)}
-                    disabled={i === 0 || updateTryout.isPending}
+                    disabled={i === 0}
                     aria-label={`Move ${r.label} up`}
                     className="px-2 text-xs font-bold leading-none disabled:opacity-30"
                     style={{ color: colors.primary }}
@@ -348,7 +355,7 @@ export default function RubricsPage() {
                   <button
                     type="button"
                     onClick={() => moveCustom(i, i + 1)}
-                    disabled={i === custom.length - 1 || updateTryout.isPending}
+                    disabled={i === custom.length - 1}
                     aria-label={`Move ${r.label} down`}
                     className="px-2 text-xs font-bold leading-none disabled:opacity-30"
                     style={{ color: colors.primary }}
@@ -491,7 +498,7 @@ export default function RubricsPage() {
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
                 placeholder={
-                  scoringType === 'time' ? 'e.g. sec, s, min' : scoringType === 'speed' ? 'e.g. mph, km/h' : 'e.g. ft, m, inches'
+                  scoringType === 'time' ? 'e.g. sec, s, min' : scoringType === 'speed' ? 'e.g. mph, km/h' : scoringType === 'quantity' ? 'e.g. reps, goals, passes' : 'e.g. ft, m, inches'
                 }
               />
 
