@@ -244,12 +244,35 @@ export async function createFounderOrganization(
   };
 }
 
+/**
+ * Accounts flagged hidden_from_founder (test and internal accounts) and the
+ * people in them. Every founder list that does not go through a founder_*
+ * function leaves these out, so none of it leaks through a side door.
+ */
+async function hiddenFounderScope(): Promise<{ accountIds: string[]; emails: Set<string> }> {
+  const supabase = getSupabase();
+  const { data: accounts } = await supabase.from('accounts').select('id').eq('hidden_from_founder', true);
+  const accountIds = ((accounts ?? []) as Row[]).map((a) => a.id as string);
+  if (!accountIds.length) return { accountIds, emails: new Set() };
+  const { data: members } = await supabase.from('memberships').select('user_id').in('account_id', accountIds);
+  const userIds = [...new Set(((members ?? []) as Row[]).map((m) => m.user_id as string))];
+  const emails = new Set<string>();
+  if (userIds.length) {
+    const { data: profiles } = await supabase.from('profiles').select('email').in('id', userIds);
+    for (const p of (profiles ?? []) as Row[]) if (p.email) emails.add(String(p.email).toLowerCase());
+  }
+  return { accountIds, emails };
+}
+
 export async function listFounderAuditLog(limit = 100): Promise<FounderAuditEntry[]> {
-  const { data, error } = await getSupabase()
+  const { accountIds } = await hiddenFounderScope();
+  let q = getSupabase()
     .from('founder_audit_log')
     .select(FOUNDER_AUDIT_COLUMNS)
     .order('created_at', { ascending: false })
     .limit(limit);
+  if (accountIds.length) q = q.or(`account_id.is.null,account_id.not.in.(${accountIds.join(',')})`);
+  const { data, error } = await q;
   if (error) throw founderError(error);
   return ((data ?? []) as Row[]).map(rowToFounderAuditEntry);
 }
@@ -264,6 +287,8 @@ export async function listFounderAuditPage(filter: FounderAuditFilter = {}): Pro
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
     .range(offset, offset + limit - 1);
+  const { accountIds } = await hiddenFounderScope();
+  if (accountIds.length) query = query.or(`account_id.is.null,account_id.not.in.(${accountIds.join(',')})`);
   if (filter.actions?.length) query = query.in('action', filter.actions);
   if (filter.days) query = query.gte('created_at', new Date(Date.now() - filter.days * 86_400_000).toISOString());
   // Characters that are syntax in a PostgREST or() filter (or LIKE wildcards) are dropped, not escaped.
@@ -916,7 +941,10 @@ export async function listSupportTickets(filter: { status?: SupportTicketStatus;
   if (term) q = q.or(`email.ilike.%${term}%,subject.ilike.%${term}%`);
   const { data, error } = await q;
   if (error) throw founderError(error);
-  return ((data ?? []) as Row[]).map(rowToSupportTicket);
+  const { emails } = await hiddenFounderScope();
+  return ((data ?? []) as Row[])
+    .filter((r) => !emails.has(String(r.email ?? '').toLowerCase()))
+    .map(rowToSupportTicket);
 }
 
 export async function getSupportTicket(ticketId: string): Promise<SupportTicketDetail> {
@@ -1062,16 +1090,19 @@ export async function listEmailActivity(filter: EmailActivityFilter): Promise<Em
     { action: 'email_activity', toEmail: filter.toEmail, status: filter.status, days: filter.days, limit: 200 },
     'Could not load the email log',
   );
-  return result.messages.map((m) => ({
-    msgId: m.msg_id,
-    fromEmail: m.from_email,
-    toEmail: m.to_email,
-    subject: m.subject ?? '',
-    status: m.status,
-    opensCount: m.opens_count ?? 0,
-    clicksCount: m.clicks_count ?? 0,
-    lastEventTime: Date.parse(m.last_event_time),
-  }));
+  const { emails } = await hiddenFounderScope();
+  return result.messages
+    .filter((m) => !emails.has(String(m.to_email ?? '').toLowerCase()))
+    .map((m) => ({
+      msgId: m.msg_id,
+      fromEmail: m.from_email,
+      toEmail: m.to_email,
+      subject: m.subject ?? '',
+      status: m.status,
+      opensCount: m.opens_count ?? 0,
+      clicksCount: m.clicks_count ?? 0,
+      lastEventTime: Date.parse(m.last_event_time),
+    }));
 }
 
 export async function getEmailActivityEvents(msgId: string): Promise<EmailActivityEvent[]> {

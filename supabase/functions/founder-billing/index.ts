@@ -72,6 +72,12 @@ async function accountsByCustomer(admin: SupabaseClient, customerIds: string[]) 
   return map;
 }
 
+/** Stripe customers of accounts hidden from the founder console, left out of every Stripe-backed view. */
+async function hiddenCustomerIds(admin: SupabaseClient): Promise<Set<string>> {
+  const { data } = await admin.from('accounts').select('stripe_customer_id').eq('hidden_from_founder', true).not('stripe_customer_id', 'is', null);
+  return new Set((data ?? []).map((a: { stripe_customer_id: string }) => a.stripe_customer_id));
+}
+
 const idOf = (ref: unknown): string | null =>
   typeof ref === 'string' ? ref : ((ref as { id?: string } | null)?.id ?? null);
 
@@ -223,6 +229,8 @@ async function listPayments({ admin, body }: Ctx) {
     );
   }
 
+  const hidden = await hiddenCustomerIds(admin);
+  charges = charges.filter((c) => !hidden.has(idOf(c.customer) ?? ''));
   const accounts = await accountsByCustomer(admin, charges.map((c) => idOf(c.customer) ?? ''));
   return { items: charges.map((c) => chargeRow(c, accounts)), nextCursor };
 }
@@ -232,6 +240,7 @@ async function getPayment({ admin, body }: Ctx) {
   const charge = await stripe.charges.retrieve(String(body.chargeId), {
     expand: ['customer', 'refunds', 'invoice'],
   });
+  if ((await hiddenCustomerIds(admin)).has(idOf(charge.customer) ?? '')) throw new HttpError('Payment not found.', 404);
   const accounts = await accountsByCustomer(admin, [idOf(charge.customer) ?? '']);
   const invoice = typeof charge.invoice === 'object' ? charge.invoice : null;
   return {
@@ -526,12 +535,14 @@ const MAX_CHARGES = 10000;
  * its monthly-normalised value) and succeeded charges per month. The series
  * themselves are computed client-side so the maths is unit-tested.
  */
-async function revenueData({ body }: Ctx) {
+async function revenueData({ admin, body }: Ctx) {
+  const hidden = await hiddenCustomerIds(admin);
   const months = Math.max(3, Math.min(36, Math.round(Number(body.months) || 12)));
 
   const subscriptions = [];
   for await (const sub of stripe.subscriptions.list({ status: 'all', limit: 100 })) {
     if (sub.status === 'incomplete' || sub.status === 'incomplete_expired') continue;
+    if (hidden.has(idOf(sub.customer) ?? '')) continue;
     let mrrCents = 0;
     let currency: string | null = null;
     let tier: string | null = null;
@@ -583,6 +594,7 @@ async function revenueData({ body }: Ctx) {
   for await (const c of stripe.charges.list({ limit: 100, created: { gte: Math.floor(since.getTime() / 1000) } })) {
     if (++seen > MAX_CHARGES) break;
     if (c.status !== 'succeeded') continue;
+    if (hidden.has(idOf(c.customer) ?? '')) continue;
     charges.push({
       month: new Date(c.created * 1000).toISOString().slice(0, 7),
       currency: c.currency,
