@@ -453,7 +453,10 @@ export default function ScorePage() {
       const currentFormStr = JSON.stringify(data);
       if (previousFormRef.current !== currentFormStr) {
         const hasScores = data.scores && Object.values(data.scores).some((v) => v != null && v > 0);
-        if (!hasScores) {
+        // Every test marked "did not attempt" is a result in its own right (N/A on the reports), so
+        // it is saved like any session; it just has no scores to average.
+        const hasNotAttempted = Object.keys(data.scores ?? {}).some((k) => k.endsWith(NOT_ATTEMPTED_SUFFIX));
+        if (!hasScores && !hasNotAttempted) {
           // Every score was cleared on a saved session: that means "remove it".
           // A save needs a score, so without this a wrong session was stuck.
           if (evalId) {
@@ -461,21 +464,16 @@ export default function ScorePage() {
             await removeSession();
             return;
           }
-          // Every test was marked "did not attempt": there is nothing to save, so move on
-          // quietly instead of asking for a score.
-          if (!Object.keys(data.scores ?? {}).some((k) => k.endsWith(NOT_ATTEMPTED_SUFFIX))) {
-            await alert('No scores entered', 'Please grade at least one subskill before saving.');
-            setSaving(false);
-            return;
-          }
-          notAttemptedOnly = true;
-        } else {
-          await saveEval.mutateAsync({ playerId: playerId!, form: data, evalId: evalId ?? undefined });
-          previousFormRef.current = currentFormStr;
+          await alert('No scores entered', 'Please grade at least one subskill before saving.');
+          setSaving(false);
+          return;
         }
+        notAttemptedOnly = !hasScores;
+        await saveEval.mutateAsync({ playerId: playerId!, form: data, evalId: evalId ?? undefined });
+        previousFormRef.current = currentFormStr;
       }
 
-      if (playerId && !notAttemptedOnly) markSessionCompleted(playerId, data.session);
+      if (playerId) markSessionCompleted(playerId, data.session);
 
       // Skipping a session moves on from the one on screen, whatever the form last stored.
       const currentIdx = SESSIONS.indexOf(notAttemptedOnly ? currentSession : data.session);

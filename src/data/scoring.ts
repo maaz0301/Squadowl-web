@@ -1,3 +1,4 @@
+import { NOT_ATTEMPTED_SUFFIX } from '@/lib/notAttempted';
 import type { AssessorProgress, PlayerResult, Recommendation, Tryout } from './types';
 import {
   categoryAveragesAcrossEvals,
@@ -9,9 +10,16 @@ import {
   weightedOverallAcrossEvals,
 } from './rubrics';
 
+/** At least one real result (anything but a "did not attempt" marker). */
+function hasResults(scores: Record<string, number> | undefined): boolean {
+  return !!scores && Object.entries(scores).some(([key, value]) => !key.endsWith(NOT_ATTEMPTED_SUFFIX) && value != null);
+}
+
 export function computePlayerResults(tryout: Tryout): PlayerResult[] {
   return tryout.roster.map((player) => {
-    const playerEvals = tryout.evals.filter((e) => e.playerId === player.id);
+    // A session where every test was marked "did not attempt" holds no results at all, so it is
+    // not an evaluation to average or count (it would otherwise read as an overall of 0).
+    const playerEvals = tryout.evals.filter((e) => e.playerId === player.id && hasResults(e.scores));
     const categories = getPlayerCategories(tryout.sport, player.pos, tryout.settings.customRubrics);
     const weights = isGoaliePosition(player.pos)
       ? tryout.settings.goalieWeights

@@ -1,7 +1,7 @@
 'use client';
 
 import { NotAttemptedAll } from '@/components/ui/NotAttemptedAll';
-import { isNotAttempted, withNotAttempted, withScore, withoutScore } from '@/lib/notAttempted';
+import { NOT_ATTEMPTED_SUFFIX, isNotAttempted, withNotAttempted, withScore, withoutScore } from '@/lib/notAttempted';
 import { useTerms } from '@/lib/terms';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -347,7 +347,9 @@ export default function RinksidePage() {
     }
 
     const hasScores = workingScores && Object.values(workingScores).some((val) => val != null && val > 0);
-    if (!hasScores) {
+    // Every test marked "did not attempt" is saved too (N/A on the reports), just with nothing to average.
+    const hasNotAttempted = Object.keys(workingScores ?? {}).some((k) => k.endsWith(NOT_ATTEMPTED_SUFFIX));
+    if (!hasScores && !hasNotAttempted) {
       clearWorkingScores();
       setRecommendation('');
       await advance();

@@ -174,4 +174,14 @@ describe('report card rows in the rubric own units', () => {
     const card = buildPlayerFullResults(t).find((c) => c.playerId === 'p1')!;
     expect(card.metrics.find((m) => m.label === 'Longest Sit')).toBeUndefined();
   });
+
+  it('does not count a session where every test was marked not attempted as an evaluation', () => {
+    const t = skippedTryout();
+    t.evals = [{ id: 'z', playerId: 'p2', evaluator: 'C', session: 'S1', date: '2026-10-01', scores: { 'skating~na': 0, 'sit~na': 0 }, createdAt: 1 }] as unknown as Evaluation[];
+    const card = buildPlayerFullResults(t).find((c) => c.playerId === 'p2')!;
+    expect(card.evalCount).toBe(0);
+    expect(card.overallScore).toBe('');
+    // ...but the report still lists the session, with N/A for each skipped test.
+    expect(card.evals[0].values.every((v) => v.text === 'N/A')).toBe(true);
+  });
 });
