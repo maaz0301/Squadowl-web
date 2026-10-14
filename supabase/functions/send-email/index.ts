@@ -720,7 +720,7 @@ function tplPlayerInvite(
 }
 
 /** Warns the account owner that their stored videos will be deleted on `deletionDate`. */
-function tplVideoDeletionReminder(payload: any) {
+function tplVideoDeletionReminder(payload: Record<string, unknown>) {
   const when = escapeHtml(String(payload?.deletionDate ?? 'soon'));
   const days = Number(payload?.daysLeft) || 0;
   const count = Number(payload?.videoCount) || 0;
@@ -748,7 +748,7 @@ function tplVideoDeletionReminder(payload: any) {
 }
 
 /** Confirms that an account's stored videos were permanently deleted. */
-function tplVideoDeletionComplete(payload: any) {
+function tplVideoDeletionComplete(payload: Record<string, unknown>) {
   const count = Number(payload?.videoCount) || 0;
   const account = escapeHtml(String(payload?.accountName ?? 'your account'));
   return {
