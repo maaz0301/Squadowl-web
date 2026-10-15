@@ -172,7 +172,7 @@ export function listReportRubrics(tryouts: Tryout[]): ReportRubricOption[] {
  * score leads on a skill.
  */
 export function topPerformersByRubric(tryouts: Tryout[], key: string, topLimit = 5): RubricLeader[] {
-  const leaders: (RubricLeader & { lower: boolean })[] = [];
+  const leaders: (RubricLeader & { lower: boolean; person: string; nameKey: string })[] = [];
   for (const tryout of tryouts) {
     for (const player of tryout.roster) {
       const sub = getPlayerCategories(tryout.sport, player.pos, tryout.settings.customRubrics)
@@ -193,14 +193,28 @@ export function topPerformersByRubric(tryouts: Tryout[], key: string, topLimit =
         overall: Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100,
         unit: sub.unit,
         lower: sub.rankingDirection === 'lower_is_better',
+        person: player.athleteId ? `a:${player.athleteId}` : `p:${tryout.id}:${player.id}`,
+        // The same name and birth year is the same person even under two athlete records; without a year, stay apart.
+        nameKey: player.yearOfBirth
+          ? `n:${`${player.first} ${player.last}`.trim().toLowerCase().replace(/\s+/g, ' ')}|${player.yearOfBirth}`
+          : `p:${tryout.id}:${player.id}`,
       });
     }
   }
   const lower = leaders.length > 0 && leaders.every((l) => l.lower);
-  return leaders
+  const better = (a: number, b: number) => (lower ? a < b : a > b);
+  // One person, one row: a player added to several evaluations (each filing its own athlete
+  // record) keeps only their best figure, instead of crowding the board with copies of themselves.
+  const best = new Map<string, (typeof leaders)[number]>();
+  for (const leader of leaders) {
+    const kept = best.get(leader.person) ?? best.get(leader.nameKey);
+    const winner = !kept || better(leader.overall, kept.overall) ? leader : kept;
+    for (const k of [leader.person, leader.nameKey, kept?.person, kept?.nameKey]) if (k) best.set(k, winner);
+  }
+  return [...new Set(best.values())]
     .sort((a, b) => (lower ? a.overall - b.overall : b.overall - a.overall))
     .slice(0, topLimit)
-    .map(({ lower: _lower, ...leader }) => leader);
+    .map(({ lower: _lower, person: _person, nameKey: _nameKey, ...leader }) => leader);
 }
 
 /** A team whose evaluations the top performers can be limited to. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { duplicatePrompt, findPossibleDuplicates } from './duplicates';
+import { duplicatePrompt, findPossibleDuplicates, foldAthletes } from './duplicates';
 
 const roster = [
   { first: 'Jane', last: 'Doe', yearOfBirth: '2012', playerEmail: 'jane@x.com', guardianEmail: 'mum@x.com', jersey: '12' },
@@ -61,5 +61,34 @@ describe('flagRegistrationDuplicates', () => {
 
   it('leaves added registrations unflagged', () => {
     expect(flagRegistrationDuplicates([reg('a', 'Jane', 'Doe', { status: 'added' })], roster).size).toBe(0);
+  });
+});
+
+describe('foldAthletes', () => {
+  const a = (id: string, first: string, last: string, yearOfBirth?: string, extra = {}) => ({ id, first, last, yearOfBirth, ...extra });
+
+  it('shows one entry for six records of the same player and lists the others', () => {
+    const rows = ['1', '2', '3', '4', '5', '6'].map((id) => a(id, 'Alfred', 'Lau'));
+    const out = foldAthletes(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].alsoIds).toHaveLength(5);
+  });
+
+  it('puts the fullest record first', () => {
+    const out = foldAthletes([a('1', 'Alfred', 'Lau'), a('2', 'Alfred', 'Lau', '2010', { guardianName: 'Pat' })]);
+    expect(out[0].id).toBe('2');
+    expect(out[0].alsoIds).toEqual(['1']);
+  });
+
+  it('matches the name in either order, ignoring case', () => {
+    expect(foldAthletes([a('1', 'Alfred', 'Lau'), a('2', 'LAU', 'alfred')])).toHaveLength(1);
+  });
+
+  it('never merges two known, different birth years', () => {
+    expect(foldAthletes([a('1', 'Sam', 'Lee', '2010'), a('2', 'Sam', 'Lee', '2012'), a('3', 'Sam', 'Lee')])).toHaveLength(2);
+  });
+
+  it('leaves different people alone', () => {
+    expect(foldAthletes([a('1', 'Alfred', 'Lau'), a('2', 'Alice', 'Lau')])).toHaveLength(2);
   });
 });

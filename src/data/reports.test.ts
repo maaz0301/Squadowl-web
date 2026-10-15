@@ -184,6 +184,26 @@ describe('top performers by measure', () => {
   });
 });
 
+describe('top performers, one row per person', () => {
+  const copy = (id: string, athleteId: string | undefined, skating: number, yob = '2010') =>
+    makeTryout({
+      id,
+      name: `Eval ${id}`,
+      roster: [makePlayer({ id: `p-${id}`, athleteId, first: 'Alfred', last: 'Lau', yearOfBirth: yob })],
+      evals: [makeEval({ id: `e-${id}`, playerId: `p-${id}`, scores: { skating } })],
+    });
+
+  it('keeps one row for a player filed as several athlete records, with their best figure', () => {
+    const top = topPerformersByRubric([copy('a', 'x1', 3), copy('b', 'x2', 5), copy('c', 'x3', 4)], 'skating');
+    expect(top).toHaveLength(1);
+    expect(top[0].overall).toBe(5);
+  });
+
+  it('keeps two same-named players apart when their birth years differ', () => {
+    expect(topPerformersByRubric([copy('a', 'x1', 3, '2010'), copy('b', 'x2', 5, '2012')], 'skating')).toHaveLength(2);
+  });
+});
+
 describe('top performers by team', () => {
   const a = makeTryout({ id: 'a', name: 'Star 1', teamId: 'team-a', roster: [makePlayer({ id: 'p1', first: 'Ann' })], evals: [makeEval({ id: 'ea', playerId: 'p1', scores: { skating: 5 } })] });
   const b = makeTryout({ id: 'b', name: 'Star 2', teamId: 'team-b', roster: [makePlayer({ id: 'p2', first: 'Bea' })], evals: [makeEval({ id: 'eb', playerId: 'p2', scores: { skating: 2 } })] });

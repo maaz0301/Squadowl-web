@@ -8148,7 +8148,7 @@ export class SupabaseDataSource implements DataSource {
     while (out.length < limit && pos - offset < (term ? MAX_SCAN : take)) {
       let q = supabase
         .from('athletes')
-        .select('id, first_name, last_name, avatar_url, default_position, guardian_name, guardian_email, player_email')
+        .select('id, first_name, last_name, year_of_birth, avatar_url, default_position, guardian_name, guardian_email, player_email')
         // Ordered by id, not name, so the database can stop after one chunk.
         .order('id')
         .range(pos, pos + take - 1);
@@ -8168,6 +8168,7 @@ export class SupabaseDataSource implements DataSource {
           id: a.id,
           first: a.first_name ?? '',
           last: a.last_name ?? '',
+          yearOfBirth: a.year_of_birth ? String(a.year_of_birth) : undefined,
           avatarUrl: a.avatar_url ?? undefined,
           currentPosition: a.default_position ?? undefined,
           guardianName: a.guardian_name ?? undefined,

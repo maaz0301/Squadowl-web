@@ -930,6 +930,9 @@ export function useSaveEvaluationMutation(tryoutId: string) {
       // They will re-fetch in the background when their components are next focused.
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId), refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId), refetchType: 'none' });
+      // Reports (Top Performers) read the tryouts list, not this one tryout, so a changed or cleared score
+      // kept showing there until the list's cache happened to expire.
+      qc.invalidateQueries({ queryKey: ['tryouts'], refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.profile, refetchType: 'none' });
       // The player card's history and season-over-season read this; without it the card shows "not scored" until reloaded.
       qc.invalidateQueries({ queryKey: ['athleteHistory'] });
@@ -955,6 +958,9 @@ export function useDeleteEvaluationMutation(tryoutId: string) {
       );
       qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId), refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.results(tryoutId), refetchType: 'none' });
+      // Reports (Top Performers) read the tryouts list, not this one tryout, so a changed or cleared score
+      // kept showing there until the list's cache happened to expire.
+      qc.invalidateQueries({ queryKey: ['tryouts'], refetchType: 'none' });
       qc.invalidateQueries({ queryKey: queryKeys.profile, refetchType: 'none' });
       qc.invalidateQueries({ queryKey: ['athleteHistory'] });
       qc.invalidateQueries({ queryKey: ['playerProfile'] });

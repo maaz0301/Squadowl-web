@@ -157,3 +157,58 @@ export function flagRegistrationDuplicates<R extends { id: string; status?: stri
   }
   return flags;
 }
+
+/** What folding needs to know about an athlete record. */
+export interface FoldableAthlete {
+  id: string;
+  first: string;
+  last: string;
+  yearOfBirth?: string | null;
+  avatarUrl?: string;
+  guardianName?: string;
+  guardianEmail?: string;
+  playerEmail?: string;
+  currentPosition?: string;
+}
+
+/**
+ * One entry per person in a list of athlete records. Adding the same player to
+ * several evaluations files a new athlete record each time, so a search for one
+ * name came back as the same person six times, each holding a different slice
+ * of their results. Records with the same name (either order) are one person
+ * unless both carry a birth year and the years differ. The fullest record leads;
+ * the rest ride along in `alsoIds` so the profile can bring all their results
+ * together.
+ */
+export function foldAthletes<T extends FoldableAthlete>(rows: T[]): (T & { alsoIds: string[] })[] {
+  const richness = (a: T) =>
+    [a.avatarUrl, a.guardianName, a.guardianEmail, a.playerEmail, a.currentPosition, a.yearOfBirth].filter(Boolean).length;
+
+  interface Cluster {
+    yob: string;
+    members: T[];
+  }
+  const byName = new Map<string, Cluster[]>();
+  const order: Cluster[] = [];
+
+  for (const row of rows) {
+    const nameKey = norm(`${row.first} ${row.last}`).split(' ').filter(Boolean).sort().join(' ');
+    const yob = norm(row.yearOfBirth);
+    const clusters = byName.get(nameKey) ?? [];
+    // A known year only joins a cluster of the same year (or one that has none yet); an unknown one joins the first.
+    let home = clusters.find((c) => !yob || !c.yob || c.yob === yob);
+    if (!home) {
+      home = { yob: '', members: [] };
+      clusters.push(home);
+      order.push(home);
+      byName.set(nameKey, clusters);
+    }
+    if (!home.yob && yob) home.yob = yob;
+    if (!home.members.some((m) => m.id === row.id)) home.members.push(row);
+  }
+
+  return order.map(({ members }) => {
+    const lead = members.reduce((best, m) => (richness(m) > richness(best) ? m : best), members[0]);
+    return { ...lead, alsoIds: members.filter((m) => m.id !== lead.id).map((m) => m.id) };
+  });
+}

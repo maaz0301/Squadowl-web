@@ -7,6 +7,7 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Avatar, Button, Card, CardGridSkeleton, EmptyState, ErrorState, Input, PageHeader } from '@/components/ui';
 import { useAthleteHubQuery } from '@/features/queries';
 import { playerDisplayName } from '@/data/rubrics';
+import { foldAthletes } from '@/data/duplicates';
 
 /**
  * Every athlete under this subscription, whichever team or evaluation they came
@@ -24,7 +25,8 @@ export default function AthleteHubPage() {
   }, [query]);
 
   const hubQuery = useAthleteHubQuery(search);
-  const athletes = useMemo(() => hubQuery.data?.pages.flatMap((p) => p.rows) ?? [], [hubQuery.data]);
+  // The same player added to several evaluations is several athlete records; show them once.
+  const athletes = useMemo(() => foldAthletes(hubQuery.data?.pages.flatMap((p) => p.rows) ?? []), [hubQuery.data]);
 
   return (
     <>
@@ -45,7 +47,7 @@ export default function AthleteHubPage() {
         <>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {athletes.map((a) => (
-              <Link key={a.id} href={`/player/${a.id}`}>
+              <Link key={a.id} href={`/player/${a.id}${a.alsoIds.length ? `?also=${a.alsoIds.join(',')}` : ''}`}>
                 <Card interactive className="flex items-center gap-3">
                   <Avatar first={a.first} last={a.last} pos={a.currentPosition} size={44} uri={a.avatarUrl} />
                   <div className="min-w-0 flex-1">
