@@ -199,6 +199,11 @@ describe('top performers, one row per person', () => {
     expect(top[0].overall).toBe(5);
   });
 
+  it('keeps one row for the same player on the overall board too', () => {
+    const top = buildReportSummary([copy('a', 'x1', 3), copy('b', 'x2', 5)]).topPerformers;
+    expect(top.filter((p) => p.name === 'Alfred Lau')).toHaveLength(1);
+  });
+
   it('keeps two same-named players apart when their birth years differ', () => {
     expect(topPerformersByRubric([copy('a', 'x1', 3, '2010'), copy('b', 'x2', 5, '2012')], 'skating')).toHaveLength(2);
   });

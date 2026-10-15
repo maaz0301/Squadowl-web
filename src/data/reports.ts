@@ -55,6 +55,38 @@ export interface ReportSummary {
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+/** How a roster entry is recognised as the same person on another evaluation. */
+function personKeys(
+  tryoutId: string,
+  player: { id: string; athleteId?: string; first: string; last: string; yearOfBirth?: string },
+) {
+  const own = `p:${tryoutId}:${player.id}`;
+  const name = `${player.first} ${player.last}`.trim().toLowerCase().replace(/\s+/g, ' ');
+  return {
+    person: player.athleteId ? `a:${player.athleteId}` : own,
+    // The same name and birth year is the same person even under two athlete records; without a year, stay apart.
+    nameKey: player.yearOfBirth ? `n:${name}|${player.yearOfBirth}` : own,
+  };
+}
+
+/**
+ * One person, one row: a player added to several evaluations (each filing its own athlete
+ * record) keeps only their best figure, instead of crowding a board with copies of themselves.
+ */
+function bestPerPerson<T extends { person: string; nameKey: string; overall: number }>(
+  items: T[],
+  lowerIsBetter: boolean,
+): T[] {
+  const better = (a: number, b: number) => (lowerIsBetter ? a < b : a > b);
+  const best = new Map<string, T>();
+  for (const item of items) {
+    const kept = best.get(item.person) ?? best.get(item.nameKey);
+    const winner = !kept || better(item.overall, kept.overall) ? item : kept;
+    for (const k of [item.person, item.nameKey, kept?.person, kept?.nameKey]) if (k) best.set(k, winner);
+  }
+  return [...new Set(best.values())];
+}
+
 /**
  * The numbers behind the Reports screen: how far along each evaluation is, how
  * its players are scoring, who is leading, and how the coaches' calls split.
@@ -69,7 +101,7 @@ export function buildReportSummary(tryouts: Tryout[], topLimit = 5): ReportSumma
     Undecided: 0,
   };
   const rows: EvaluationReportRow[] = [];
-  const everyone: TopPerformer[] = [];
+  const everyone: (TopPerformer & { person: string; nameKey: string })[] = [];
   let playerCount = 0;
   let scoredPlayerCount = 0;
   let scoresRecorded = 0;
@@ -92,6 +124,7 @@ export function buildReportSummary(tryouts: Tryout[], topLimit = 5): ReportSumma
         evaluationId: tryout.id,
         evaluationName: tryout.name,
         overall: r.overall,
+        ...personKeys(tryout.id, r.player),
       });
     }
 
@@ -125,7 +158,10 @@ export function buildReportSummary(tryouts: Tryout[], topLimit = 5): ReportSumma
     completion: playerCount ? scoredPlayerCount / playerCount : 0,
     recommendations,
     rows,
-    topPerformers: everyone.sort((a, b) => b.overall - a.overall).slice(0, topLimit),
+    topPerformers: bestPerPerson(everyone, false)
+      .sort((a, b) => b.overall - a.overall)
+      .slice(0, topLimit)
+      .map(({ person: _person, nameKey: _nameKey, ...leader }) => leader),
   };
 }
 
@@ -193,25 +229,12 @@ export function topPerformersByRubric(tryouts: Tryout[], key: string, topLimit =
         overall: Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100,
         unit: sub.unit,
         lower: sub.rankingDirection === 'lower_is_better',
-        person: player.athleteId ? `a:${player.athleteId}` : `p:${tryout.id}:${player.id}`,
-        // The same name and birth year is the same person even under two athlete records; without a year, stay apart.
-        nameKey: player.yearOfBirth
-          ? `n:${`${player.first} ${player.last}`.trim().toLowerCase().replace(/\s+/g, ' ')}|${player.yearOfBirth}`
-          : `p:${tryout.id}:${player.id}`,
+        ...personKeys(tryout.id, player),
       });
     }
   }
   const lower = leaders.length > 0 && leaders.every((l) => l.lower);
-  const better = (a: number, b: number) => (lower ? a < b : a > b);
-  // One person, one row: a player added to several evaluations (each filing its own athlete
-  // record) keeps only their best figure, instead of crowding the board with copies of themselves.
-  const best = new Map<string, (typeof leaders)[number]>();
-  for (const leader of leaders) {
-    const kept = best.get(leader.person) ?? best.get(leader.nameKey);
-    const winner = !kept || better(leader.overall, kept.overall) ? leader : kept;
-    for (const k of [leader.person, leader.nameKey, kept?.person, kept?.nameKey]) if (k) best.set(k, winner);
-  }
-  return [...new Set(best.values())]
+  return bestPerPerson(leaders, lower)
     .sort((a, b) => (lower ? a.overall - b.overall : b.overall - a.overall))
     .slice(0, topLimit)
     .map(({ lower: _lower, person: _person, nameKey: _nameKey, ...leader }) => leader);
