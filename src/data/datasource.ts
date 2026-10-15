@@ -72,6 +72,12 @@ export interface DataSource {
   // Tryouts
   listTryouts(includeArchived?: boolean): Promise<Tryout[]>;
   /**
+   * listTryouts() without the registrations. The Reports page draws scores and
+   * rosters only, and registrations are the one child read it never looks at,
+   * so leaving them out cuts a whole table scan from its load.
+   */
+  listTryoutsForReports(includeArchived?: boolean): Promise<Tryout[]>;
+  /**
    * Card-shaped tryouts for the list screens — see TryoutSummary. Prefer this
    * over listTryouts() anywhere the screen only draws names, dates and roster
    * counts; it skips the participant, athlete, evaluation, score and

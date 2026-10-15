@@ -9,7 +9,7 @@ import { HomePanel, PanelRow } from '@/components/home/HomePanel';
 import { NavPending } from '@/components/NavPending';
 import { useState } from 'react';
 
-import { useTeamsQuery, useTryoutsQuery, useTryoutSummariesQuery } from '@/features/queries';
+import { useReportTryoutsQuery, useTeamsQuery, useTryoutSummariesQuery } from '@/features/queries';
 import { useSessionStore } from '@/state/sessionStore';
 import { usePermissions, useUser } from '@/state/authStore';
 import {
@@ -42,7 +42,7 @@ export default function ReportsPage() {
   // heavy one carries every evaluation and score and fills in the numbers when it
   // lands. Waiting on the heavy one alone left a skeleton up for many seconds.
   const summariesQuery = useTryoutSummariesQuery(false);
-  const tryoutsQuery = useTryoutsQuery(false);
+  const tryoutsQuery = useReportTryoutsQuery(false);
 
   // A staff assessor's finished evaluations leave their list (same rule as the
   // Evaluations page); coaches and admins are never filtered.

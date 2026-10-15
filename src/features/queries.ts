@@ -510,6 +510,20 @@ export function useTryoutsQuery(includeArchived = false, enabled = true) {
 }
 
 /**
+ * The Reports page's read: every roster and every score, without the
+ * registrations it never shows. Keyed under `['tryouts', ...]` so the writes
+ * that already invalidate that prefix refresh it too. The read is the heaviest
+ * one in the app, so it gets an extra retry before the page reports a failure.
+ */
+export function useReportTryoutsQuery(includeArchived = false) {
+  return useQuery({
+    queryKey: [...queryKeys.tryouts(includeArchived), 'reports'] as const,
+    queryFn: () => getDataSource().listTryoutsForReports(includeArchived),
+    retry: 2,
+  });
+}
+
+/**
  * The list screens' tryout read — names, dates and roster counts, without the
  * rosters, evaluations, scores and registrations behind them. See
  * `listTryoutSummaries()`; use `useTryoutsQuery` only where a screen genuinely

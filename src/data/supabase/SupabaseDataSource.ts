@@ -1443,7 +1443,7 @@ export class SupabaseDataSource implements DataSource {
   }
 
   /** Assemble full Tryout objects for a set of tryout rows (batched relational fetch). */
-  private async assembleTryouts(tryoutRows: Row[]): Promise<Tryout[]> {
+  private async assembleTryouts(tryoutRows: Row[], opts: { registrations?: boolean } = {}): Promise<Tryout[]> {
     if (tryoutRows.length === 0) return [];
     const supabase = getSupabase();
     // Who is asking — every assembled tryout carries `viewerIsOwner`, and the
@@ -1471,7 +1471,9 @@ export class SupabaseDataSource implements DataSource {
       ),
       fetchAllByIn(supabase, 'tryout_assessors', '*', 'tryout_id', ids),
       this.fetchEvaluationsForTryouts(supabase, ids),
-      fetchAllByIn(supabase, 'registrations', '*', 'tryout_id', ids),
+      opts.registrations === false
+        ? Promise.resolve<Row[]>([])
+        : fetchAllByIn(supabase, 'registrations', '*', 'tryout_id', ids),
     ]);
 
     const assessorNameById: Record<string, string> = {};
@@ -1488,6 +1490,13 @@ export class SupabaseDataSource implements DataSource {
     const rByT = byTryout(rRows);
 
     // Deduplicate evals by participant_id, evaluator_user_id, and session to hide existing corrupted duplicates
+    // Each row's timestamp is parsed once, not again on every comparison.
+    const createdMs = new Map<Row, number>();
+    const createdAt = (r: Row) => {
+      let ms = createdMs.get(r);
+      if (ms === undefined) createdMs.set(r, (ms = Date.parse(r.created_at)));
+      return ms;
+    };
     for (const tryoutId of Object.keys(eByT)) {
       const uniqueEvals = new Map<string, Row>();
       for (const e of eByT[tryoutId]) {
@@ -1501,7 +1510,7 @@ export class SupabaseDataSource implements DataSource {
         if (
           !existing ||
           currentScoresLen > existingScoresLen ||
-          (currentScoresLen === existingScoresLen && new Date(e.created_at) > new Date(existing.created_at))
+          (currentScoresLen === existingScoresLen && createdAt(e) > createdAt(existing))
         ) {
           uniqueEvals.set(key, e);
         }
@@ -3340,6 +3349,10 @@ export class SupabaseDataSource implements DataSource {
 
   async listTryouts(includeArchived = false): Promise<Tryout[]> {
     return this.assembleTryouts(await this.fetchVisibleTryoutRows(includeArchived));
+  }
+
+  async listTryoutsForReports(includeArchived = false): Promise<Tryout[]> {
+    return this.assembleTryouts(await this.fetchVisibleTryoutRows(includeArchived), { registrations: false });
   }
 
   /**
