@@ -1,17 +1,44 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import { useLibraryQuery } from '@/features/queries';
+import { useLibraryQuery, useSearchAthletesQuery } from '@/features/queries';
+import { foldAthletes } from '@/data/duplicates';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
-/** Library videos tagged to this player. Hidden when there are none. */
-export function TaggedVideos({ athleteId }: { athleteId: string | undefined }) {
+
+/** Who the report card is for, to find their other athlete records by name. */
+export interface TaggedPerson {
+  first: string;
+  last: string;
+}
+
+/**
+ * Every athlete record that is this same person. A player added to several
+ * evaluations has several records, and a video can be tagged to any one of them,
+ * so a report card looks for tags on all of them, not only on its own record.
+ */
+function useSamePersonIds(athleteId: string | undefined, person: TaggedPerson | undefined, needed: boolean): Set<string> {
+  const same = useSearchAthletesQuery(needed && person ? `${person.first} ${person.last}` : '');
+  return useMemo(() => {
+    const ids = new Set<string>(athleteId ? [athleteId] : []);
+    if (!athleteId) return ids;
+    const group = foldAthletes(same.data ?? []).find((g) => g.id === athleteId || g.alsoIds.includes(athleteId));
+    if (group) for (const id of [group.id, ...group.alsoIds]) ids.add(id);
+    return ids;
+  }, [athleteId, same.data]);
+}
+
+/** Library videos tagged to this player, on any of their athlete records. Hidden when there are none. */
+export function TaggedVideos({ athleteId, person }: { athleteId: string | undefined; person?: TaggedPerson }) {
   const colors = useThemeColors();
   const library = useLibraryQuery({ enabled: !!athleteId });
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const videos = (library.data ?? []).filter((i) => i.kind === 'video' && !!athleteId && i.athleteId === athleteId);
+  const tagged = (library.data ?? []).filter((i) => i.kind === 'video' && !!i.athleteId);
+  // Only look for other records when a video is tagged to one that isn't this one.
+  const ids = useSamePersonIds(athleteId, person, !!athleteId && tagged.some((i) => i.athleteId !== athleteId));
+  const videos = tagged.filter((i) => ids.has(i.athleteId as string));
   if (!videos.length) return null;
 
   return (

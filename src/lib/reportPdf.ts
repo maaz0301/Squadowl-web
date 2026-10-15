@@ -25,6 +25,8 @@ export interface ReportContent {
   assessor: boolean;
   /** When each evaluation was done. */
   date: boolean;
+  /** The player's position (and level), which a coach who already knows it can leave off to save room. */
+  position: boolean;
 }
 
 export const DEFAULT_REPORT_CONTENT: ReportContent = {
@@ -33,6 +35,7 @@ export const DEFAULT_REPORT_CONTENT: ReportContent = {
   comments: true,
   assessor: true,
   date: true,
+  position: true,
 };
 
 /** Player cards (one or several to a page), or a compact list: names, scores and ranking only. */
@@ -324,7 +327,7 @@ function drawCompactCard(
   let y = yTop - pad - 11;
 
   // Name, with jersey/position on the right when there is room.
-  const meta = pdfSafe(`#${card.jersey || '-'} | ${card.pos || '-'} | Evals ${card.evalCount}`);
+  const meta = pdfSafe(content.position ? `#${card.jersey || '-'} | ${card.pos || '-'} | Evals ${card.evalCount}` : `#${card.jersey || '-'} | Evals ${card.evalCount}`);
   const metaW = font.widthOfTextAtSize(meta, 7.5);
   page.drawText(fitText(card.name, bold, 11, innerW - metaW - 8), { x: innerX, y, size: 11, font: bold, color: BLACK });
   page.drawText(meta, { x: innerX + innerW - metaW, y: y + 1, size: 7.5, font, color: GRAY });
@@ -427,7 +430,7 @@ export function renderListResults(
 
   const rankW = content.ranking ? 44 : 0;
   const nameW = 136;
-  const posW = 70;
+  const posW = content.position ? 70 : 0;
   const overallW = 54;
   const metricW = 48;
   const fixedW = rankW + nameW + posW + overallW;
@@ -491,7 +494,7 @@ export function renderListResults(
         page.drawText(fitText(text.toUpperCase(), bold, HEAD_SIZE + 1, w - 4), { x, y: headTop - HEAD_SIZE, size: HEAD_SIZE + 1, font: bold, color: GRAY });
       if (content.ranking) head('Rank', colX.rank, rankW);
       head('Player', colX.name, nameW);
-      head('Pos', colX.pos, posW);
+      if (content.position) head('Pos', colX.pos, posW);
       head('Overall', colX.overall, overallW);
       chunk.forEach((label, i) => {
         wrapHead(label, metricW - 4).forEach((line, li) => {
@@ -510,7 +513,7 @@ export function renderListResults(
           page.drawText(fitText(card.overallRank || '-', font, 9, rankW - 4), { x: colX.rank, y, size: 9, font, color: GRAY });
         }
         page.drawText(fitText(card.name, bold, 9, nameW - 6), { x: colX.name, y, size: 9, font: bold, color: BLACK });
-        page.drawText(fitText(card.pos || '-', font, 9, posW - 4), { x: colX.pos, y, size: 9, font, color: BLACK });
+        if (content.position) page.drawText(fitText(card.pos || '-', font, 9, posW - 4), { x: colX.pos, y, size: 9, font, color: BLACK });
         page.drawText(fitText(card.overallScore || '-', bold, 10, overallW - 4), { x: colX.overall, y, size: 10, font: bold, color: BLUE });
         chunk.forEach((label, ci) => {
           const m = card.metrics.find((x) => x.label === label);

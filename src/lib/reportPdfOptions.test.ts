@@ -52,7 +52,7 @@ describe('report PDF options', () => {
   });
 
   it('every content toggle off still renders in each layout', async () => {
-    const off = { rubricScores: false, ranking: false, comments: false, assessor: false, date: false };
+    const off = { rubricScores: false, ranking: false, comments: false, assessor: false, date: false, position: false };
     for (const opts of [{ playersPerPage: 1 as const }, { playersPerPage: 4 as const }, { layout: 'list' as const }, { continuous: true }]) {
       expect(await pages(await renderFullResultsPdf(tryout(6), { ...opts, content: off }))).toBeGreaterThan(0);
     }

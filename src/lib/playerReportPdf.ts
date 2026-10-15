@@ -166,10 +166,15 @@ export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promis
   header('BENCHMARK', benchX);
   header('RANK', rankX);
   y -= 14;
-  const rows = card.metrics.map((m) => ({ label: m.label, actual: m.actual || m.score, benchmark: m.benchmark ?? '', met: m.met, rank: m.rank }));
+  // A category of several rubrics prints its pooled score, then each drill beneath it with its own result.
+  const rows = card.metrics.flatMap((m) => [
+    { label: m.label, actual: m.actual || m.score, benchmark: m.benchmark ?? '', met: m.met, rank: m.rank, indent: false },
+    ...(m.children ?? []).map((c) => ({ label: c.label, actual: c.actual || c.score, benchmark: c.benchmark ?? '', met: c.met, rank: c.rank, indent: true })),
+  ]);
   rows.forEach((m) => {
     ensure(15);
-    page.drawText(pdfSafe(m.label.length > 34 ? `${m.label.slice(0, 33)}...` : m.label), { x: MARGIN, y, size: 10, font, color: BLACK });
+    const maxLabel = m.indent ? 30 : 34;
+    page.drawText(pdfSafe(m.label.length > maxLabel ? `${m.label.slice(0, maxLabel - 1)}...` : m.label), { x: MARGIN + (m.indent ? 12 : 0), y, size: m.indent ? 9 : 10, font, color: m.indent ? GRAY : BLACK });
     page.drawText(pdfSafe(m.actual || '-'), { x: resultX, y, size: 10, font: bold, color: m.met ? GREEN : BLACK });
     page.drawText(pdfSafe(m.benchmark || '-'), { x: benchX, y, size: 10, font, color: m.benchmark ? BLACK : GRAY });
     page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font, color: BLACK });

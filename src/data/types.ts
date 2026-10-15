@@ -1520,6 +1520,8 @@ export interface ReportCardAttachment {
   contentType?: string;
   /** Short-lived signed address for an uploaded file. */
   signedUrl?: string;
+  /** The Library video this was picked from. A stored video is attached by reference only. */
+  libraryItemId?: string;
 }
 
 export interface PlayerReportCard {

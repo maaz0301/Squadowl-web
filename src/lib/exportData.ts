@@ -148,7 +148,7 @@ export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOption
       }
     }
 
-    const meta = pdfSafe(`#${card.jersey || '-'} • ${card.pos || '-'} • Shoots ${card.shoots || '-'} • Evals ${card.evalCount}`);
+    const meta = pdfSafe([`#${card.jersey || '-'}`, ...(content.position ? [card.pos || '-'] : []), `Shoots ${card.shoots || '-'}`, `Evals ${card.evalCount}`].join(' • '));
     page.drawText(pdfSafe(card.name), { x: MARGIN, y, size: 15, font: fontBold, color: BLACK });
     const metaWidth = font.widthOfTextAtSize(meta, 9);
     page.drawText(meta, { x: PAGE_WIDTH - MARGIN - metaWidth, y: y + 3, size: 9, font, color: GRAY });

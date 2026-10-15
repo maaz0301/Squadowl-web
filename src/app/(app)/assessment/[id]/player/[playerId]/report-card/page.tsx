@@ -27,6 +27,7 @@ import { PlanGate } from '@/components/PlanGate';
 import {
   useDeletePlayerReportCardMutation,
   useGenerateReportCardCommentsMutation,
+  useLibraryQuery,
   usePlayerReportCardsQuery,
   useSavePlayerReportCardMutation,
   useTeamsQuery,
@@ -40,6 +41,7 @@ import { benchmarkLines } from '@/data/benchmarks';
 import { playerDisplayName } from '@/data/rubrics';
 import type { PlayerReportCard, ReportCardAttachment } from '@/data/types';
 import { formatAiComments } from '@/lib/reportCardText';
+import { addLibraryVideos } from '@/lib/reportCardLibrary';
 import { formatFileSize, safeExternalUrl } from '@/lib/libraryMedia';
 import { useTerms } from '@/lib/terms';
 
@@ -75,6 +77,9 @@ export default function PlayerReportCardPage() {
   const [coachComments, setCoachComments] = useState('');
   const [aiComments, setAiComments] = useState('');
   const [kept, setKept] = useState<ReportCardAttachment[]>([]);
+  const [pickingLibrary, setPickingLibrary] = useState(false);
+  const [libraryPick, setLibraryPick] = useState<Set<string>>(new Set());
+  const library = useLibraryQuery({ enabled: pickingLibrary || kept.some((a) => a.libraryItemId) });
   const [files, setFiles] = useState<File[]>([]);
   const [linkName, setLinkName] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
@@ -193,6 +198,20 @@ export default function PlayerReportCardPage() {
     setKept((prev) => [...prev, { kind: linkIsVideo ? 'video' : 'link', name: linkName.trim() || url, url }]);
     setLinkName('');
     setLinkUrl('');
+  };
+
+  const libraryVideos = (library.data ?? []).filter((i) => i.kind === 'video');
+
+  /** Where a saved attachment opens; a stored Library video plays from the Library's own signed address. */
+  const openHref = (a: ReportCardAttachment) =>
+    a.signedUrl ?? a.url ?? (a.libraryItemId ? (library.data ?? []).find((i) => i.id === a.libraryItemId)?.video?.url : undefined);
+
+  const addFromLibrary = async () => {
+    const r = addLibraryVideos(kept, libraryVideos.filter((i) => libraryPick.has(i.id)));
+    setKept(r.next);
+    setLibraryPick(new Set());
+    setPickingLibrary(false);
+    if (r.unplayable) await alert('Some videos were skipped', `${r.unplayable} chosen video${r.unplayable === 1 ? ' has' : 's have'} nothing to play yet.`);
   };
 
   const runAi = async () => {
@@ -387,12 +406,12 @@ export default function PlayerReportCardPage() {
               </span>
               <span className="text-right">{reportCard.overallRank || '-'}</span>
             </div>
-            {reportCard.metrics.map((m) => {
+            {reportCard.metrics.flatMap((m) => [{ ...m, indent: false }, ...(m.children ?? []).map((c) => ({ ...c, indent: true }))]).map((m) => {
               const note = benchmarks.find((b) => b.label === m.label)?.note;
               return (
-                <div key={m.label} className="border-b py-1" style={{ borderColor: colors.border }}>
+                <div key={`${m.indent ? 'drill' : 'cat'}:${m.label}`} className="border-b py-1" style={{ borderColor: colors.border }}>
                   <div className="grid grid-cols-[1fr_5.5rem_5.5rem_3.5rem] gap-2">
-                    <span>{m.label}</span>
+                    <span className={m.indent ? 'pl-3 text-sm' : undefined} style={m.indent ? { color: colors.inkMuted } : undefined}>{m.label}</span>
                     <span className="text-right font-bold" style={{ color: m.met ? colors.success : colors.ink }}>
                       {m.actual || m.score}
                     </span>
@@ -458,9 +477,9 @@ export default function PlayerReportCardPage() {
             {kept.map((a, i) => (
               <div key={`k-${i}`} className="flex items-center justify-between gap-2 text-sm" style={{ color: colors.ink }}>
                 <span className="min-w-0 flex-1 truncate">
-                  {a.kind === 'video' ? 'Video' : a.kind === 'link' ? 'Link' : 'File'}: {a.signedUrl || a.url ? (
+                  {a.kind === 'video' ? 'Video' : a.kind === 'link' ? 'Link' : 'File'}: {openHref(a) ? (
                     <a
-                      href={a.signedUrl ?? a.url}
+                      href={openHref(a)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline"
@@ -471,6 +490,9 @@ export default function PlayerReportCardPage() {
                   ) : (
                     a.name
                   )}
+                  {a.libraryItemId && !a.url ? (
+                    <span style={{ color: colors.inkMuted }}> (from your Library, plays in the app, not linked in the PDF)</span>
+                  ) : null}
                 </span>
                 <Button label="Remove" size="sm" variant="ghost" onClick={() => setKept((p) => p.filter((_, j) => j !== i))} />
               </div>
@@ -497,11 +519,52 @@ export default function PlayerReportCardPage() {
           }}
         />
         <div>
-          <Button label="Upload a file" variant="secondary" onClick={() => fileInput.current?.click()} />
+          <div className="flex flex-wrap gap-2">
+            <Button label="Upload a file" variant="secondary" onClick={() => fileInput.current?.click()} />
+            <Button label="Add from your Library" variant="secondary" onClick={() => setPickingLibrary((v) => !v)} />
+          </div>
           <p className="mt-1 text-xs" style={{ color: colors.inkMuted }}>
             Files up to 50 MB each. Videos are added under Stored videos once the card is saved, or add a link below.
           </p>
         </div>
+        {pickingLibrary ? (
+          <div className="flex flex-col gap-2 rounded-xl border p-3" style={{ borderColor: colors.border }}>
+            <SectionLabel>Library videos</SectionLabel>
+            {library.isLoading ? (
+              <p className="text-sm" style={{ color: colors.inkMuted }}>Loading your Library...</p>
+            ) : libraryVideos.length === 0 ? (
+              <p className="text-sm" style={{ color: colors.inkMuted }}>No videos in your Library yet.</p>
+            ) : (
+              libraryVideos.map((v) => {
+                const already = kept.some((a) => a.libraryItemId === v.id);
+                return (
+                  <label key={v.id} className="flex items-center gap-2 text-sm" style={{ color: already ? colors.inkMuted : colors.ink }}>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      disabled={already}
+                      checked={already || libraryPick.has(v.id)}
+                      onChange={(e) =>
+                        setLibraryPick((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(v.id);
+                          else next.delete(v.id);
+                          return next;
+                        })
+                      }
+                    />
+                    <span className="min-w-0 flex-1 truncate">{v.title}</span>
+                    {already ? <span className="text-xs">Added</span> : null}
+                  </label>
+                );
+              })
+            )}
+            <div className="flex gap-2">
+              <Button label={libraryPick.size ? `Add ${libraryPick.size} video${libraryPick.size === 1 ? '' : 's'}` : 'Add videos'} size="sm" onClick={addFromLibrary} disabled={libraryPick.size === 0} />
+              <Button label="Cancel" size="sm" variant="ghost" onClick={() => { setPickingLibrary(false); setLibraryPick(new Set()); }} />
+            </div>
+          </div>
+        ) : null}
         <div className="grid gap-2 sm:grid-cols-2">
           <Input label="Link name" value={linkName} onChange={(e) => setLinkName(e.target.value)} placeholder="Game 3 highlights" />
           <Input
@@ -523,7 +586,7 @@ export default function PlayerReportCardPage() {
       </Card>
 
       <Card className="flex flex-col gap-3">
-        <TaggedVideos athleteId={player.athleteId} />
+        <TaggedVideos athleteId={player.athleteId} person={{ first: player.first, last: player.last }} />
         {editingId ? (
           <ContextVideos
             context="report_card"

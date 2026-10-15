@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 
 import { Button, FieldShell, Input } from '@/components/ui';
 import { useSearchAthletesQuery } from '@/features/queries';
+import { foldAthletes } from '@/data/duplicates';
 import type { Athlete } from '@/data/types';
 import { useThemeColors } from '@/theme/ThemeProvider';
 
@@ -28,7 +29,8 @@ export function PlayerTagField({ value, onChange }: { value: string | null; onCh
   const [chosen, setChosen] = useState<Athlete | null>(null);
 
   const typed = query.trim().length >= 2;
-  const matches = typed ? (search.data ?? []).slice(0, MAX_RESULTS) : [];
+  // One entry per person: a player on several evaluations has several athlete records.
+  const matches = typed ? foldAthletes(search.data ?? []).slice(0, MAX_RESULTS) : [];
   const searching = typed && (term !== query || search.isFetching);
   const shown = chosen && chosen.id === value ? chosen : null;
 

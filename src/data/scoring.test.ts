@@ -63,3 +63,39 @@ describe('measured tests held at the best benchmark', () => {
     expect(order).toEqual(['Adams', 'Young', 'Zane']);
   });
 });
+
+describe('a category of several drills on the report card', () => {
+  const grouped = (): Tryout => {
+    const roster = [
+      { id: 'p1', first: 'Evelyn', last: 'Lau', pos: 'FWD' },
+      { id: 'p2', first: 'Baran', last: 'Kha', pos: 'FWD' },
+    ] as Player[];
+    const ev = (pid: string, scores: Record<string, number>) =>
+      ({ id: `e${pid}`, playerId: pid, evaluator: 'Coach', session: 'Session 1', date: '2026-09-10', scores, createdAt: 1 }) as unknown as Evaluation;
+    const drill = (key: string, label: string) =>
+      ({ key, label, category: 'Plyometrics', scoringType: 'distance', unit: 'in', minVal: 10, maxVal: 40, rankingDirection: 'higher_is_better', role: 'all' });
+    return {
+      id: 't1', name: 'OVR', createdAt: 0, updatedAt: 0, eventType: 'Tryout', sport: 'Hockey', assessors: [], roster,
+      evals: [ev('p1', { v2: 30, v1r: 22, 'v1l~na': 0 }), ev('p2', { v2: 20, v1r: 28 })],
+      settings: {
+        skaterWeights: { Plyometrics: 1 }, goalieWeights: { Plyometrics: 1 },
+        customRubrics: [drill('v2', 'Vertical Jump 2FT'), drill('v1r', 'Vertical Jump 1FT Right'), drill('v1l', 'Vertical Jump 1FT Left')],
+      },
+      archived: false, viewerIsOwner: true,
+    } as unknown as Tryout;
+  };
+
+  it('lists each drill beneath the pooled category line, with its own result and rank', () => {
+    const evelyn = buildPlayerFullResults(grouped()).find((c) => c.name.startsWith('Evelyn'))!;
+    const [cat] = evelyn.metrics;
+    expect(cat.label).toBe('Plyometrics');
+    expect(cat.children?.map((c) => c.label)).toEqual(['Vertical Jump 2FT', 'Vertical Jump 1FT Right', 'Vertical Jump 1FT Left']);
+    expect(cat.children![0]).toMatchObject({ actual: '30 in', rank: '1/2' });
+    expect(cat.children![1]).toMatchObject({ actual: '22 in', rank: '2/2' });
+  });
+
+  it('prints a drill marked did not attempt as N/A', () => {
+    const evelyn = buildPlayerFullResults(grouped()).find((c) => c.name.startsWith('Evelyn'))!;
+    expect(evelyn.metrics[0].children![2]).toMatchObject({ actual: 'N/A', notAttempted: true });
+  });
+});

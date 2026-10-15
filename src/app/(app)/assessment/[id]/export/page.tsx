@@ -309,6 +309,7 @@ export default function ExportPage() {
                   Show on the report
                 </span>
                 <Switch checked={content.rubricScores} onChange={setContentFlag('rubricScores')} label="Individual rubric scores" />
+                <Switch checked={content.position} onChange={setContentFlag('position')} label="Position / level" />
                 <Switch checked={content.ranking} onChange={setContentFlag('ranking')} label="Overall ranking" />
                 <Switch
                   checked={content.comments}

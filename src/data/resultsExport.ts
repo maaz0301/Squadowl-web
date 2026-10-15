@@ -6,6 +6,7 @@ import type { Evaluation, Player, RankingDirection, ScoringType, Tryout } from '
 import { compareResultsBestFirst, computePlayerResults } from './scoring';
 import {
   binaryLabels,
+  categoryAverageAcrossEvals,
   getPlayerCategories,
   type SubSkill,
   getPlayerSubskills,
@@ -55,6 +56,8 @@ export interface FullResultsMetric {
   benchmark?: string;
   /** Whether the average reaches the benchmark, null when there is nothing to compare. */
   met?: boolean | null;
+  /** For a category that groups several rubrics: each rubric's own result, so a coach sees the drills and not only the pooled score. */
+  children?: FullResultsMetric[];
 }
 
 export interface FullResultsEvalValue {
@@ -485,10 +488,26 @@ export function buildPlayerFullResults(
     return playerDisplayName(a).localeCompare(playerDisplayName(b));
   });
 
+  /** Rank among the roster on one rubric of a grouped category, worked out once per rubric. */
+  const subRankCache = new Map<string, Map<string, string>>();
+  const subRanks = (sub: SubSkill) => {
+    let ranks = subRankCache.get(sub.key);
+    if (!ranks) {
+      ranks = rankLabels(
+        playerIds,
+        (id) => categoryAverageAcrossEvals(evalsByPlayer.get(id) ?? [], [sub]) ?? undefined,
+        sub.rankingDirection,
+      );
+      subRankCache.set(sub.key, ranks);
+    }
+    return ranks;
+  };
+
   return ordered.map((player) => {
     const r = resultsById.get(player.id)!;
     const playerEvals = evalsByPlayer.get(player.id) ?? [];
     const evalColumns = playerColumns(tryout, player);
+    const playerCategories = getPlayerCategories(tryout.sport, player.pos, tryout.settings.customRubrics);
 
     // A single-rubric test with no result in any evaluation, but marked as not attempted in at
     // least one, still gets a line (N/A) so the report says it was skipped rather than leaving it out.
@@ -506,7 +525,36 @@ export function buildPlayerFullResults(
         // A measured test with no min and max has no 1-5 score, so the table would print its raw
         // figure as a bare number (273.00 for 4:33, 14.60 with no unit). Print it as it was read instead.
         const rawShown = isMetricScoringType(c.scoringType as ScoringType) && c.ranged === false && actual != null;
+        // A category of several rubrics (Plyometrics: three jumps) is one pooled score on its own line;
+        // the individual drills follow beneath it with their own results, ranks and benchmarks.
+        const drills = (playerCategories.find((cat) => cat.key === c.key)?.subskills ?? []).length > 1
+          ? playerCategories.find((cat) => cat.key === c.key)!.subskills
+          : [];
+        const children: FullResultsMetric[] = [];
+        for (const d of drills) {
+          const score = categoryAverageAcrossEvals(playerEvals, [d]);
+          const naOnly = score == null && playerEvals.some((e) => e.scores?.[notAttemptedKey(d.key)] !== undefined);
+          if (score == null && !naOnly) continue;
+          if (score == null) {
+            children.push({ label: d.label, abbr: abbreviateLabel(d.label), score: '', rank: '', actual: 'N/A', display: 'N/A', benchmark: '', met: null, notAttempted: true });
+            continue;
+          }
+          const col: ResultsExportColumn = { key: d.key, label: d.label, scoringType: d.scoringType, unit: d.unit, scale: d.scale, benchmark: d.benchmark, rawKey: d.key, rankingDirection: d.rankingDirection };
+          const dActual = actualAverage(col, playerEvals);
+          const dInfo = { scoringType: d.scoringType as ScoringType, scale: d.scale, unit: d.unit };
+          const dLower = d.rankingDirection === 'lower_is_better';
+          children.push({
+            label: d.label,
+            abbr: abbreviateLabel(d.label),
+            score: formatScore2(score),
+            rank: subRanks(d).get(player.id) ?? '',
+            actual: isBinaryScoringType(d.scoringType) ? binaryActual(col, playerEvals) : dActual == null ? '' : formatBenchmarkValue(dInfo, dActual),
+            benchmark: d.benchmark != null ? formatBenchmarkValue(dInfo, d.benchmark) : '',
+            met: dActual == null || d.benchmark == null ? null : dLower ? dActual <= d.benchmark : dActual >= d.benchmark,
+          });
+        }
         return {
+          ...(children.length ? { children } : {}),
           label: c.label,
           abbr: abbreviateLabel(c.label),
           score: formatScore2(r.categoryScores[c.key]),
