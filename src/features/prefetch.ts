@@ -91,7 +91,7 @@ export function prefetchSearch(): void {
  * here of anywhere.
  */
 export function prefetchTryout(id: string): void {
-  warm(queryKeys.tryout(id), () => getDataSource().getTryout(id));
+  warm(queryKeys.tryout(id), () => getDataSource().getTryout(id, { registrations: false }));
 }
 
 /**

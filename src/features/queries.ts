@@ -577,7 +577,8 @@ export function useAssignedTryoutSummariesQuery(enabled = true) {
 export function useTryoutQuery(id: string | undefined) {
   return useQuery({
     queryKey: queryKeys.tryout(id ?? ''),
-    queryFn: () => getDataSource().getTryout(id!),
+    // The assessment pages never show registrations (the Registrations page has its own query), so leave them out.
+    queryFn: () => getDataSource().getTryout(id!, { registrations: false }),
     enabled: !!id,
   });
 }

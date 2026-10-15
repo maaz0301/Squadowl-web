@@ -28,7 +28,7 @@ describe('libraryVideoAttachment', () => {
   });
 
   it('ignores non-videos, non-web addresses and empty items', () => {
-    expect(libraryVideoAttachment(item({ kind: 'link' as any, url: 'https://a.com' }))).toBeNull();
+    expect(libraryVideoAttachment(item({ kind: 'link' as LibraryItem['kind'], url: 'https://a.com' }))).toBeNull();
     expect(libraryVideoAttachment(item({ url: 'javascript:alert(1)' }))).toBeNull();
     expect(libraryVideoAttachment(item({}))).toBeNull();
   });

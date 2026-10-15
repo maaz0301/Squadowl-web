@@ -51,3 +51,43 @@ export function withoutAnyNotAttempted(scores: Scores, rubricKeys: string[]): Re
   return rubricKeys.reduce<Record<string, number>>((acc, k) => (isNotAttempted(acc, k) ? withoutScore(acc, k) : acc), { ...(scores ?? {}) });
 }
 
+
+/** When an evaluation was last touched: its last edit, or its creation if never edited. */
+const touchedAt = (e: { createdAt: number; updatedAt?: number }): number => e.updatedAt ?? e.createdAt;
+
+/**
+ * A player's results are pooled across every session, so a value imported or scored earlier kept
+ * counting after a coach later marked that same test "did not attempt" in another session. This
+ * lets the newest word win: where an evaluation marks a test as not attempted, the same player's
+ * older evaluations lose their result for that test. Evaluations are returned as new objects only
+ * when something changed; a newer result in a later session still counts, as before.
+ */
+export function applyNewerNotAttempted<E extends { id: string; playerId: string; scores: Record<string, number>; createdAt: number; updatedAt?: number }>(
+  evals: E[],
+): E[] {
+  const byPlayer = new Map<string, E[]>();
+  for (const e of evals) {
+    const list = byPlayer.get(e.playerId);
+    if (list) list.push(e);
+    else byPlayer.set(e.playerId, [e]);
+  }
+  const trimmed = new Map<string, Record<string, number>>();
+  for (const list of byPlayer.values()) {
+    if (list.length < 2) continue;
+    for (const marked of list) {
+      for (const markerKey of Object.keys(marked.scores)) {
+        if (!markerKey.endsWith(NOT_ATTEMPTED_SUFFIX)) continue;
+        const key = markerKey.slice(0, -NOT_ATTEMPTED_SUFFIX.length);
+        if (marked.scores[key] != null) continue;
+        for (const older of list) {
+          if (older === marked || touchedAt(older) >= touchedAt(marked)) continue;
+          const current = trimmed.get(older.id) ?? older.scores;
+          if (current[key] == null) continue;
+          const { [key]: _dropped, ...rest } = current;
+          trimmed.set(older.id, rest);
+        }
+      }
+    }
+  }
+  return trimmed.size ? evals.map((e) => (trimmed.has(e.id) ? { ...e, scores: trimmed.get(e.id)! } : e)) : evals;
+}

@@ -99,7 +99,8 @@ export interface DataSource {
   rejectAssignedTryout(tryoutId: string): Promise<void>;
   /** An invited assessor ends their session: drops off their hub, the evaluation's data is untouched. */
   completeAssignedTryout(tryoutId: string): Promise<void>;
-  getTryout(id: string): Promise<Tryout | null>;
+  /** `registrations: false` leaves the registrations out: the assessment screens never show them, and a QR link can bring thousands. */
+  getTryout(id: string, opts?: { registrations?: boolean }): Promise<Tryout | null>;
   createTryout(form: CreateAssessmentForm): Promise<Tryout>;
   updateTryout(id: string, updates: Partial<Tryout>): Promise<Tryout>;
   /**
