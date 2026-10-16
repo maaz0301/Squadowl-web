@@ -21,6 +21,13 @@ export interface PlayerReportPdfInput {
   attachments: { kind: 'file' | 'video' | 'link'; name: string; url?: string }[];
   /** The coach's rubric benchmarks beside this player's own results; the section is left out when empty. */
   benchmarks?: BenchmarkLine[];
+  /** Name of the evaluation `card` comes from; printed above its scores when other evaluations follow. */
+  evaluationName?: string;
+  /**
+   * Other evaluations combined onto the card. Each prints under its own heading with its own
+   * ranks; scores are never blended across evaluations.
+   */
+  extras?: { name: string; card: PlayerFullResults; benchmarks?: BenchmarkLine[] }[];
   logoUrls?: string[];
 }
 
@@ -145,66 +152,82 @@ export async function renderPlayerReportPdf(input: PlayerReportPdfInput): Promis
   });
   y -= 24;
 
-  // ── Scores ────────────────────────────────────────────────────────────────
-  // The player's place among everyone scored, then each rubric's raw result, its
-  // benchmark and the rank on that rubric alone. No blended overall score.
-  heading('Scoring and Ranking');
-  if (card.overallRank) {
-    const [place, outOf] = card.overallRank.split('/');
-    ensure(24);
-    page.drawText('Overall rank (all rubrics)', { x: MARGIN, y, size: 10, font: bold, color: GRAY });
-    page.drawText(pdfSafe(outOf ? `${place} of ${outOf}` : card.overallRank), { x: MARGIN + 200, y: y - 1, size: 13, font: bold, color: BLUE });
-    y -= 22;
-  }
-  const resultX = MARGIN + 200;
-  const benchX = MARGIN + 290;
-  const rankX = MARGIN + 400;
-  const header = (t: string, x: number) => page.drawText(t, { x, y, size: 8, font: bold, color: GRAY });
-  ensure(16);
-  header('RUBRIC', MARGIN);
-  header('RAW SCORE', resultX);
-  header('BENCHMARK', benchX);
-  header('RANK', rankX);
-  y -= 14;
-  // A category of several rubrics prints its pooled score, then each drill beneath it with its own result.
-  const rows = card.metrics.flatMap((m) => [
-    { label: m.label, actual: m.actual || m.score, benchmark: m.benchmark ?? '', met: m.met, rank: m.rank, indent: false },
-    ...(m.children ?? []).map((c) => ({ label: c.label, actual: c.actual || c.score, benchmark: c.benchmark ?? '', met: c.met, rank: c.rank, indent: true })),
-  ]);
-  rows.forEach((m) => {
-    ensure(15);
-    const maxLabel = m.indent ? 30 : 34;
-    page.drawText(pdfSafe(m.label.length > maxLabel ? `${m.label.slice(0, maxLabel - 1)}...` : m.label), { x: MARGIN + (m.indent ? 12 : 0), y, size: m.indent ? 9 : 10, font, color: m.indent ? GRAY : BLACK });
-    page.drawText(pdfSafe(m.actual || '-'), { x: resultX, y, size: 10, font: bold, color: m.met ? GREEN : BLACK });
-    page.drawText(pdfSafe(m.benchmark || '-'), { x: benchX, y, size: 10, font, color: m.benchmark ? BLACK : GRAY });
-    page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font, color: BLACK });
-    y -= 15;
-  });
-  const notes = (input.benchmarks ?? []).filter((b) => b.note);
-  if (notes.length) {
-    y -= 4;
-    for (const b of notes) paragraph(`${b.label}: ${b.note}`, { size: 8.5, color: GRAY, gap: 11 });
-  }
-
-  if (card.recommendation) {
-    y -= 4;
-    paragraph(`Recommendation: ${card.recommendation}`, { size: 10, color: BLUE });
-  }
-
-  // ── Evaluations ───────────────────────────────────────────────────────────
-  if (card.evals.length) {
-    heading('Evaluations included');
-    for (const ev of card.evals) {
-      ensure(40);
-      paragraph(`Evaluation ${ev.index}: ${ev.date} | ${ev.evaluator} | ${ev.session}`, { size: 9.5, f: bold, gap: 12 });
-      paragraph(ev.values.map((v) => `${v.abbr}: ${v.text || '-'}`).join('   '), { size: 8.5, color: GRAY, gap: 11 });
-      const notes = [
-        ev.strengths ? `Strengths: ${ev.strengths}` : '',
-        ev.improve ? `To work on: ${ev.improve}` : '',
-      ].filter(Boolean);
-      for (const n of notes) paragraph(n, { size: 8.5, gap: 11 });
-      y -= 5;
+  const drawScores = (card: PlayerFullResults, benchmarkLines: BenchmarkLine[] | undefined, label: string) => {
+    // ── Scores ────────────────────────────────────────────────────────────────
+    // The player's place among everyone scored, then each rubric's raw result, its
+    // benchmark and the rank on that rubric alone. No blended overall score.
+    heading(label);
+    if (card.overallRank) {
+      const [place, outOf] = card.overallRank.split('/');
+      ensure(24);
+      page.drawText('Overall rank (all rubrics)', { x: MARGIN, y, size: 10, font: bold, color: GRAY });
+      page.drawText(pdfSafe(outOf ? `${place} of ${outOf}` : card.overallRank), { x: MARGIN + 200, y: y - 1, size: 13, font: bold, color: BLUE });
+      y -= 22;
     }
+    const resultX = MARGIN + 200;
+    const benchX = MARGIN + 290;
+    const rankX = MARGIN + 400;
+    const header = (t: string, x: number) => page.drawText(t, { x, y, size: 8, font: bold, color: GRAY });
+    ensure(16);
+    header('RUBRIC', MARGIN);
+    header('RAW SCORE', resultX);
+    header('BENCHMARK', benchX);
+    header('RANK', rankX);
+    y -= 14;
+    // A category of several rubrics prints its pooled score, then each drill beneath it with its own result.
+    const rows = card.metrics.flatMap((m) => [
+      { label: m.label, actual: m.actual || m.score, benchmark: m.benchmark ?? '', met: m.met, rank: m.rank, indent: false },
+      ...(m.children ?? []).map((c) => ({ label: c.label, actual: c.actual || c.score, benchmark: c.benchmark ?? '', met: c.met, rank: c.rank, indent: true })),
+    ]);
+    rows.forEach((m) => {
+      ensure(15);
+      const maxLabel = m.indent ? 30 : 34;
+      page.drawText(pdfSafe(m.label.length > maxLabel ? `${m.label.slice(0, maxLabel - 1)}...` : m.label), { x: MARGIN + (m.indent ? 12 : 0), y, size: m.indent ? 9 : 10, font, color: m.indent ? GRAY : BLACK });
+      page.drawText(pdfSafe(m.actual || '-'), { x: resultX, y, size: 10, font: bold, color: m.met ? GREEN : BLACK });
+      page.drawText(pdfSafe(m.benchmark || '-'), { x: benchX, y, size: 10, font, color: m.benchmark ? BLACK : GRAY });
+      page.drawText(pdfSafe(m.rank || '-'), { x: rankX, y, size: 10, font, color: BLACK });
+      y -= 15;
+    });
+    const notes = (benchmarkLines ?? []).filter((b) => b.note);
+    if (notes.length) {
+      y -= 4;
+      for (const b of notes) paragraph(`${b.label}: ${b.note}`, { size: 8.5, color: GRAY, gap: 11 });
+    }
+
+    if (card.recommendation) {
+      y -= 4;
+      paragraph(`Recommendation: ${card.recommendation}`, { size: 10, color: BLUE });
+    }
+
+  };
+
+  const drawEvals = (card: PlayerFullResults, label: string) => {
+    // ── Evaluations ───────────────────────────────────────────────────────────
+    if (card.evals.length) {
+      heading(label);
+      for (const ev of card.evals) {
+        ensure(40);
+        paragraph(`Evaluation ${ev.index}: ${ev.date} | ${ev.evaluator} | ${ev.session}`, { size: 9.5, f: bold, gap: 12 });
+        paragraph(ev.values.map((v) => `${v.abbr}: ${v.text || '-'}`).join('   '), { size: 8.5, color: GRAY, gap: 11 });
+        const notes = [
+          ev.strengths ? `Strengths: ${ev.strengths}` : '',
+          ev.improve ? `To work on: ${ev.improve}` : '',
+        ].filter(Boolean);
+        for (const n of notes) paragraph(n, { size: 8.5, gap: 11 });
+        y -= 5;
+      }
+    }
+
+  };
+
+  const multi = (input.extras ?? []).length > 0;
+  const named = (what: string, name?: string) => (multi && name ? `${what}: ${name}` : what);
+  drawScores(card, input.benchmarks, named('Scoring and Ranking', input.evaluationName));
+  drawEvals(card, named('Evaluations included', input.evaluationName));
+  for (const extra of input.extras ?? []) {
+    // A separate block per evaluation: its own ranks, nothing combined with the others.
+    drawScores(extra.card, extra.benchmarks, `Scoring and Ranking: ${extra.name}`);
+    drawEvals(extra.card, `Evaluations included: ${extra.name}`);
   }
 
   // ── Comments ──────────────────────────────────────────────────────────────

@@ -25,17 +25,19 @@ export default function CalendarPage() {
     () => withAllTeams(groupCalendarTeams(seasons ?? []), allTeams ?? []),
     [seasons, allTeams],
   );
-  const { events, teamByEvent, teamIdByEvent } = useMemo(() => {
+  const { events, teamByEvent, teamIdByEvent, rosterByEvent } = useMemo(() => {
     const teamByEvent = new Map<string, string>();
+    const rosterByEvent = new Map<string, number>();
     const teamIdByEvent = new Map<string, string>();
     const events = (seasons ?? []).flatMap((s) => {
       for (const ev of s.events) {
         teamByEvent.set(ev.id, s.teamName);
+        rosterByEvent.set(ev.id, s.roster.length);
         if (s.teamId) teamIdByEvent.set(ev.id, s.teamId);
       }
       return s.events;
     });
-    return { events, teamByEvent, teamIdByEvent };
+    return { events, teamByEvent, teamIdByEvent, rosterByEvent };
   }, [seasons]);
 
   if (seasonsQuery.isLoading) return <LoadingState />;
@@ -104,6 +106,7 @@ export default function CalendarPage() {
       <MonthCalendar
         events={events}
         teamNameFor={(ev) => teamByEvent.get(ev.id)}
+        rosterSizeFor={(ev) => rosterByEvent.get(ev.id)}
         eventHref={(ev) => {
           const teamId = teamIdByEvent.get(ev.id);
           return teamId ? `/team/${teamId}?tab=schedule&event=${ev.id}` : undefined;

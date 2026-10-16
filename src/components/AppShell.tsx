@@ -161,6 +161,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: '/profile', label: 'Profile', icon: 'profile' },
       ]
     : [
+        { href: '/hub', label: 'Hub', icon: 'home' },
         { href: '/dashboard', label: 'Evaluations', icon: 'assessments', match: '/assessment' },
         { href: '/teams', label: 'Teams', icon: 'teams', match: '/team' },
         { href: '/calendar', label: 'Calendar', icon: 'calendar' },

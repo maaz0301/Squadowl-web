@@ -6,6 +6,8 @@ import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
 import { useTryoutQuery, useAiCompareMutation } from '@/features/queries';
+import { computePlayerResults } from '@/data/scoring';
+import { PlayerCompareCard, COMPARE_MAX_PLAYERS } from '@/components/compare/PlayerCompareCard';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
 import { playerDisplayName } from '@/data/rubrics';
 import { mockAiCompare } from '@/data/teamBuilder';
@@ -32,16 +34,24 @@ export default function ComparePage() {
   const tryout = tryoutQuery.data;
   const toggle = (playerId: string) => {
     setSelected((prev) =>
-      prev.includes(playerId) ? prev.filter((p) => p !== playerId) : prev.length < 4 ? [...prev, playerId] : prev,
+      prev.includes(playerId) ? prev.filter((p) => p !== playerId) : prev.length < COMPARE_MAX_PLAYERS ? [...prev, playerId] : prev,
     );
   };
 
+  const allResults = computePlayerResults(tryout);
+  const selectedResults = selected.flatMap((pid) => allResults.filter((r) => r.player.id === pid));
   const heuristic = selected.length >= 2 ? mockAiCompare(tryout, selected) : null;
   const aiError = aiCompare.isError || (aiCompare.data as { error?: unknown } | undefined)?.error;
 
   return (
     <>
-      <PageHeader title={terms.t('Compare Players')} subtitle="Select 2–4 athletes" showBack backHref={href('results')} />
+      <PageHeader title={terms.t('Compare Players')} subtitle={`Select 2–${COMPARE_MAX_PLAYERS} athletes`} showBack backHref={href('results')} />
+
+      {selectedResults.length >= 2 ? (
+        <div className="mb-5">
+          <PlayerCompareCard tryout={tryout} results={selectedResults} population={allResults} />
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="flex flex-col gap-2">

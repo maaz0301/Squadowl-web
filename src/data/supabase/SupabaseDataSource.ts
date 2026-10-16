@@ -901,6 +901,9 @@ async function uriToArrayBuffer(fileUri: string): Promise<ArrayBuffer> {
 }
 
 
+/** Set once the list_athlete_hub function turns out not to be callable, so later calls skip it. */
+let hubRpcMissing = false;
+
 export class SupabaseDataSource implements DataSource {
   private userId: string | null = null;
   private accountId: string | null = null;
@@ -3367,6 +3370,59 @@ export class SupabaseDataSource implements DataSource {
    */
   async listTryoutSummaries(includeArchived = false): Promise<TryoutSummary[]> {
     return this.summariseTryouts(await this.fetchVisibleTryoutRows(includeArchived));
+  }
+
+  async listPlayerEvaluationCandidates(
+    excludeTryoutId: string,
+    who: { athleteIds: string[]; first: string; last: string },
+  ): Promise<import('@/data/otherEvaluations').EvaluationCandidate[]> {
+    const { supabase } = await this.ctx();
+    const tryoutRows = (await this.fetchVisibleTryoutRows(true)).filter((t) => t.id !== excludeTryoutId).slice(0, 150);
+    if (tryoutRows.length === 0) return [];
+    const ids = tryoutRows.map((t) => t.id as string);
+    const nameById = new Map(tryoutRows.map((t) => [t.id as string, t.name as string]));
+    const columns = 'id, tryout_id, athlete_id, athletes!inner(first_name, last_name, year_of_birth, player_email)';
+    // Wildcards and the characters that structure a PostgREST filter are dropped, not escaped.
+    const clean = (t: string) => t.replace(/[%_,()\\*]/g, '').trim().slice(0, 2);
+    const f = clean(who.first);
+    const l = clean(who.last);
+
+    const [byAthlete, byName] = await Promise.all([
+      who.athleteIds.length
+        ? supabase.from('tryout_participants').select(columns).in('tryout_id', ids).in('athlete_id', who.athleteIds).is('removed_at', null)
+        : Promise.resolve({ data: [] as Row[], error: null }),
+      f || l
+        ? supabase
+            .from('tryout_participants')
+            .select(columns)
+            .in('tryout_id', ids)
+            .is('removed_at', null)
+            .or([f ? `first_name.ilike.${f}%` : '', l ? `last_name.ilike.${l}%` : ''].filter(Boolean).join(','), { referencedTable: 'athletes' })
+            .limit(400)
+        : Promise.resolve({ data: [] as Row[], error: null }),
+    ]);
+    if (byAthlete.error) throw new Error(byAthlete.error.message);
+    if (byName.error) throw new Error(byName.error.message);
+
+    const seen = new Set<string>();
+    const out: import('@/data/otherEvaluations').EvaluationCandidate[] = [];
+    for (const r of [...((byAthlete.data ?? []) as Row[]), ...((byName.data ?? []) as Row[])]) {
+      if (seen.has(r.id as string)) continue;
+      seen.add(r.id as string);
+      const raw = r.athletes;
+      const a = (Array.isArray(raw) ? raw[0] : raw) ?? {};
+      out.push({
+        id: r.id as string,
+        athleteId: (r.athlete_id as string | null) ?? undefined,
+        first: a.first_name ?? '',
+        last: a.last_name ?? '',
+        yob: a.year_of_birth ?? undefined,
+        playerEmail: a.player_email ?? undefined,
+        tryoutId: r.tryout_id as string,
+        tryoutName: nameById.get(r.tryout_id as string) ?? '',
+      });
+    }
+    return out;
   }
 
   async listSearchPlayers(): Promise<SearchPlayer[]> {
@@ -8142,6 +8198,38 @@ export class SupabaseDataSource implements DataSource {
     limit: number,
   ): Promise<{ rows: Athlete[]; next: number | null }> {
     const { supabase, accountId } = await this.ctx();
+    // Preferred: one database call that checks the caller's role once and returns a page.
+    if (!hubRpcMissing) {
+      const viaRpc = await supabase.rpc('list_athlete_hub', {
+        p_account_id: accountId,
+        p_term: search.trim(),
+        p_offset: offset,
+        p_limit: limit,
+      });
+      if (!viaRpc.error) {
+        const all = (viaRpc.data ?? []) as Row[];
+        const page = all.slice(0, limit);
+        return {
+          rows: page.map((a) => ({
+            id: a.id,
+            first: a.first_name ?? '',
+            last: a.last_name ?? '',
+            yearOfBirth: a.year_of_birth ? String(a.year_of_birth) : undefined,
+            avatarUrl: a.avatar_url ?? undefined,
+            currentPosition: a.default_position ?? undefined,
+            guardianName: a.guardian_name ?? undefined,
+            guardianEmail: a.guardian_email ?? undefined,
+            playerEmail: a.player_email ?? undefined,
+          })),
+          next: all.length > limit ? offset + limit : null,
+        };
+      }
+      // Not deployed yet (or the caller is not staff): fall back to scanning the table.
+      if (viaRpc.error.code !== 'PGRST202' && viaRpc.error.code !== '42883' && viaRpc.error.code !== '42501') {
+        throw new Error(viaRpc.error.message);
+      }
+      hubRpcMissing = true;
+    }
     const { data: grantRows } = await supabase
       .from('athlete_account_access')
       .select('athlete_id')

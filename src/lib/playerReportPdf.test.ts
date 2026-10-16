@@ -48,6 +48,18 @@ describe('renderPlayerReportPdf', () => {
     expect(doc.getPageCount()).toBeGreaterThan(1);
   });
 
+  it('prints each combined evaluation under its own heading', async () => {
+    const base64 = await renderPlayerReportPdf({
+      ...input,
+      coachComments: '',
+      aiComments: '',
+      evaluationName: 'Vertical Jump Evaluation',
+      extras: [{ name: 'Skating Speed Evaluation', card: { ...card, overallRank: '5/9' } }],
+    });
+    const doc = await PDFDocument.load(Buffer.from(base64, 'base64'));
+    expect(doc.getPageCount()).toBeGreaterThan(1);
+  });
+
   it('makes attached links tappable and leads with the overall rank rather than a score', async () => {
     const base64 = await renderPlayerReportPdf({
       ...input,

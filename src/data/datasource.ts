@@ -89,6 +89,15 @@ export interface DataSource {
    * columns search draws, with no evaluations or scores.
    */
   listSearchPlayers(): Promise<import('./search').SearchPlayer[]>;
+  /**
+   * Roster rows in this account's other evaluations that may be the same person (by athlete
+   * record, or by a name that starts alike), for combining evaluations on one report card.
+   * Narrowed on the server; the caller does the fuzzy judging (data/otherEvaluations.ts).
+   */
+  listPlayerEvaluationCandidates(
+    excludeTryoutId: string,
+    who: { athleteIds: string[]; first: string; last: string },
+  ): Promise<import('./otherEvaluations').EvaluationCandidate[]>;
   /** Assessment count for plan limit checks, without assembling every roster and evaluation. */
   countAssessments(): Promise<number>;
   /** Tryouts the current user is invited to as an assessor (not owned by their account). */

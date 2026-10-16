@@ -20,7 +20,7 @@ export default function AthleteHubPage() {
   // The search runs on the server, so wait for a pause in typing.
   const [search, setSearch] = useState('');
   useEffect(() => {
-    const t = setTimeout(() => setSearch(query), 350);
+    const t = setTimeout(() => setSearch(query), 250);
     return () => clearTimeout(t);
   }, [query]);
 
