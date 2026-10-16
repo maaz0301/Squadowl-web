@@ -200,6 +200,7 @@ export default function PlayerReportCardPage() {
 
   // Each combined evaluation is worked out on its own, with its own ranks, never blended with the others.
   const extraQueries = useCombinedTryoutsQueries(extras.map((x) => x.tryoutId));
+  const extraStamp = extraQueries.map((q) => q.dataUpdatedAt).join(',');
   const extraSections = useMemo(
     () =>
       extras.map((x, i) => {
@@ -222,7 +223,7 @@ export default function PlayerReportCardPage() {
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [extras, extraQueries.map((q) => q.dataUpdatedAt).join(',')],
+    [extras, extraStamp],
   );
 
   const who = useMemo(
