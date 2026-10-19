@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 
 import type { TeamRosterPlayer } from '@/data/types';
 import { download } from '@/lib/exportData';
+import { planRosterPdfColumns } from '@/lib/rosterPdfLayout';
 
 /**
  * The columns of a team roster export, in order. Contact details a coach needs
@@ -129,24 +130,27 @@ export async function buildTeamRosterFile(
     };
   }
 
-  // Landscape: ten columns don't fit a portrait page at a readable size.
-  const PAGE_W = 842;
+  // Landscape. Each column is sized to its widest entry; the text shrinks, then the page
+  // widens, before anything is cut (see rosterPdfLayout).
   const PAGE_H = 595;
   const MARGIN = 36;
-  const widths = [30, 56, 62, 40, 36, 52, 36, 110, 80, 110, 66, 70, 80];
-  const scale = (PAGE_W - MARGIN * 2) / widths.reduce((sum, w) => sum + w, 0);
-  const colX: number[] = [];
-  let x = MARGIN;
-  for (const w of widths) {
-    colX.push(x);
-    x += w * scale;
-  }
-  const colWidth = widths.map((w) => w * scale - 4);
-  const SIZE = 8;
-
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const layout = planRosterPdfColumns({
+    headers,
+    rows,
+    measure: (text, size, bold) => (bold ? fontBold : font).widthOfTextAtSize(pdfSafe(text), size),
+  });
+  const PAGE_W = layout.pageWidth;
+  const SIZE = layout.size;
+  const colX: number[] = [];
+  let x = MARGIN;
+  for (const w of layout.widths) {
+    colX.push(x);
+    x += w;
+  }
+  const colWidth = layout.widths.map((w) => w - 4);
 
   /** Cut a cell to its column instead of letting it run into the next one. */
   const fit = (text: string, width: number, f: PDFFont): string => {
