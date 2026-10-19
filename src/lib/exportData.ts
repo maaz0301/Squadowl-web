@@ -64,8 +64,8 @@ function wrapText(text: string, f: PDFFont, size: number, maxWidth: number): str
  * only), and `logoUrls` prints a team or organization logo on every page.
  */
 export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOptions = {}): Promise<string> {
-  const docInfo = buildReportDocInfo(tryout);
-  const cards = buildPlayerFullResults(tryout, opts.sortBy, opts.filter);
+  const docInfo = buildReportDocInfo(tryout, opts.teamName);
+  const cards = buildPlayerFullResults(tryout, opts.sortBy, opts.filter, opts.teamName);
   const content = opts.content ?? DEFAULT_REPORT_CONTENT;
 
   const pdfDoc = await PDFDocument.create();
@@ -148,7 +148,7 @@ export async function renderFullResultsPdf(tryout: Tryout, opts: ReportPdfOption
       }
     }
 
-    const meta = pdfSafe([`#${card.jersey || '-'}`, ...(content.position ? [card.pos || '-'] : []), `Shoots ${card.shoots || '-'}`, `Evals ${card.evalCount}`].join(' • '));
+    const meta = pdfSafe([`#${card.jersey || '-'}`, ...(content.position ? [card.pos || '-'] : []), ...(card.birthDate ? [`Born ${card.birthDate}`] : []), `Shoots ${card.shoots || '-'}`, `Evals ${card.evalCount}`].join(' • '));
     page.drawText(pdfSafe(card.name), { x: MARGIN, y, size: 15, font: fontBold, color: BLACK });
     const metaWidth = font.widthOfTextAtSize(meta, 9);
     page.drawText(meta, { x: PAGE_WIDTH - MARGIN - metaWidth, y: y + 3, size: 9, font, color: GRAY });
@@ -248,7 +248,7 @@ export async function exportTryoutData(
   const fileName = `${safeName}_results.${format}`;
 
   if (format === 'csv') {
-    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout, pdfOptions?.sortBy, pdfOptions?.filter);
+    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout, pdfOptions?.sortBy, pdfOptions?.filter, pdfOptions?.teamName);
     const blocks = playerBlocks.map((rows) => rows.map((r) => r.map(csvCell).join(',')).join('\n'));
     const text = [
       infoLines.map((r) => r.map(csvCell).join(',')).join('\n'),
@@ -263,7 +263,7 @@ export async function exportTryoutData(
     // The full-results rows: the info header, then each player's
     // PLYR/CAT/STR/IMP rows and eval tables, blocks separated by a blank row so
     // one player's card stays readable on a printed page.
-    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout, pdfOptions?.sortBy, pdfOptions?.filter);
+    const { infoLines, playerBlocks } = buildFullResultsCsvRows(tryout, pdfOptions?.sortBy, pdfOptions?.filter, pdfOptions?.teamName);
     const rows: (string | number)[][] = [...infoLines, []];
     playerBlocks.forEach((block, i) => {
       if (i > 0) rows.push([]);
@@ -344,7 +344,7 @@ export async function exportTeamBuilderData(
   page.drawText(title, { x: 50, y: 750, size: 20, font: fontBold });
 
   let y = 700;
-  const xOffsets = [50, 170, 320, 380, 430, 500];
+  const xOffsets = [40, 140, 270, 320, 360, 440, 500];
 
   headers.forEach((h, i) => {
     page.drawText(h, { x: xOffsets[i], y, size: 10, font: fontBold });

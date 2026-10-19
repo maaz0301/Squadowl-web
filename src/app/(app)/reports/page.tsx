@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
 import { Badge, Card, CardGridSkeleton, EmptyState, ErrorState, PageHeader, Spinner } from '@/components/ui';
+import { Chip } from '@/components/ui/Chip';
 import { HomePanel, PanelRow } from '@/components/home/HomePanel';
 import { NavPending } from '@/components/NavPending';
 import { useState } from 'react';
@@ -66,10 +67,12 @@ export default function ReportsPage() {
   // Top performers can be ranked on the overall score or on any one measure.
   const [leaderFocus, setLeaderFocus] = useState('overall');
   // ...and limited to one team's evaluations, or left on everyone.
-  const [leaderTeam, setLeaderTeam] = useState('');
+  const [leaderTeams, setLeaderTeams] = useState<string[]>([]);
+  const toggleLeaderTeam = (id: string) =>
+    setLeaderTeams((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   const teamsQuery = useTeamsQuery();
   const teamOptions = listReportTeams(fullData ?? [], teamsQuery.data ?? []);
-  const leaderTryouts = filterTryoutsByTeam(fullData ?? [], leaderTeam || null);
+  const leaderTryouts = filterTryoutsByTeam(fullData ?? [], leaderTeams);
   const rubricOptions = listReportRubrics(leaderTryouts);
   const focusRubric = rubricOptions.find((r) => r.key === leaderFocus);
   const leaders = focusRubric
@@ -236,20 +239,12 @@ export default function ReportsPage() {
           ) : (
             <div className="flex flex-col gap-2">
               {teamOptions.length > 0 ? (
-                <select
-                  aria-label="Team for top performers"
-                  value={leaderTeam}
-                  onChange={(e) => setLeaderTeam(e.target.value)}
-                  className="rounded-md border px-2 py-2 text-sm font-semibold"
-                  style={{ backgroundColor: colors.tile, borderColor: colors.border, color: colors.ink }}
-                >
-                  <option value="">All teams</option>
+                <div role="group" aria-label="Teams for top performers" className="flex flex-wrap gap-2">
+                  <Chip label="All teams" active={leaderTeams.length === 0} onClick={() => setLeaderTeams([])} />
                   {teamOptions.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
+                    <Chip key={t.id} label={t.name} active={leaderTeams.includes(t.id)} onClick={() => toggleLeaderTeam(t.id)} />
                   ))}
-                </select>
+                </div>
               ) : null}
               <select
                 aria-label="Rank top performers by"

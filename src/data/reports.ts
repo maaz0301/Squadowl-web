@@ -255,7 +255,13 @@ export function listReportTeams(tryouts: Tryout[], teams: { id: string; name: st
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Just one team's evaluations, or all of them when no team is picked. */
-export function filterTryoutsByTeam(tryouts: Tryout[], teamId: string | null | undefined): Tryout[] {
-  return teamId ? tryouts.filter((t) => t.teamId === teamId) : tryouts;
+/** Just the picked teams' evaluations (one id or several to compare), or all of them when none is picked. */
+export function filterTryoutsByTeam(
+  tryouts: Tryout[],
+  teamIds: string | readonly string[] | null | undefined,
+): Tryout[] {
+  const picked = typeof teamIds === 'string' ? (teamIds ? [teamIds] : []) : (teamIds ?? []);
+  if (picked.length === 0) return tryouts;
+  const set = new Set(picked);
+  return tryouts.filter((t) => !!t.teamId && set.has(t.teamId));
 }

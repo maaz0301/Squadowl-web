@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { rubricFromLibrary } from './rubricLibrary';
 import { buildReportSummary, filterTryoutsByTeam, listReportRubrics, listReportTeams, topPerformersByRubric } from './reports';
 import type { Evaluation, Player, Tryout } from './types';
 
@@ -229,6 +230,34 @@ describe('top performers by team', () => {
   it('narrows to one team, or keeps everyone when none is picked', () => {
     expect(filterTryoutsByTeam([a, b, none], 'team-b').map((t) => t.id)).toEqual(['b']);
     expect(filterTryoutsByTeam([a, b, none], null)).toHaveLength(3);
+    expect(filterTryoutsByTeam([a, b, none], ['team-a', 'team-b']).map((t) => t.id)).toEqual(['a', 'b']);
+    expect(filterTryoutsByTeam([a, b, none], [])).toHaveLength(3);
     expect(buildReportSummary(filterTryoutsByTeam([a, b], 'team-a')).topPerformers.map((p) => p.name)).toEqual(['Ann Doe']);
+  });
+});
+
+describe('a library rubric used on several teams', () => {
+  const item = { id: 'l1', name: '30m Sprint', scoringType: 'time' as const, definition: { unit: 'sec', rankingDirection: 'lower_is_better' as const, scale: '1-5' as const }, createdAt: 0, updatedAt: 0 };
+  const rubric = rubricFromLibrary(item);
+  const onTeam = (id: string, teamId: string, pid: string, first: string, value: number) =>
+    makeTryout({
+      id,
+      name: `Tryout ${id}`,
+      teamId,
+      settings: { skaterWeights: {}, goalieWeights: {}, customRubrics: [rubric] } as Tryout['settings'],
+      roster: [makePlayer({ id: pid, first })],
+      evals: [makeEval({ id: `e${id}`, playerId: pid, scores: { [rubric.key]: value } })],
+    });
+  const a = onTeam('a', 'team-a', 'p1', 'Ann', 5.2);
+  const b = onTeam('b', 'team-b', 'p2', 'Bea', 4.8);
+
+  it('shows as one measure in the All Teams view and ranks both teams together', () => {
+    expect(listReportRubrics([a, b]).filter((r) => r.key === 'sprint' || r.label === '30m Sprint')).toHaveLength(1);
+    const leaders = topPerformersByRubric([a, b], '30m sprint');
+    expect(leaders.map((l) => l.name)).toEqual(['Bea Doe', 'Ann Doe']);
+  });
+
+  it('can be narrowed to the teams picked', () => {
+    expect(topPerformersByRubric(filterTryoutsByTeam([a, b], ['team-a']), '30m sprint').map((l) => l.name)).toEqual(['Ann Doe']);
   });
 });

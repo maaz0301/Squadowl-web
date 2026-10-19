@@ -1,5 +1,8 @@
 'use client';
 
+import { useAgeSortStore, AGE_SORT_LABEL } from '@/state/ageSortStore';
+import { LinkPlayerModal } from '@/components/LinkPlayerModal';
+import { compareByAge } from '@/lib/ageSort';
 import { useTerms, sportLabel } from '@/lib/terms';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -34,6 +37,9 @@ import {
   useAccountPlayerCount,
   useAddPlayerMutation,
   useDeletePlayersMutation,
+  useDeletePlayerMutation,
+  useLinkAthletesToTryoutMutation,
+  useAthleteLinksQuery,
   useImportTryoutPlayersMutation,
   useClearTestDataMutation,
   useGenerateTestDataMutation,
@@ -92,6 +98,9 @@ export default function RosterPage() {
   const user = useUser();
   const { canAssess, canManageTeam } = usePermissions();
   const [showAdd, setShowAdd] = useState(false);
+  const [showLink, setShowLink] = useState(false);
+  const linkAthletes = useLinkAthletesToTryoutMutation(id!);
+  const unlinkPlayer = useDeletePlayerMutation(id!);
   const [showImport, setShowImport] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [runningTool, setRunningTool] = useState<string | null>(null);
@@ -103,6 +112,8 @@ export default function RosterPage() {
   // is already in memory here, unlike the paginated team roster, so no extra
   // read is needed.
   const [rosterSort, setRosterSort] = useState<'recent' | 'name' | 'age'>('recent');
+  const ageDir = useAgeSortStore((s) => s.ageSortDir);
+  const toggleAgeDir = useAgeSortStore((s) => s.toggleAgeSortDir);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
@@ -174,23 +185,30 @@ export default function RosterPage() {
     if (rosterSort === 'name') {
       result = [...result].sort((a, b) => a.first.localeCompare(b.first) || a.last.localeCompare(b.last));
     } else if (rosterSort === 'age') {
-      // Oldest first, the usual reading order for a roster sorted "by age". A
-      // missing/unparseable birth year sinks to the bottom on either sort
-      // rather than being guessed at as oldest.
-      const year = (p: (typeof result)[number]) => {
-        const n = parseInt(p.yearOfBirth ?? '', 10);
-        return Number.isFinite(n) ? n : null;
-      };
-      result = [...result].sort((a, b) => {
-        const ay = year(a);
-        const by = year(b);
-        if (ay == null) return by == null ? 0 : 1;
-        if (by == null) return -1;
-        return ay - by;
-      });
+      result = [...result].sort(compareByAge(ageDir));
     }
     return result;
-  }, [tryoutQuery.data, activeFilter, playerSearch, rosterSort, scoredIds]);
+  }, [tryoutQuery.data, activeFilter, playerSearch, rosterSort, ageDir, scoredIds]);
+
+  // Where each player on this roster is also linked, so a linked player shows "Also on ..." and can be unlinked.
+  const rosterAthleteIds = useMemo(
+    () => (isAssessorOnly ? [] : (tryoutQuery.data?.roster ?? []).map((p) => p.athleteId).filter((v): v is string => !!v)),
+    [tryoutQuery.data, isAssessorOnly],
+  );
+  const linksQuery = useAthleteLinksQuery(rosterAthleteIds);
+  const linkedToByPlayerId = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const p of tryoutQuery.data?.roster ?? []) {
+      const links = p.athleteId ? linksQuery.data?.[p.athleteId] : undefined;
+      if (!links) continue;
+      const names = [
+        ...links.teams.filter((t) => t.id !== tryoutQuery.data?.teamId).map((t) => t.name),
+        ...links.evaluations.filter((e) => e.id !== id).map((e) => e.name),
+      ];
+      if (names.length) out.set(p.id, [...new Set(names)].join(', '));
+    }
+    return out;
+  }, [linksQuery.data, tryoutQuery.data, id]);
 
   if (tryoutQuery.isLoading) return <LoadingState message="Loading roster..." />;
   if (tryoutQuery.isError || !tryoutQuery.data) {
@@ -199,6 +217,37 @@ export default function RosterPage() {
 
   const tryout = tryoutQuery.data;
   const capCount = playersTowardCap(effectiveTier, tryout.roster.length, accountPlayers);
+
+  const linkPlayers = async (athleteIds: string[]) => {
+    try {
+      const { linked, already } = await linkAthletes.mutateAsync(athleteIds);
+      setShowLink(false);
+      if (already.length > 0) {
+        await alert(
+          'Already linked',
+          `${already.length} player${already.length === 1 ? ' was' : 's were'} already on this evaluation, so ${already.length === 1 ? 'it was' : 'they were'} not added again.${linked.length ? ` ${linked.length} linked.` : ''}`,
+        );
+      }
+    } catch (e) {
+      await alert('Link failed', e instanceof Error ? e.message : 'Could not link these players.');
+    }
+  };
+
+  const confirmUnlink = async (playerId: string) => {
+    const player = tryout.roster.find((p) => p.id === playerId);
+    if (!player) return;
+    const ok = await confirm({
+      title: 'Unlink player',
+      message: `Unlink ${playerDisplayName(player)} from ${tryout.name}? They stay on their other teams and evaluations, and every result is kept. You can link them again any time.`,
+      confirmLabel: 'Unlink',
+    });
+    if (!ok) return;
+    try {
+      await unlinkPlayer.mutateAsync(playerId);
+    } catch (e) {
+      await alert('Could not unlink', e instanceof Error ? e.message : 'Could not unlink this player.');
+    }
+  };
 
   const openAdd = () => {
     if (isAtPlayerLimit(effectiveTier, capCount)) {
@@ -444,6 +493,7 @@ export default function RosterPage() {
             <div className="flex flex-wrap gap-2">
               <Button label={`Score ${terms.players}`} onClick={() => router.push(href('rinkside'))} />
               <Button label={`+ Add ${terms.player}`} variant="secondary" onClick={openAdd} />
+              {isAssessorOnly ? null : <Button label="+ Link Player" variant="secondary" onClick={() => setShowLink(true)} />}
               <Button label="Import from File" variant="secondary" onClick={openImport} />
               <Button label="Select" variant="secondary" onClick={() => setSelectMode(true)} />
               <Button label="Tools" variant="ghost" onClick={() => setShowTools(true)} />
@@ -507,7 +557,11 @@ export default function RosterPage() {
             <div className="flex flex-wrap gap-2">
               <Chip label="Recent" active={rosterSort === 'recent'} onClick={() => setRosterSort('recent')} />
               <Chip label="A–Z" active={rosterSort === 'name'} onClick={() => setRosterSort('name')} />
-              <Chip label="Age" active={rosterSort === 'age'} onClick={() => setRosterSort('age')} />
+              <Chip
+                label={rosterSort === 'age' ? AGE_SORT_LABEL[ageDir] : 'Age'}
+                active={rosterSort === 'age'}
+                onClick={() => (rosterSort === 'age' ? toggleAgeDir() : setRosterSort('age'))}
+              />
             </div>
           </div>
 
@@ -555,9 +609,16 @@ export default function RosterPage() {
                 return next;
               });
             return (
+              <div
+                key={item.id}
+                className="flex items-center gap-2 rounded-2xl border pr-3 transition-transform hover:-translate-y-0.5"
+                style={{
+                  backgroundColor: colors.card,
+                  borderColor: isSelected ? colors.primary : colors.border,
+                }}
+              >
               <button
                 type="button"
-                key={item.id}
                 onClick={() => {
                   if (selectMode) {
                     toggleSelected();
@@ -566,11 +627,7 @@ export default function RosterPage() {
                   setCurrentPlayer(item.id);
                   router.push(href(`player/${item.id}`));
                 }}
-                className="flex items-center gap-3 rounded-2xl border p-4 text-left transition-transform hover:-translate-y-0.5"
-                style={{
-                  backgroundColor: colors.card,
-                  borderColor: isSelected ? colors.primary : colors.border,
-                }}
+                className="flex min-w-0 flex-1 items-center gap-3 p-4 text-left"
               >
                 {selectMode ? (
                   // A plain indicator, not the interactive Checkbox — this
@@ -595,6 +652,11 @@ export default function RosterPage() {
                   <span className="block text-sm" style={{ color: colors.inkMuted }}>
                     #{item.jersey ?? '—'} · {item.pos ?? '—'}
                   </span>
+                  {linkedToByPlayerId.get(item.id) ? (
+                    <span className="block truncate text-xs" style={{ color: colors.info }}>
+                      Also on {linkedToByPlayerId.get(item.id)}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="flex flex-col items-end gap-1">
                   {evalCount > 0 ? (
@@ -605,10 +667,23 @@ export default function RosterPage() {
                   {item.registrationSource === 'qr' ? <Badge label="QR" variant="info" /> : null}
                 </span>
               </button>
+              {!selectMode && linkedToByPlayerId.has(item.id) ? (
+                <Button label="Unlink" size="sm" variant="ghost" onClick={() => confirmUnlink(item.id)} />
+              ) : null}
+              </div>
             );
           })}
         </div>
       )}
+
+      <LinkPlayerModal
+        visible={showLink}
+        where="this evaluation"
+        linkedAthleteIds={new Set(tryout.roster.map((p) => p.athleteId).filter((v): v is string => !!v))}
+        linking={linkAthletes.isPending}
+        onClose={() => setShowLink(false)}
+        onLink={(ids) => void linkPlayers(ids)}
+      />
 
       <ImportPlayersModal
         labels={tryout.settings.customLabels}

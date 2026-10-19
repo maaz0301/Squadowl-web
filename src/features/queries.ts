@@ -348,6 +348,44 @@ export function useRemoveTeamRosterPlayerMutation(teamId: string) {
   });
 }
 
+/** Take a linked player off this team only; the player and all their results stay. Refuses on their last team. */
+export function useUnlinkTeamPlayerMutation(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ athleteId, alsoAthleteIds }: { athleteId: string; alsoAthleteIds?: string[] }) =>
+      getDataSource().unlinkAthleteFromTeam(teamId, athleteId, alsoAthleteIds),
+    onSuccess: (_data, { athleteId }) => {
+      qc.setQueriesData<TeamRosterCache>({ queryKey: teamRosterKey(teamId) }, (old) => dropRosterPlayer(old ?? null, athleteId));
+      invalidateTeamRoster(qc, teamId);
+      qc.invalidateQueries({ queryKey: ['athletes', 'links'] });
+    },
+  });
+}
+
+/** Link existing players onto an evaluation as the same person, with their history. */
+export function useLinkAthletesToTryoutMutation(tryoutId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (athleteIds: string[]) => getDataSource().linkAthletesToTryout(tryoutId, athleteIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.tryout(tryoutId) });
+      qc.invalidateQueries({ queryKey: queryKeys.tryouts(false) });
+      qc.invalidateQueries({ queryKey: ['athletes', 'links'] });
+    },
+  });
+}
+
+/** The teams and evaluations each of these players is linked to (keyed by athlete id). */
+export function useAthleteLinksQuery(athleteIds: string[]) {
+  const key = [...new Set(athleteIds)].sort();
+  return useQuery({
+    queryKey: ['athletes', 'links', key],
+    queryFn: () => getDataSource().listAthleteLinks(key),
+    enabled: key.length > 0,
+    staleTime: 30_000,
+  });
+}
+
 /**
  * Remove a set of players from a team roster in one go — the Players tab's
  * "select all, delete". Same optimistic drop as the single removal, applied to
@@ -3210,6 +3248,42 @@ export function useGenerateReportCardCommentsMutation(tryoutId: string) {
 }
 
 // ---- Library ----
+
+// ─── Rubrics Library ──────────────────────────────────────────────────────────
+const rubricLibraryKey = ['rubric-library'] as const;
+
+export function useRubricLibraryQuery(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: rubricLibraryKey,
+    queryFn: () => getDataSource().listRubricLibrary(),
+    enabled: options?.enabled !== false,
+  });
+}
+
+export function useCreateRubricLibraryItemMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: import('@/data/types').RubricLibraryInput) => getDataSource().createRubricLibraryItem(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: rubricLibraryKey }),
+  });
+}
+
+export function useUpdateRubricLibraryItemMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { id: string; input: import('@/data/types').RubricLibraryInput }) =>
+      getDataSource().updateRubricLibraryItem(args.id, args.input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: rubricLibraryKey }),
+  });
+}
+
+export function useDeleteRubricLibraryItemMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().deleteRubricLibraryItem(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: rubricLibraryKey }),
+  });
+}
 
 const libraryKey = ['library'] as const;
 

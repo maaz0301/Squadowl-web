@@ -8,7 +8,7 @@ const card = (i: number, metrics = 8): PlayerFullResults => ({
   playerId: `p${i}`,
   name: `Player ${i} Łukasz`,
   jersey: String(i),
-  pos: 'F',
+  birthDate: '2014-03-02', team: 'Spring', pos: 'F',
   shoots: 'L',
   overallScore: '3.25',
   overallRank: `${i}/20`,

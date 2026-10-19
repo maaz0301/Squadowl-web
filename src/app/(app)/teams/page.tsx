@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -34,6 +34,7 @@ import { isAtTeamLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
 import { prefetchNewTeam, prefetchTeamDetail } from '@/features/prefetch';
 import { NavPending } from '@/components/NavPending';
+import { applyTeamOrder, reorderedTeamIds, useTeamOrderStore } from '@/lib/teamOrder';
 
 export default function TeamsPage() {
   const colors = useThemeColors();
@@ -50,6 +51,14 @@ export default function TeamsPage() {
   const deleteTeam = useDeleteTeamMutation();
   const archiveTeam = useArchiveTeamMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
+  // The coach's own order for the team cards; a team they have not placed yet goes last.
+  const savedOrder = useTeamOrderStore((s) => (user?.id ? s.orders[user.id] : undefined));
+  const setSavedOrder = useTeamOrderStore((s) => s.setOrder);
+  const orderedTeams = useMemo(() => applyTeamOrder(teamsQuery.data ?? [], savedOrder), [teamsQuery.data, savedOrder]);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const moveTeam = (from: number, to: number) => {
+    if (user?.id && from !== to) setSavedOrder(user.id, reorderedTeamIds(orderedTeams, from, to));
+  };
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
   // The Teams panel, so its Quick Access card can bring it into view.
   const teamsRef = useRef<HTMLDivElement>(null);
@@ -70,7 +79,7 @@ export default function TeamsPage() {
     return <ErrorState message="Could not load teams." onRetry={() => teamsQuery.refetch()} />;
   }
 
-  const teams = teamsQuery.data ?? [];
+  const teams = orderedTeams;
   const seasons = seasonsQuery.data ?? [];
   const playerCounts = playerCountsQuery.data;
 
@@ -166,12 +175,40 @@ export default function TeamsPage() {
             />
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {teams.map((team) => {
+              {teams.map((team, teamIndex) => {
                 const season = seasons.find((s) => s.teamId === team.id);
                 const isBusy = busyId === team.id;
                 return (
-                  <Link
+                  <div
                     key={team.id}
+                    draggable={teams.length > 1 && !isBusy}
+                    onDragStart={(e) => {
+                      setDragId(team.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', team.id);
+                    }}
+                    onDragOver={(e) => {
+                      if (dragId === null) return;
+                      e.preventDefault();
+                      const from = teams.findIndex((t) => t.id === dragId);
+                      if (from !== -1 && from !== teamIndex) moveTeam(from, teamIndex);
+                    }}
+                    onDrop={(e) => e.preventDefault()}
+                    onDragEnd={() => setDragId(null)}
+                    className="relative"
+                    style={{ opacity: dragId === team.id ? 0.5 : 1 }}
+                  >
+                  {teams.length > 1 ? (
+                    <span
+                      aria-hidden
+                      title="Drag to reorder teams"
+                      className="absolute bottom-2 right-3 z-10 cursor-grab select-none text-lg"
+                      style={{ color: colors.inkFaint }}
+                    >
+                      ⠿
+                    </span>
+                  ) : null}
+                  <Link
                     href={`/team/${team.id}`}
                     onMouseEnter={() => prefetchTeamDetail(team.id)}
                     onTouchStart={() => prefetchTeamDetail(team.id)}
@@ -249,6 +286,7 @@ export default function TeamsPage() {
                       ) : null}
                     </Card>
                   </Link>
+                  </div>
                 );
               })}
             </div>

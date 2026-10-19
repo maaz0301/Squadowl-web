@@ -8,7 +8,7 @@ const card: PlayerFullResults = {
   playerId: 'p1',
   name: 'Zoë Łukasz',
   jersey: '12',
-  pos: 'F',
+  birthDate: '2014-03-02', team: 'Spring', pos: 'F',
   shoots: 'L',
   overallScore: '3.80',
   overallRank: '2/20',

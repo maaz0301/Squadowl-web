@@ -940,6 +940,12 @@ export interface AthleteHistory {
   pastEvaluations: Evaluation[];
 }
 
+/** Where one player is currently linked: the teams and evaluations they appear on. */
+export interface AthleteLinks {
+  teams: { id: string; name: string }[];
+  evaluations: { id: string; name: string }[];
+}
+
 export interface PlayerProfileAssessment {
   tryoutId: string;
   tryoutName: string;
@@ -1490,6 +1496,28 @@ export interface LibraryItem {
   athleteId?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+// --- Rubrics Library ---------------------------------------------------------------
+// Rubrics a coach builds once and reuses across teams and evaluations. Account-scoped.
+
+export interface RubricLibraryItem {
+  id: string;
+  name: string;
+  /** Optional sport tag, searchable. */
+  sport?: string;
+  scoringType: ScoringType;
+  /** Everything about the rubric except its key and name: scale, unit, range, direction, weight, category, benchmark. */
+  definition: Omit<CustomRubric, 'key' | 'label' | 'scoringType'>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RubricLibraryInput {
+  name: string;
+  sport?: string;
+  scoringType: ScoringType;
+  definition: RubricLibraryItem['definition'];
 }
 
 export interface LibraryItemInput {

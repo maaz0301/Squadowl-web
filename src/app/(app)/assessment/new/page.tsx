@@ -1,6 +1,9 @@
 'use client';
 'use no memo';
 
+import { RubricLibraryPicker } from '@/components/RubricLibraryPicker';
+import { rubricFromLibrary } from '@/data/rubricLibrary';
+import type { RubricLibraryItem } from '@/data/types';
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm, Controller } from 'react-hook-form';
@@ -78,6 +81,7 @@ function NewAssessmentForm() {
 
   const [pendingRubrics, setPendingRubrics] = useState<CustomRubric[]>([]);
   const [showRubricForm, setShowRubricForm] = useState(false);
+  const [showRubricLibrary, setShowRubricLibrary] = useState(false);
   const [rubricLabel, setRubricLabel] = useState('');
   const [rubricType, setRubricType] = useState<ScoringType>('skill');
   const [rubricScale, setRubricScale] = useState<'1-5' | '1-10'>('1-5');
@@ -178,6 +182,15 @@ function NewAssessmentForm() {
     setRubricRankingDirection('higher_is_better');
     setRubricWeightStr('');
     setShowRubricForm(false);
+  };
+
+  const addLibraryRubrics = (picked: RubricLibraryItem[]) => {
+    setPendingRubrics((prev) => {
+      const have = new Set(prev.map((r) => r.key));
+      return [...prev, ...picked.map(rubricFromLibrary).filter((r) => !have.has(r.key))];
+    });
+    setRubricError(null);
+    setShowRubricLibrary(false);
   };
 
   const removeRubricFromList = (key: string) => {
@@ -415,7 +428,10 @@ function NewAssessmentForm() {
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <SectionLabel>Rubrics *</SectionLabel>
-                <Button label="+ Add Rubric" variant="ghost" size="sm" onClick={() => setShowRubricForm(true)} />
+                <div className="flex gap-1">
+                  <Button label="+ Add from Library" variant="ghost" size="sm" onClick={() => setShowRubricLibrary(true)} />
+                  <Button label="+ Add Rubric" variant="ghost" size="sm" onClick={() => setShowRubricForm(true)} />
+                </div>
               </div>
               {rubricError && (
                 <p className="mb-1 text-base font-medium" style={{ color: colors.danger }}>
@@ -477,6 +493,13 @@ function NewAssessmentForm() {
       <p className="mt-3 text-xs" style={{ color: colors.inkFaint }}>
         Registration options are available once the evaluation is created.
       </p>
+
+      <RubricLibraryPicker
+        visible={showRubricLibrary}
+        onClose={() => setShowRubricLibrary(false)}
+        onPick={addLibraryRubrics}
+        disabledNames={pendingRubrics.map((r) => r.label)}
+      />
 
       <Modal visible={showRubricForm} title="Add Custom Drill / Category" onClose={() => setShowRubricForm(false)} hideDefaultFooter>
         <div className="flex flex-col gap-4">

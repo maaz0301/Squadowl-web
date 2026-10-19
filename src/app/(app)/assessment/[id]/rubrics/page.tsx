@@ -19,7 +19,15 @@ import { benchmarkMax, canHaveBenchmark, formatBenchmarkValue, isValidBenchmark 
 import { PlanGate } from '@/components/PlanGate';
 import { UsageNudgeBanner } from '@/components/UsageNudgeBanner';
 import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
-import { useTryoutQuery, useUpdateTryoutMutation } from '@/features/queries';
+import {
+  useCreateRubricLibraryItemMutation,
+  useRubricLibraryQuery,
+  useTryoutQuery,
+  useUpdateTryoutMutation,
+} from '@/features/queries';
+import { RubricLibraryPicker } from '@/components/RubricLibraryPicker';
+import { libraryInputFromRubric, rubricFromLibrary } from '@/data/rubricLibrary';
+import type { RubricLibraryItem } from '@/data/types';
 import { useAssessmentId } from '@/features/useAssessmentId';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { getPlanDefinition } from '@/data/plans';
@@ -42,6 +50,9 @@ export default function RubricsPage() {
   const { alert } = useAlert();
   const tryoutQuery = useTryoutQuery(id);
   const updateTryout = useUpdateTryoutMutation();
+  const [showLibrary, setShowLibrary] = useState(false);
+  const libraryQuery = useRubricLibraryQuery();
+  const saveToLibrary = useCreateRubricLibraryItemMutation();
   // Hook, so it runs before the loading/error guards below — skipping it on
   // the loading render would change hook order. A delegated team's tryout
   // gates against the owning club's tier, not the viewer's own.
@@ -207,6 +218,38 @@ export default function RubricsPage() {
     void saveOrder(next);
   };
   const orderKey = (list: typeof custom) => list.map((r) => r.key).join('|');
+
+  // Adds rubrics saved in the library, as copies with the same name so results line up across teams.
+  const addFromLibrary = async (picked: RubricLibraryItem[]) => {
+    const have = new Set(custom.map((r) => r.key));
+    const fresh = picked.map(rubricFromLibrary).filter((r) => !have.has(r.key));
+    if (fresh.length === 0) {
+      setShowLibrary(false);
+      await alert('Already added', 'Those rubrics are already on this evaluation.');
+      return;
+    }
+    if (customLimit !== 'unlimited' && custom.length + fresh.length > (customLimit as number)) {
+      await alert('Rubric limit reached', `Your plan allows ${customLimit} custom rubrics on an evaluation.`);
+      return;
+    }
+    setShowLibrary(false);
+    const next = [...custom, ...fresh];
+    setOrder(next);
+    await saveOrder(next);
+  };
+
+  const addToLibrary = async (r: (typeof custom)[number]) => {
+    if ((libraryQuery.data ?? []).some((l) => l.name.trim().toLowerCase() === r.label.trim().toLowerCase())) {
+      await alert('Already in your library', `"${r.label}" is already saved in the Rubrics Library.`);
+      return;
+    }
+    try {
+      await saveToLibrary.mutateAsync(libraryInputFromRubric(r, tryout.sport));
+      await alert('Saved', `"${r.label}" is in your Rubrics Library.`);
+    } catch (e) {
+      await alert('Could not save', e instanceof Error ? e.message : 'Could not save this rubric to the library.');
+    }
+  };
 
   const removeCustom = async (keyToRemove: string) => {
     const next = custom.filter((r) => r.key !== keyToRemove);
@@ -383,6 +426,15 @@ export default function RubricsPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => void addToLibrary(r)}
+                  aria-label={`Save ${r.label} to the Rubrics Library`}
+                  className="px-2 text-sm font-bold"
+                  style={{ color: colors.primary }}
+                >
+                  To Library
+                </button>
+                <button
+                  type="button"
                   onClick={() => removeCustom(r.key)}
                   disabled={removingKey !== null}
                   aria-label={`Remove ${r.label}`}
@@ -404,6 +456,15 @@ export default function RubricsPage() {
       </div>
 
       <PlanGate feature="customRubrics" title="Custom Rubrics (Coach+)" tierOverride={tier}>
+        <div className="mb-3">
+          <Button label="+ Add from Library" variant="secondary" onClick={() => setShowLibrary(true)} />
+        </div>
+        <RubricLibraryPicker
+          visible={showLibrary}
+          onClose={() => setShowLibrary(false)}
+          onPick={(items) => void addFromLibrary(items)}
+          disabledNames={custom.map((r) => r.label)}
+        />
         <Card accent className="flex flex-col gap-4">
           <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             {editingKey ? 'Edit Drill / Category' : 'Add Custom Drill / Category'}

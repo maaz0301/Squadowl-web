@@ -328,6 +328,11 @@ export interface DataSource {
    * audience toggles); writes need an owner or admin.
    */
   listLibraryItems(): Promise<import('./types').LibraryItem[]>;
+  // Rubrics Library: rubrics saved once and reused across teams and evaluations.
+  listRubricLibrary(): Promise<import('./types').RubricLibraryItem[]>;
+  createRubricLibraryItem(input: import('./types').RubricLibraryInput): Promise<import('./types').RubricLibraryItem>;
+  updateRubricLibraryItem(id: string, input: import('./types').RubricLibraryInput): Promise<import('./types').RubricLibraryItem>;
+  deleteRubricLibraryItem(id: string): Promise<void>;
   createLibraryItem(input: import('./types').LibraryItemInput, file?: File): Promise<import('./types').LibraryItem>;
   updateLibraryItem(id: string, updates: Partial<import('./types').LibraryItemInput>): Promise<import('./types').LibraryItem>;
   deleteLibraryItem(item: import('./types').LibraryItem): Promise<void>;
@@ -606,6 +611,21 @@ export interface DataSource {
     onProgress?: (done: number) => void,
   ): Promise<import('./types').PlayerImportResult>;
   removeTeamRosterPlayer(teamId: string, athleteId: string): Promise<void>;
+  /**
+   * Take a linked player off one team only. The player, their other teams and every
+   * evaluation and fitness result stay, and linking them again brings it all back.
+   * Refuses when this is the player's last team (`alsoAthleteIds` are the same
+   * person's duplicate records, counted too).
+   */
+  unlinkAthleteFromTeam(teamId: string, athleteId: string, alsoAthleteIds?: string[]): Promise<void>;
+  /**
+   * Link existing players (by athlete id) onto an evaluation as the same person, not
+   * a copy. Someone already on it is reported back rather than added twice; someone
+   * previously unlinked is restored with their results.
+   */
+  linkAthletesToTryout(tryoutId: string, athleteIds: string[]): Promise<{ linked: string[]; already: string[] }>;
+  /** The teams and evaluations each player is currently linked to, keyed by athlete id. */
+  listAthleteLinks(athleteIds: string[]): Promise<Record<string, import('./types').AthleteLinks>>;
   /**
    * Remove many players from a team roster in a few chunked statements rather
    * than one request each. Throws if any of them is still on the roster

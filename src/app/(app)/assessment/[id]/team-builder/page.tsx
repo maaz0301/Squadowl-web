@@ -20,6 +20,7 @@ import {
   useAlert,
 } from '@/components/ui';
 import { PlanGate } from '@/components/PlanGate';
+import { filterIdsByBirthYear, isBirthYearRangeActive, type BirthYearRange } from '@/lib/ageFilter';
 import { FriendPackagesCard } from '@/components/teamBuilder/FriendPackagesCard';
 import {
   useTryoutQuery,
@@ -168,6 +169,8 @@ export default function TeamBuilderPage() {
       : 'none';
 
   const [editedTeams, setEditedTeams] = useState<TeamBuilderTeam[] | null>(null);
+  // Narrows the unassigned pool by birth year so the right age group is on screen to drag from.
+  const [poolYears, setPoolYears] = useState<BirthYearRange>({ from: '', to: '' });
   const [editedUnassigned, setEditedUnassigned] = useState<string[] | null>(null);
   const [draggedPlayer, setDraggedPlayer] = useState<{ id: string; from: string } | null>(null);
   const [dragOverZone, setDragOverZone] = useState<string | null>(null);
@@ -920,6 +923,7 @@ export default function TeamBuilderPage() {
                 })}
 
                 {(() => {
+                  const poolShown = filterIdsByBirthYear(effectiveUnassigned, playerById, poolYears);
                   const { style: dropStyle, ...dropHandlers } = dropZoneProps(UNASSIGNED);
                   return (
                     <Card
@@ -936,8 +940,38 @@ export default function TeamBuilderPage() {
                           Unassigned
                         </span>
                         <span className="text-xs font-medium" style={{ color: colors.inkMuted }}>
-                          {effectiveUnassigned.length} player{effectiveUnassigned.length === 1 ? '' : 's'}
+                          {isBirthYearRangeActive(poolYears)
+                            ? `${poolShown.length} of ${effectiveUnassigned.length} players`
+                            : `${effectiveUnassigned.length} player${effectiveUnassigned.length === 1 ? '' : 's'}`}
                         </span>
+                        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by birth year">
+                          <span className="text-xs font-semibold" style={{ color: colors.inkMuted }}>
+                            Born
+                          </span>
+                          {(['from', 'to'] as const).map((k) => (
+                            <input
+                              key={k}
+                              inputMode="numeric"
+                              maxLength={4}
+                              placeholder={k === 'from' ? 'From' : 'To'}
+                              aria-label={k === 'from' ? 'Born from year' : 'Born to year'}
+                              value={poolYears[k]}
+                              onChange={(e) => setPoolYears((cur) => ({ ...cur, [k]: e.target.value.replace(/\D/g, '') }))}
+                              className="w-16 rounded-md border px-2 py-1 text-xs"
+                              style={{ backgroundColor: colors.tile, borderColor: colors.border, color: colors.ink }}
+                            />
+                          ))}
+                          {isBirthYearRangeActive(poolYears) ? (
+                            <button
+                              type="button"
+                              className="text-xs font-semibold underline"
+                              style={{ color: colors.primary }}
+                              onClick={() => setPoolYears({ from: '', to: '' })}
+                            >
+                              Clear
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="flex max-h-[62vh] flex-col gap-2 overflow-y-auto px-3 pb-3">
                         <p className="shrink-0 text-xs" style={{ color: colors.inkMuted }}>
@@ -945,7 +979,7 @@ export default function TeamBuilderPage() {
                             ? "Didn't fit within the requested team count and size, so they were left out instead of being added to a team."
                             : terms.t('Drop players here to leave them off every team.')}
                         </p>
-                        {effectiveUnassigned.map((pid) => renderPlayerRow(pid, UNASSIGNED))}
+                        {poolShown.map((pid) => renderPlayerRow(pid, UNASSIGNED))}
                       </div>
                     </Card>
                   );

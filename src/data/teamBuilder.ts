@@ -780,7 +780,7 @@ export function buildTeamBuilderExportRows(
   const overallByPlayerId = new Map(results.map((r) => [r.player.id, r.overall]));
   const playerById = new Map(tryout.roster.map((p) => [p.id, p]));
   const t = termsFor(tryout);
-  const headers = ['Team', t('Player'), t('Jersey'), 'Pos', 'Role', 'Overall'];
+  const headers = ['Team', t('Player'), t('Jersey'), 'Pos', 'Birthdate', 'Role', 'Overall'];
   const teams = opts?.teamId ? state.teams.filter((t) => t.id === opts.teamId) : state.teams;
 
   const rows: string[][] = [];
@@ -794,6 +794,7 @@ export function buildTeamBuilderExportRows(
           p ? playerDisplayName(p) : pid,
           p?.jersey ?? '',
           p?.pos ?? '',
+          p ? (p.dateOfBirth || p.yearOfBirth || '') : '',
           role,
           overall != null ? overall.toFixed(2) : '',
         ]);

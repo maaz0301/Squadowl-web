@@ -134,6 +134,7 @@ import type {
   ChatReportReason,
   TeamRosterCursor,
   TeamRosterPlayer,
+  AthleteLinks,
   Tryout,
   TryoutSummary,
   UserProfile,
@@ -2932,6 +2933,93 @@ export class SupabaseDataSource implements DataSource {
       },
       onProgress,
     );
+  }
+
+  async unlinkAthleteFromTeam(teamId: string, athleteId: string, alsoAthleteIds: string[] = []): Promise<void> {
+    const { supabase } = await this.userCtx();
+    const ids = [...new Set([athleteId, ...alsoAthleteIds].filter(Boolean))];
+    const { data, error } = await supabase
+      .from('team_roster')
+      .select('team_id')
+      .in('athlete_id', ids)
+      .neq('team_id', teamId);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) {
+      throw new Error('A player always needs at least one team, so they cannot be unlinked from their last team.');
+    }
+    await this.removeTeamRosterPlayer(teamId, athleteId);
+  }
+
+  async linkAthletesToTryout(
+    tryoutId: string,
+    athleteIds: string[],
+  ): Promise<{ linked: string[]; already: string[] }> {
+    const ids = [...new Set(athleteIds.filter(Boolean))];
+    if (ids.length === 0) return { linked: [], already: [] };
+    const { supabase } = await this.ctx();
+    const existing = unwrap(
+      await supabase
+        .from('tryout_participants')
+        .select('id, athlete_id, removed_at')
+        .eq('tryout_id', tryoutId)
+        .in('athlete_id', ids),
+    ) as Row[];
+    const byAthlete = new Map(existing.map((r) => [r.athlete_id as string, r]));
+    const already: string[] = [];
+    const restore: string[] = [];
+    const fresh: string[] = [];
+    for (const id of ids) {
+      const row = byAthlete.get(id);
+      if (!row) fresh.push(id);
+      else if (row.removed_at) restore.push(row.id as string);
+      else already.push(id);
+    }
+    // A player unlinked earlier comes back with the participant row, so their scores return too.
+    if (restore.length) {
+      unwrap(await supabase.from('tryout_participants').update({ removed_at: null }).in('id', restore));
+    }
+    if (fresh.length) {
+      unwrap(
+        await supabase
+          .from('tryout_participants')
+          .insert(fresh.map((athlete_id) => ({ tryout_id: tryoutId, athlete_id, registration_source: 'manual' }))),
+      );
+    }
+    return { linked: ids.filter((id) => !already.includes(id)), already };
+  }
+
+  async listAthleteLinks(athleteIds: string[]): Promise<Record<string, AthleteLinks>> {
+    const ids = [...new Set(athleteIds.filter(Boolean))];
+    const out: Record<string, AthleteLinks> = {};
+    if (ids.length === 0) return out;
+    const { supabase } = await this.userCtx();
+    const of = (id: string) => (out[id] ??= { teams: [], evaluations: [] });
+    // Ids ride in the query string, so a big roster is read in modest chunks, a few at a time.
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 80) chunks.push(ids.slice(i, i + 80));
+    for (let i = 0; i < chunks.length; i += 4) {
+      await Promise.all(
+        chunks.slice(i, i + 4).map(async (chunk) => {
+          const [teams, parts] = await Promise.all([
+            supabase.from('team_roster').select('athlete_id, team_id, teams(name)').in('athlete_id', chunk),
+            supabase
+              .from('tryout_participants')
+              .select('athlete_id, tryout_id, tryouts(name)')
+              .in('athlete_id', chunk)
+              .is('removed_at', null),
+          ]);
+          if (teams.error) throw new Error(teams.error.message);
+          if (parts.error) throw new Error(parts.error.message);
+          for (const r of (teams.data ?? []) as Row[]) {
+            of(r.athlete_id as string).teams.push({ id: r.team_id as string, name: (r.teams as { name?: string } | null)?.name ?? 'Team' });
+          }
+          for (const r of (parts.data ?? []) as Row[]) {
+            of(r.athlete_id as string).evaluations.push({ id: r.tryout_id as string, name: (r.tryouts as { name?: string } | null)?.name ?? 'Evaluation' });
+          }
+        }),
+      );
+    }
+    return out;
   }
 
   async removeTeamRosterPlayers(
@@ -9514,6 +9602,79 @@ export class SupabaseDataSource implements DataSource {
       createdAt: toMs(r.created_at),
       updatedAt: toMs(r.updated_at),
     };
+  }
+
+  // ─── Rubrics Library ────────────────────────────────────────────────────────
+  private rowToRubricLibraryItem(r: Row): import('@/data/types').RubricLibraryItem {
+    return {
+      id: r.id as string,
+      name: r.name as string,
+      sport: (r.sport as string | null) ?? undefined,
+      scoringType: ((r.scoring_type as string) || 'skill') as import('@/data/types').ScoringType,
+      definition: ((r.definition as object | null) ?? {}) as import('@/data/types').RubricLibraryItem['definition'],
+      createdAt: new Date(r.created_at as string).getTime(),
+      updatedAt: new Date((r.updated_at ?? r.created_at) as string).getTime(),
+    };
+  }
+
+  async listRubricLibrary(): Promise<import('@/data/types').RubricLibraryItem[]> {
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase.from('rubric_library').select('*').order('name', { ascending: true }),
+    ) as Row[];
+    return rows.map((r) => this.rowToRubricLibraryItem(r));
+  }
+
+  async createRubricLibraryItem(
+    input: import('@/data/types').RubricLibraryInput,
+  ): Promise<import('@/data/types').RubricLibraryItem> {
+    const { supabase, accountId } = await this.ctx();
+    const name = input.name.trim();
+    if (!name) throw new Error('Give the rubric a name.');
+    const row = await supabase
+      .from('rubric_library')
+      .insert({
+        account_id: accountId,
+        name,
+        sport: input.sport?.trim() || null,
+        scoring_type: input.scoringType,
+        definition: input.definition,
+      })
+      .select('*')
+      .single();
+    if (row.error) throw new Error(row.error.message);
+    return this.rowToRubricLibraryItem(row.data as Row);
+  }
+
+  async updateRubricLibraryItem(
+    id: string,
+    input: import('@/data/types').RubricLibraryInput,
+  ): Promise<import('@/data/types').RubricLibraryItem> {
+    const { supabase } = await this.userCtx();
+    const name = input.name.trim();
+    if (!name) throw new Error('Give the rubric a name.');
+    const row = await supabase
+      .from('rubric_library')
+      .update({
+        name,
+        sport: input.sport?.trim() || null,
+        scoring_type: input.scoringType,
+        definition: input.definition,
+      })
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (row.error) throw new Error(row.error.message);
+    // RLS hides a row the caller cannot write, so "no row" means no permission.
+    if (!row.data) throw new Error('You do not have permission to change this rubric.');
+    return this.rowToRubricLibraryItem(row.data as Row);
+  }
+
+  async deleteRubricLibraryItem(id: string): Promise<void> {
+    const { supabase } = await this.userCtx();
+    const res = await supabase.from('rubric_library').delete().eq('id', id).select('id');
+    if (res.error) throw new Error(res.error.message);
+    if (!res.data?.length) throw new Error('You do not have permission to delete this rubric.');
   }
 
   async listLibraryItems(): Promise<import('@/data/types').LibraryItem[]> {

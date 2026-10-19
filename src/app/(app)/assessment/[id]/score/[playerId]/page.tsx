@@ -1,6 +1,7 @@
 'use client';
 'use no memo';
 
+import { PastResultsPanel } from '@/components/player/PastResultsPanel';
 import { NotAttemptedAll } from '@/components/ui/NotAttemptedAll';
 import { NOT_ATTEMPTED_SUFFIX, isNotAttempted, withNotAttempted, withScore, withoutScore } from '@/lib/notAttempted';
 import { useTerms } from '@/lib/terms';
@@ -553,6 +554,8 @@ export default function ScorePage() {
           ) : null}
         </div>
       ) : null}
+
+      {isAssessorOnly ? null : <PastResultsPanel athleteId={player?.athleteId} excludeTryoutId={id} />}
 
       {/* edge-bleed runs the strip to the screen edge on phones so a
           half-visible last session reads as "scroll me" instead of a hard

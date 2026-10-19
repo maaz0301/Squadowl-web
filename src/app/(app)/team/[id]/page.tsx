@@ -1,6 +1,9 @@
 'use client';
 'use no memo';
 
+import { useAgeSortStore, AGE_SORT_LABEL } from '@/state/ageSortStore';
+import { LinkPlayerModal } from '@/components/LinkPlayerModal';
+import { compareByAge } from '@/lib/ageSort';
 import { RepeatField } from '@/components/RepeatField';
 import { useTerms, sportLabel } from '@/lib/terms';
 import { useEffect, useRef, useState } from 'react';
@@ -46,6 +49,8 @@ import {
   useTeamRosterPagesQuery,
   useTeamRosterAthleteIdsQuery,
   useAddTeamRosterPlayersMutation,
+  useUnlinkTeamPlayerMutation,
+  useAthleteLinksQuery,
   useAddManualTeamPlayerMutation,
   useUpdateTeamRosterPlayerMutation,
   useImportTeamRosterPlayersMutation,
@@ -229,6 +234,8 @@ export default function TeamDetailPage() {
   // read already gives. 'name'/'age' need the whole roster in memory to sort
   // correctly — see displayedPlayers below — so they switch off pagination.
   const [rosterSort, setRosterSort] = useState<'recent' | 'name' | 'age'>('recent');
+  const ageDir = useAgeSortStore((s) => s.ageSortDir);
+  const toggleAgeDir = useAgeSortStore((s) => s.toggleAgeSortDir);
   const [viewPlayerId, setViewPlayerId] = useState<string | null>(null);
   // Full assessment reads (every roster entry joined to its athlete, every
   // evaluation, score and registration for the whole account) are the
@@ -287,6 +294,14 @@ export default function TeamDetailPage() {
   const uploadTeamPlayerPhoto = useUploadTeamPlayerPhotoMutation(id);
   const [showEditPlayer, setShowEditPlayer] = useState(false);
   const removeRosterPlayer = useRemoveTeamRosterPlayerMutation(id);
+  const unlinkRosterPlayer = useUnlinkTeamPlayerMutation(id);
+  const [showLinkPlayer, setShowLinkPlayer] = useState(false);
+  // The other teams each listed player is linked to, for the "Also on" line and the Unlink option.
+  const linksQuery = useAthleteLinksQuery(
+    (rosterSort === 'recent' ? rosterPages.data?.pages.flatMap((pg) => pg.players) : fullRosterQuery.data)?.map(
+      (p) => p.athleteId,
+    ) ?? [],
+  );
   const [removeProgress, setRemoveProgress] = useState<{ done: number; total: number } | null>(null);
   const removeRosterPlayers = useRemoveTeamRosterPlayersMutation(id, (done, total) =>
     setRemoveProgress({ done, total }),
@@ -573,14 +588,7 @@ export default function TeamDetailPage() {
     if (rosterSort === 'name') {
       sorted.sort((a, b) => a.first.localeCompare(b.first) || a.last.localeCompare(b.last));
     } else {
-      // Oldest first, the usual reading order for a roster sorted "by age". A
-      // missing birth year (never required to add a player) sinks to the
-      // bottom on either sort rather than being guessed at as oldest.
-      sorted.sort((a, b) => {
-        if (a.yearOfBirth == null) return b.yearOfBirth == null ? 0 : 1;
-        if (b.yearOfBirth == null) return -1;
-        return a.yearOfBirth - b.yearOfBirth;
-      });
+      sorted.sort(compareByAge(ageDir));
     }
     return sorted;
   })();
@@ -832,6 +840,29 @@ export default function TeamDetailPage() {
     } finally {
       setEnrollingAssessments(false);
       setAddPlayersProgress(null);
+    }
+  };
+
+  const linkPlayers = async (athleteIds: string[]) => {
+    try {
+      await addRosterPlayers.mutateAsync(athleteIds.map((athleteId) => ({ athleteId })));
+      setShowLinkPlayer(false);
+    } catch (e) {
+      await alert('Link failed', e instanceof Error ? e.message : 'Could not link these players.');
+    }
+  };
+
+  const confirmUnlinkPlayer = async (athleteId: string, label: string) => {
+    const ok = await confirm({
+      title: 'Unlink Player',
+      message: `Unlink ${label} from ${team.name}? They stay on their other teams, and their profile and every result are kept. You can link them again any time.`,
+      confirmLabel: 'Unlink',
+    });
+    if (!ok) return;
+    try {
+      await unlinkRosterPlayer.mutateAsync({ athleteId });
+    } catch (e) {
+      await alert('Could not unlink', e instanceof Error ? e.message : 'Could not unlink this player.');
     }
   };
 
@@ -1611,6 +1642,7 @@ export default function TeamDetailPage() {
                 setShowAddPlayers(true);
               }}
             />
+            <Button label="+ Link Player" size="sm" onClick={() => setShowLinkPlayer(true)} />
             <Button
               label={`+ Add ${terms.player} Manually`}
               size="sm"
@@ -1681,7 +1713,11 @@ export default function TeamDetailPage() {
             <div className="mb-3 flex flex-wrap gap-2">
               <Chip label="Recent" active={rosterSort === 'recent'} onClick={() => setRosterSort('recent')} />
               <Chip label="A–Z" active={rosterSort === 'name'} onClick={() => setRosterSort('name')} />
-              <Chip label="Age" active={rosterSort === 'age'} onClick={() => setRosterSort('age')} />
+              <Chip
+                label={rosterSort === 'age' ? AGE_SORT_LABEL[ageDir] : 'Age'}
+                active={rosterSort === 'age'}
+                onClick={() => (rosterSort === 'age' ? toggleAgeDir() : setRosterSort('age'))}
+              />
             </div>
           ) : null}
           {(rosterSort === 'recent' ? rosterPages.isLoading : fullRosterQuery.isLoading) ? (
@@ -1724,7 +1760,9 @@ export default function TeamDetailPage() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {displayedPlayers.map((p) => (
+              {displayedPlayers.map((p) => {
+                const otherTeams = (linksQuery.data?.[p.athleteId]?.teams ?? []).filter((t) => t.id !== id);
+                return (
                 <Card
                   key={p.id}
                   className="flex items-center gap-3"
@@ -1764,9 +1802,22 @@ export default function TeamDetailPage() {
                       <span className="mt-0.5 block truncate text-xs" style={{ color: colors.inkMuted }}>
                         {[p.jersey ? `#${p.jersey}` : null, p.pos, p.sourceTryoutName].filter(Boolean).join(' · ')}
                       </span>
+                      {otherTeams.length > 0 ? (
+                        <span className="mt-0.5 block truncate text-xs" style={{ color: colors.info }}>
+                          Also on {otherTeams.map((t) => t.name).join(', ')}
+                        </span>
+                      ) : null}
                     </span>
                   </button>
-                  {rosterSelectMode ? null : (
+                  {rosterSelectMode ? null : otherTeams.length > 0 ? (
+                    <Button
+                      label="Unlink"
+                      size="sm"
+                      variant="ghost"
+                      loading={unlinkRosterPlayer.isPending && unlinkRosterPlayer.variables?.athleteId === p.athleteId}
+                      onClick={() => confirmUnlinkPlayer(p.athleteId, `${p.first} ${p.last}`)}
+                    />
+                  ) : (
                     <Button
                       label="Remove"
                       size="sm"
@@ -1776,7 +1827,8 @@ export default function TeamDetailPage() {
                     />
                   )}
                 </Card>
-              ))}
+                );
+              })}
             </div>
           )}
           {rosterSort === 'recent' && rosterPages.hasNextPage ? (
@@ -1863,7 +1915,7 @@ export default function TeamDetailPage() {
           <Card className="flex flex-col items-start gap-2">
             <SectionLabel>Export Team</SectionLabel>
             <p className="text-xs" style={{ color: colors.inkMuted }}>
-              Download the full roster with jersey, position, year of birth, and player and guardian contact
+              Download the full roster with jersey, position, birth date, team, and player and guardian contact
               details. Medical information is not included.
             </p>
             <div className="mt-1 flex flex-wrap gap-2">
@@ -2257,6 +2309,15 @@ export default function TeamDetailPage() {
       </Modal>
 
       <DeleteProgressModal visible={removeRosterPlayers.isPending} progress={removeProgress} />
+
+      <LinkPlayerModal
+        visible={showLinkPlayer}
+        where="this team"
+        linkedAthleteIds={new Set(rosterAthleteIdsQuery.data ?? [])}
+        linking={addRosterPlayers.isPending}
+        onClose={() => setShowLinkPlayer(false)}
+        onLink={(ids) => void linkPlayers(ids)}
+      />
 
       <ImportPlayersModal
         visible={showImportPlayers}

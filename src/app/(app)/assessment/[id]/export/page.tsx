@@ -59,7 +59,9 @@ export default function ExportPage() {
   // The team's own logo, for club accounts. Looked up here (before the loading
   // guards below, since it is a hook) from the team this evaluation belongs to.
   const teamsQuery = useTeamsQuery();
-  const teamLogoUrl = teamsQuery.data?.find((t) => t.id === tryoutQuery.data?.teamId)?.logoUrl;
+  const exportTeam = teamsQuery.data?.find((t) => t.id === tryoutQuery.data?.teamId);
+  const teamLogoUrl = exportTeam?.logoUrl;
+  const teamName = exportTeam?.name;
   const organizationLogoUrl = useUser()?.organizationLogoUrl;
 
   if (tryoutQuery.isLoading || !id) return <LoadingState />;
@@ -94,7 +96,7 @@ export default function ExportPage() {
   };
   const filter = buildFilter();
   const filterActive = isReportFilterActive(filter);
-  const matchCount = buildPlayerFullResults(tryout, sortBy, filter).length;
+  const matchCount = buildPlayerFullResults(tryout, sortBy, filter, teamName).length;
 
   const handleExport = async (format: ExportFormat) => {
     if (matchCount === 0) {
@@ -121,8 +123,9 @@ export default function ExportPage() {
               filter,
               content,
               layout,
+              teamName,
             }
-          : { sortBy, filter },
+          : { sortBy, filter, teamName },
       );
       toast(`${format.toUpperCase()} downloaded`, 'success');
     } catch (e) {
@@ -160,16 +163,10 @@ export default function ExportPage() {
         <div className="mb-6 flex flex-col gap-3">
           <SectionLabel>Export Formats</SectionLabel>
           <div className="flex flex-wrap gap-3">
-            <Button
-              label="Export CSV"
-              variant="secondary"
-              onClick={() => handleExport('csv')}
-              loading={isExporting === 'csv'}
-            />
             {allowedFormats.includes('pdf') ? (
               <Button
                 label="Export PDF"
-                variant="secondary"
+                variant="primary"
                 onClick={() => handleExport('pdf')}
                 loading={isExporting === 'pdf'}
               />
@@ -182,6 +179,12 @@ export default function ExportPage() {
                 loading={isExporting === 'xlsx'}
               />
             ) : null}
+            <Button
+              label="Export CSV"
+              variant="secondary"
+              onClick={() => handleExport('csv')}
+              loading={isExporting === 'csv'}
+            />
           </div>
           {allowedFormats.includes('pdf') ? (
             <Card className="flex flex-col gap-3">

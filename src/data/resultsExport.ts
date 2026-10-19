@@ -82,6 +82,10 @@ export interface PlayerFullResults {
   name: string;
   jersey: string;
   pos: string;
+  /** Full date of birth when known, else the birth year; '' when neither is. */
+  birthDate: string;
+  /** The team the evaluation belongs to ('' when it has none). */
+  team: string;
   shoots: string;
   overallScore: string;
   overallRank: string;
@@ -247,7 +251,7 @@ function rankLabels(
 }
 
 /** The ranked results table: one row per player, one column per rubric in use. */
-export function buildResultsSummary(tryout: Tryout): ResultsSummary {
+export function buildResultsSummary(tryout: Tryout, teamName = ''): ResultsSummary {
   const columns = resultsColumns(tryout);
   const results = computePlayerResults(tryout).slice().sort(compareResultsBestFirst(tryout));
   const evalsByPlayer = evalsByPlayerId(tryout);
@@ -259,12 +263,13 @@ export function buildResultsSummary(tryout: Tryout): ResultsSummary {
       'Date', tryout.tryoutDate ?? '',
       'Rink', tryout.rink ?? '',
       'Sport', sportLabel(tryout),
+      'Team', teamName,
     ],
     ['Generated', new Date().toLocaleString()],
   ];
 
   const headers = [
-    'Rank', 'Name', termsFor(tryout)('Jersey'), 'Position', 'Shoots', 'Overall',
+    'Rank', 'Name', termsFor(tryout)('Jersey'), 'Position', 'Team', 'Birthdate', 'Shoots', 'Overall',
     ...columns.map((c) => c.label),
     'Evaluations', 'Recommendation', 'Strengths', 'Areas to Improve',
   ];
@@ -276,6 +281,8 @@ export function buildResultsSummary(tryout: Tryout): ResultsSummary {
       playerDisplayName(r.player),
       r.player.jersey ?? '',
       r.player.pos ?? '',
+      teamName,
+      birthDateOf(r.player),
       r.player.shoots ?? '',
       r.evalCount ? round2(r.overall) : '',
       ...columns.map((c) => formatCategoryScore(r.categoryScores[c.key])),
@@ -290,10 +297,10 @@ export function buildResultsSummary(tryout: Tryout): ResultsSummary {
 }
 
 /** Title + subtitle line for the printed full-results report. */
-export function buildReportDocInfo(tryout: Tryout): ReportDocInfo {
+export function buildReportDocInfo(tryout: Tryout, teamName = ''): ReportDocInfo {
   return {
     title: `${tryout.name} — Full Results`,
-    subtitle: `Assessment: ${tryout.name} • Event Type: ${tryout.eventType} • Date: ${tryout.tryoutDate ?? ''} • Rink: ${tryout.rink ?? ''} • Sport: ${sportLabel(tryout)}`,
+    subtitle: `Assessment: ${tryout.name} • Event Type: ${tryout.eventType} • Date: ${tryout.tryoutDate ?? ''} • Rink: ${tryout.rink ?? ''} • Sport: ${sportLabel(tryout)}${teamName ? ` • Team: ${teamName}` : ''}`,
   };
 }
 
@@ -356,6 +363,12 @@ function birthYearOf(p: Player): string {
   return (p.yearOfBirth ?? '').trim();
 }
 
+/** The birth date to print: the full date when known, else just the year. */
+export function birthDateOf(p: Player): string {
+  if (p.dateOfBirth && /^\d{4}-\d{2}-\d{2}$/.test(p.dateOfBirth)) return p.dateOfBirth;
+  return (p.yearOfBirth ?? '').trim();
+}
+
 /** Birth moment as a number, for ordering by age; unknown ages come back as NaN. */
 function birthTime(p: Player): number {
   if (p.dateOfBirth) {
@@ -391,6 +404,7 @@ export function buildPlayerFullResults(
   tryout: Tryout,
   sort: ReportSort = 'jersey',
   filter?: ReportFilter,
+  teamName = '',
 ): PlayerFullResults[] {
   const results = computePlayerResults(tryout);
   const resultsById = new Map(results.map((r) => [r.player.id, r]));
@@ -585,6 +599,8 @@ export function buildPlayerFullResults(
       name: playerDisplayName(player),
       jersey: player.jersey ?? '',
       pos: player.pos ?? '',
+      birthDate: birthDateOf(player),
+      team: teamName,
       shoots: player.shoots ?? '',
       overallScore: r.evalCount ? formatScore2(r.overall) : '',
       overallRank: overallRanks.get(player.id) ?? '',
@@ -602,7 +618,12 @@ export function buildPlayerFullResults(
 const EVAL_CHUNK_SIZE = 8;
 
 /** The full-results report as CSV rows: info header, then one block of rows per player (PLYR/CAT/STR/IMP + chunked eval tables). */
-export function buildFullResultsCsvRows(tryout: Tryout, sort?: ReportSort, filter?: ReportFilter): FullResultsCsv {
+export function buildFullResultsCsvRows(
+  tryout: Tryout,
+  sort?: ReportSort,
+  filter?: ReportFilter,
+  teamName = '',
+): FullResultsCsv {
   const infoLines: (string | number)[][] = [
     [
       'Assessment', tryout.name,
@@ -610,17 +631,20 @@ export function buildFullResultsCsvRows(tryout: Tryout, sort?: ReportSort, filte
       'Date', tryout.tryoutDate ?? '',
       'Rink', tryout.rink ?? '',
       'Sport', sportLabel(tryout),
+      'Team', teamName,
     ],
     ['Generated', new Date().toISOString(), 'Format', 'Portrait full results with score/rank columns'],
   ];
 
-  const playerBlocks = buildPlayerFullResults(tryout, sort, filter).map((card) => {
+  const playerBlocks = buildPlayerFullResults(tryout, sort, filter, teamName).map((card) => {
     const rows: (string | number)[][] = [];
 
     rows.push([
       'PLYR', card.name,
       'J#', card.jersey,
       'POS', card.pos,
+      'DOB', card.birthDate,
+      'TEAM', card.team,
       'SHOT', card.shoots,
       'OVR SCORE', card.overallScore,
       'OVR RANK', card.overallRank,

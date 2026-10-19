@@ -165,6 +165,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: '/teams', label: 'Teams', icon: 'teams', match: '/team' },
         { href: '/calendar', label: 'Calendar', icon: 'calendar' },
         { href: '/library', label: 'Library', icon: 'library' },
+        { href: '/rubric-library', label: 'Rubrics Library', icon: 'rubrics' },
         { href: '/reports', label: 'Reports', icon: 'barChart' },
         { href: '/search', label: 'Search', icon: 'search' },
         ...(hasGuardianAthletes
