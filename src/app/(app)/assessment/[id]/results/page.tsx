@@ -1,7 +1,6 @@
 'use client';
 
 import { useTerms } from '@/lib/terms';
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { useThemeColors } from '@/theme/ThemeProvider';
@@ -11,9 +10,6 @@ import { CoachOnlyState } from '@/components/assessment/CoachOnlyState';
 import { useResultsQuery } from '@/features/queries';
 import { useAssessmentHref, useAssessmentId, useIsAssessorOnly } from '@/features/useAssessmentId';
 import { getScoreHeatLevel, isGoaliePosition, playerDisplayName } from '@/data/rubrics';
-import { ScoredDonut } from '@/components/compare/ScoredDonut';
-import { rosterPositionGroups } from '@/data/positions';
-import { getPlayerCategories } from '@/data/rubrics';
 import { compareResultsBestFirst, formatMetricRaw, metricSummaries } from '@/data/scoring';
 
 export default function ResultsPage() {
@@ -24,7 +20,6 @@ export default function ResultsPage() {
   const { data: tryout, results, isLoading, isError, refetch } = useResultsQuery(id);
   const isAssessorOnly = useIsAssessorOnly(tryout?.viewerIsOwner);
   const terms = useTerms(tryout?.settings.customLabels, tryout?.sport);
-  const [tab, setTab] = useState('overall');
 
   if (isLoading) return <LoadingState message="Loading results..." />;
   if (isError || !tryout) return <ErrorState message="Could not load results." onRetry={() => refetch()} />;
@@ -33,23 +28,6 @@ export default function ResultsPage() {
   const sorted = [...results].sort(compareResultsBestFirst(tryout));
   const skaters = sorted.filter((r) => !isGoaliePosition(r.player.pos));
   const goalies = sorted.filter((r) => isGoaliePosition(r.player.pos));
-
-  const inGroup = (r: (typeof sorted)[number], codes: string[]) => codes.includes((r.player.pos ?? '').trim().toUpperCase());
-  const groups = rosterPositionGroups(tryout.sport, sorted.map((r) => r.player)).filter((g) => sorted.some((r) => inGroup(r, g.codes)));
-  const activeGroup = groups.find((g) => g.key === tab);
-  const visible = activeGroup ? sorted.filter((r) => inGroup(r, activeGroup.codes)) : sorted;
-  const ringColors = ['#FF6B2B', '#3B82F6', '#94A3B8', '#22C55E'];
-  const coverage = new Map<string, { label: string; n: number }>();
-  for (const r of sorted) {
-    for (const c of getPlayerCategories(tryout.sport, r.player.pos, tryout.settings.customRubrics)) {
-      const cur = coverage.get(c.key) ?? { label: c.label, n: 0 };
-      if (r.categoryScores[c.key] != null) cur.n += 1;
-      coverage.set(c.key, cur);
-    }
-  }
-  const rings = [...coverage.values()]
-    .slice(0, ringColors.length)
-    .map((c, i) => ({ label: c.label, pct: (c.n / Math.max(1, sorted.length)) * 100, color: ringColors[i] }));
 
   return (
     <>
@@ -70,42 +48,11 @@ export default function ResultsPage() {
         ) : null}
       </div>
 
-      {sorted.length > 0 && rings.length > 0 ? (
-        <div className="mb-4">
-          <ScoredDonut scored={sorted.filter((r) => r.evalCount > 0).length} total={sorted.length} rings={rings} />
-        </div>
-      ) : null}
-      {groups.length > 0 ? (
-        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-          {[{ key: 'overall', label: 'Overall' }, ...groups].map((g) => {
-            const on = tab === g.key;
-            return (
-              <button
-                key={g.key}
-                type="button"
-                onClick={() => setTab(g.key)}
-                className="shrink-0 rounded-2xl border px-5 py-2.5 text-sm font-bold transition-[filter] hover:brightness-110"
-                style={{
-                  backgroundColor: on ? colors.primary : colors.tile,
-                  borderColor: on ? colors.primary : colors.border,
-                  color: on ? '#ffffff' : colors.ink,
-                }}
-              >
-                {g.label}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-
-      {visible.length === 0 ? (
-        <EmptyState
-          title={sorted.length > 0 ? 'No players in this group' : 'No results yet'}
-          message={sorted.length > 0 ? 'Pick another tab to see more players.' : terms.t('Score players to see the leaderboard.')}
-        />
+      {sorted.length === 0 ? (
+        <EmptyState title="No results yet" message={terms.t('Score players to see the leaderboard.')} />
       ) : (
         <div className="flex flex-col gap-2">
-          {visible.map((item, index) => {
+          {sorted.map((item, index) => {
             const heat = getScoreHeatLevel(item.overall);
             const heatColor = themeTokens.scoreColors[heat];
             return (
