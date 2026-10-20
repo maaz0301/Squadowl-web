@@ -5,7 +5,7 @@
 -- round trips, each paying the per row policy cost. This function checks the
 -- caller's role on the account once and answers in a single query: one page of
 -- athletes (plus one extra row so the app knows there is a next page),
--- optionally filtered by name or guardian name. Staff only.
+-- optionally filtered by name, guardian or email (partial words, any order). Staff only.
 
 create or replace function public.list_athlete_hub(
   p_account_id uuid,
@@ -18,8 +18,6 @@ language plpgsql stable security definer set search_path = public as $$
 declare
   v_term text;
   v_words text[];
-  v_one text;
-  v_two text;
   v_limit integer := least(greatest(coalesce(p_limit, 60), 1), 100);
 begin
   if auth.uid() is null then
@@ -31,9 +29,9 @@ begin
 
   -- LIKE wildcards in what was typed are dropped, not honoured.
   v_term := btrim(regexp_replace(coalesce(p_term, ''), '[%_\\]', '', 'g'));
-  v_words := regexp_split_to_array(v_term, '\s+');
-  v_one := v_words[1];
-  v_two := v_words[2];
+  -- Every word typed must appear somewhere in the name, guardian or email, in any
+  -- order and anywhere in the word, so "ar", "mith jo" and "smith john" all find John Smith.
+  v_words := array(select w from unnest(regexp_split_to_array(v_term, '\s+')) w where w <> '' limit 5);
 
   return query
   select to_jsonb(a)
@@ -45,13 +43,15 @@ begin
         x.account_id = p_account_id
         or exists (select 1 from public.athlete_account_access g where g.athlete_id = x.id and g.account_id = p_account_id)
       )
-      and (
-        v_term = ''
-        or case when v_two is not null and v_two <> ''
-             then x.first_name ilike v_one || '%' and x.last_name ilike v_two || '%'
-             else x.first_name ilike v_one || '%' or x.last_name ilike v_one || '%'
-                  or x.guardian_name ilike '%' || v_term || '%'
-           end
+      and not exists (
+        select 1 from unnest(v_words) w
+        where not (
+          coalesce(x.first_name, '') ilike '%' || w || '%'
+          or coalesce(x.last_name, '') ilike '%' || w || '%'
+          or coalesce(x.guardian_name, '') ilike '%' || w || '%'
+          or coalesce(x.guardian_email, '') ilike '%' || w || '%'
+          or coalesce(x.player_email, '') ilike '%' || w || '%'
+        )
       )
     order by x.first_name, x.last_name, x.id
     offset greatest(coalesce(p_offset, 0), 0)

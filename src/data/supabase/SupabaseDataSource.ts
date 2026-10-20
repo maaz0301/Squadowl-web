@@ -8331,6 +8331,7 @@ export class SupabaseDataSource implements DataSource {
     const CHUNK = 200;
     const MAX_SCAN = 4000;
     const term = search.trim().toLowerCase();
+    const words = term.split(/\s+/).filter(Boolean);
     const take = term ? CHUNK : limit;
     const out: Athlete[] = [];
     let pos = offset;
@@ -8349,11 +8350,12 @@ export class SupabaseDataSource implements DataSource {
       if (error) throw new Error(error.message);
       const rows = (data ?? []) as Row[];
       for (const a of rows) {
-        const hay = [a.first_name, a.last_name, `${a.first_name ?? ''} ${a.last_name ?? ''}`, a.guardian_name]
+        const hay = [a.first_name, a.last_name, a.guardian_name, a.guardian_email, a.player_email]
           .filter(Boolean)
           .join(' | ')
           .toLowerCase();
-        if (term && !hay.includes(term)) continue;
+        // Every word typed has to appear somewhere, in any order and inside a word ("mith jo" finds John Smith).
+        if (words.length && !words.every((w) => hay.includes(w))) continue;
         out.push({
           id: a.id,
           first: a.first_name ?? '',
@@ -8727,12 +8729,42 @@ export class SupabaseDataSource implements DataSource {
     return { participants, tryoutById, teams, assessments };
   }
 
+  /** Other athlete records in the account that are the same person (same name, birth year not in conflict). */
+  private async findSamePersonIds(supabase: SupabaseClient, athleteId: string, accountId: string): Promise<string[]> {
+    try {
+      const { data: me } = await supabase
+        .from('athletes')
+        .select('first_name, last_name, year_of_birth')
+        .eq('id', athleteId)
+        .maybeSingle();
+      const first = String(me?.first_name ?? '').trim().replace(/[%_\\]/g, '');
+      const last = String(me?.last_name ?? '').trim().replace(/[%_\\]/g, '');
+      if (!first || !last) return [];
+      const { data } = await supabase
+        .from('athletes')
+        .select('id, year_of_birth')
+        .eq('account_id', accountId)
+        .ilike('first_name', first)
+        .ilike('last_name', last)
+        .neq('id', athleteId)
+        .limit(50);
+      return ((data ?? []) as Row[])
+        .filter((r) => !me?.year_of_birth || !r.year_of_birth || r.year_of_birth === me.year_of_birth)
+        .map((r) => r.id as string);
+    } catch {
+      return [];
+    }
+  }
+
   async getPlayerProfile(athleteId: string, alsoAthleteIds?: string[]): Promise<PlayerProfile> {
     const { supabase, userId, accountId } = await this.ctx();
 
     // None of these three depend on each other's results — run together
     // instead of as a chain of round trips.
-    const ids = [athleteId, ...(alsoAthleteIds ?? []).filter((i) => i && i !== athleteId)];
+    // A player linked from another team or evaluation can be several records; when the caller
+    // did not say which, find them here so every linked evaluation shows on the profile.
+    const also = alsoAthleteIds ?? (await this.findSamePersonIds(supabase, athleteId, accountId));
+    const ids = [athleteId, ...also.filter((i) => i && i !== athleteId)];
     const [{ data: athleteRow }, contexts, { data: rosterRows }] = await Promise.all([
       supabase
         .from('athletes')
