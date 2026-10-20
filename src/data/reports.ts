@@ -178,7 +178,18 @@ export interface RubricLeader extends TopPerformer {
   unit?: string;
 }
 
-const rubricKey = (label: string) => label.trim().toLowerCase();
+/**
+ * Measures are matched across evaluations by name, and coaches word the same one differently
+ * ("# Double Unders in 30 seconds" and "# of Double Unders in 30 seconds"), so symbols, filler
+ * words and spacing are ignored: those evaluations then rank together as one measure.
+ */
+const rubricKey = (label: string) =>
+  label
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && w !== 'of' && w !== 'the')
+    .join(' ');
 
 /** Every measure that has at least one score, across all the evaluations, alphabetical. */
 export function listReportRubrics(tryouts: Tryout[]): ReportRubricOption[] {

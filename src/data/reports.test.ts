@@ -261,3 +261,31 @@ describe('a library rubric used on several teams', () => {
     expect(topPerformersByRubric(filterTryoutsByTeam([a, b], ['team-a']), '30m sprint').map((l) => l.name)).toEqual(['Ann Doe']);
   });
 });
+
+describe('the same measure worded differently across evaluations', () => {
+  const rubricNamed = (key: string, label: string) => ({
+    key,
+    label,
+    unit: 'skips',
+    scoringType: 'quantity' as const,
+    scale: '1-5' as const,
+    rankingDirection: 'higher_is_better' as const,
+    role: 'skater' as const,
+  });
+  const withMeasure = (id: string, pid: string, first: string, label: string, value: number) =>
+    makeTryout({
+      id,
+      teamId: `team-${id}`,
+      settings: { skaterWeights: {}, goalieWeights: {}, customRubrics: [rubricNamed(`k${id}`, label)] } as Tryout['settings'],
+      roster: [makePlayer({ id: pid, first })],
+      evals: [makeEval({ id: `e${id}`, playerId: pid, scores: { [`k${id}`]: value } })],
+    });
+  const a = withMeasure('a', 'p1', 'Olivia', '# Double Unders in 30 seconds', 59);
+  const b = withMeasure('b', 'p2', 'Emma', '# of Double Unders in 30 seconds', 51);
+
+  it('lists one measure and ranks both evaluations together, whichever wording was picked', () => {
+    const options = listReportRubrics([a, b]);
+    expect(options).toHaveLength(1);
+    expect(topPerformersByRubric([a, b], options[0].key).map((l) => l.name)).toEqual(['Olivia Doe', 'Emma Doe']);
+  });
+});
