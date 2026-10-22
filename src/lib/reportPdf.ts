@@ -314,6 +314,27 @@ export function renderCompactResults(
   }
 }
 
+/**
+ * How many rubric rows a several-per-page card can print before the rest are cut
+ * to "+N more". The same arithmetic drawCompactCard uses, so the export page can
+ * warn before anyone exports a PDF that leaves rubrics out.
+ */
+export function compactMetricCapacity(
+  perPage: Exclude<PlayersPerPage, 1>,
+  hasLogo: boolean,
+  content: ReportContent = DEFAULT_REPORT_CONTENT,
+): number {
+  const { rows } = GRID[perPage];
+  const gap = 10;
+  const top = PAGE_HEIGHT - 40 - (hasLogo ? LOGO_BAND : 0);
+  const gridTop = top - 34;
+  const slotH = (gridTop - 40 - gap * (rows - 1)) / rows;
+  // Name, overall and rule take 41 points off the top of the card; notes are pinned at the bottom.
+  const notesH = content.comments ? 3 * (7 + 3) + 4 : 0;
+  const metricsAvail = slotH - 48 - notesH;
+  return Math.max(0, Math.floor(metricsAvail / 6.5) - 1);
+}
+
 function drawCompactCard(
   page: PDFPage,
   { font, bold }: { font: PDFFont; bold: PDFFont },

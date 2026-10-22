@@ -10,6 +10,7 @@ import { useTryoutQuery, useShareLinkMutation, usePlatformBlockedFeaturesQuery, 
 import {
   DEFAULT_REPORT_CONTENT,
   PLAYERS_PER_PAGE_OPTIONS,
+  compactMetricCapacity,
   reportLogoUrls,
   type PlayersPerPage,
   type ReportContent,
@@ -96,7 +97,24 @@ export default function ExportPage() {
   };
   const filter = buildFilter();
   const filterActive = isReportFilterActive(filter);
-  const matchCount = buildPlayerFullResults(tryout, sortBy, filter, teamName).length;
+  const matchedCards = buildPlayerFullResults(tryout, sortBy, filter, teamName);
+  const matchCount = matchedCards.length;
+  // Several-per-page cards only have room for so many rubric rows; the rest print as "+N more".
+  const mostRubrics = Math.max(0, ...matchedCards.map((c) => c.metrics.length));
+  const cardCapacity =
+    layout === 'cards' && playersPerPage !== 1 && content.rubricScores
+      ? compactMetricCapacity(
+          playersPerPage as Exclude<PlayersPerPage, 1>,
+          reportLogoUrls({
+            club: clubMode,
+            organizationLogoUrl: printLogo ? organizationLogoUrl : undefined,
+            teamLogoUrl: printLogo ? teamLogoUrl : undefined,
+            appLogo: printAppLogo,
+          }).length > 0,
+          content,
+        )
+      : null;
+  const rubricsCutOff = cardCapacity !== null && mostRubrics > cardCapacity;
 
   const handleExport = async (format: ExportFormat) => {
     if (matchCount === 0) {
@@ -161,31 +179,6 @@ export default function ExportPage() {
 
       {exportsAllowed ? (
         <div className="mb-6 flex flex-col gap-3">
-          <SectionLabel>Export Formats</SectionLabel>
-          <div className="flex flex-wrap gap-3">
-            {allowedFormats.includes('pdf') ? (
-              <Button
-                label="Export PDF"
-                variant="primary"
-                onClick={() => handleExport('pdf')}
-                loading={isExporting === 'pdf'}
-              />
-            ) : null}
-            {allowedFormats.includes('xlsx') ? (
-              <Button
-                label="Export XLSX"
-                variant="secondary"
-                onClick={() => handleExport('xlsx')}
-                loading={isExporting === 'xlsx'}
-              />
-            ) : null}
-            <Button
-              label="Export CSV"
-              variant="secondary"
-              onClick={() => handleExport('csv')}
-              loading={isExporting === 'csv'}
-            />
-          </div>
           {allowedFormats.includes('pdf') ? (
             <Card className="flex flex-col gap-3">
               <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
@@ -235,6 +228,12 @@ export default function ExportPage() {
                     ? 'One player per page, with every evaluation listed.'
                     : 'Several players per page: scores, ranks and notes. Individual evaluations are left out to keep each card small.'}
                 </span>
+                {rubricsCutOff ? (
+                  <span className="text-xs font-bold" style={{ color: colors.danger }}>
+                    Some players have {mostRubrics} rubrics, but this layout fits {cardCapacity} on a card, so the rest print as
+                    &quot;+N more&quot;. Choose 1 player per page, or Compact list, to print every rubric.
+                  </span>
+                ) : null}
               </div>
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.inkMuted }}>
@@ -362,6 +361,38 @@ export default function ExportPage() {
               ) : null}
             </Card>
           ) : null}
+          {/* Pinned to the bottom of the screen: the layout options above are long, and the
+              buttons used to sit at the very top, so every export meant scrolling back up. */}
+          <div
+            className="sticky bottom-0 z-20 -mx-4 border-t px-4 py-3"
+            style={{ backgroundColor: colors.bg, borderColor: colors.border }}
+          >
+            <SectionLabel className="mb-2">Export Formats</SectionLabel>
+          <div className="flex flex-wrap items-center gap-3">
+            {allowedFormats.includes('pdf') ? (
+              <Button
+                label="Export PDF"
+                variant="primary"
+                onClick={() => handleExport('pdf')}
+                loading={isExporting === 'pdf'}
+              />
+            ) : null}
+            {allowedFormats.includes('xlsx') ? (
+              <Button
+                label="Export XLSX"
+                variant="secondary"
+                onClick={() => handleExport('xlsx')}
+                loading={isExporting === 'xlsx'}
+              />
+            ) : null}
+            <Button
+              label="Export CSV"
+              variant="secondary"
+              onClick={() => handleExport('csv')}
+              loading={isExporting === 'csv'}
+            />
+          </div>
+          </div>
           {!allowedFormats.includes('pdf') ? (
             <Card accent className="flex flex-col gap-2">
               <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>

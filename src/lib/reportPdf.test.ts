@@ -2,7 +2,8 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 
 import type { PlayerFullResults } from '@/data/resultsExport';
-import { embedLogos, pdfSafe, renderCompactResults, type PlayersPerPage } from './reportPdf';
+import { compactMetricCapacity, embedLogos, pdfSafe, renderCompactResults, type PlayersPerPage } from './reportPdf';
+import { readPdfPages } from './pdfTable';
 
 const card = (i: number, metrics = 8): PlayerFullResults => ({
   playerId: `p${i}`,
@@ -88,5 +89,26 @@ describe('embedLogos', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe('compactMetricCapacity', () => {
+  const cut = async (perPage: Exclude<PlayersPerPage, 1>, metrics: number) => {
+    const doc = await render(1, perPage, metrics);
+    const pages = await readPdfPages(Uint8Array.from(await doc.save()).buffer);
+    return pages.flat().some((i) => /\+\d+ more/.test(i.str));
+  };
+
+  it.each([2, 4, 6] as const)('matches where a %i-per-page card starts printing "+N more"', async (perPage) => {
+    const cap = compactMetricCapacity(perPage, false);
+    expect(cap).toBeGreaterThan(5);
+    expect(await cut(perPage, cap)).toBe(false);
+    expect(await cut(perPage, cap + 1)).toBe(true);
+  });
+
+  it('holds fewer rows when a logo strip or the notes take room', () => {
+    expect(compactMetricCapacity(4, true)).toBeLessThan(compactMetricCapacity(4, false));
+    const noNotes = { ...{ position: true, ranking: true, rubricScores: true, comments: false, assessor: true, date: true } };
+    expect(compactMetricCapacity(4, false, noNotes)).toBeGreaterThan(compactMetricCapacity(4, false));
   });
 });

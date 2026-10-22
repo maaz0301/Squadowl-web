@@ -173,7 +173,7 @@ function NewAssessmentForm() {
       },
     ]);
     setRubricError(null);
-    toast('Rubric added', 'success');
+    toast('Rubric created', 'success');
     setRubricLabel('');
     setRubricType('skill');
     setRubricScale('1-5');
