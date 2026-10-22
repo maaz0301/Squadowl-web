@@ -3924,6 +3924,7 @@ export class SupabaseDataSource implements DataSource {
     if (updates.eventType !== undefined) patch.event_type = EVENT_TYPE_TO_DB[updates.eventType];
     if (updates.tryoutDate !== undefined) patch.tryout_date = updates.tryoutDate || null;
     if (updates.startTime !== undefined) patch.start_time = updates.startTime || null;
+    if (updates.endTime !== undefined) patch.end_time = updates.endTime || null;
     if (updates.rink !== undefined) patch.location = updates.rink || null;
     if (updates.defaultPosition !== undefined) patch.default_position = updates.defaultPosition || null;
     if (updates.headAssessor !== undefined) patch.head_assessor = updates.headAssessor || null;
