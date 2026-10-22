@@ -167,6 +167,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         { href: '/library', label: 'Library', icon: 'library' },
         { href: '/rubric-library', label: 'Rubrics Library', icon: 'rubrics' },
         { href: '/reports', label: 'Reports', icon: 'barChart' },
+        { href: '/compare', label: 'Compare', icon: 'compare' },
         { href: '/search', label: 'Search', icon: 'search' },
         ...(hasGuardianAthletes
           ? ([{ href: '/my-athletes', label: 'My Athletes', icon: 'teams' }] as NavItem[])

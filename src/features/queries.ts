@@ -3252,6 +3252,71 @@ export function useGenerateReportCardCommentsMutation(tryoutId: string) {
 // ─── Rubrics Library ──────────────────────────────────────────────────────────
 const rubricLibraryKey = ['rubric-library'] as const;
 
+// ─── Compare (account-wide) ───────────────────────────────────────────────────
+const savedComparisonsKey = ['saved-comparisons'] as const;
+
+/** One page of players at a time, filtered on the server; the picker scrolls through the pages. */
+export function useCompareCandidatesQuery(filters: import('@/data/compare').CompareFilters) {
+  return useInfiniteQuery({
+    queryKey: ['compare-candidates', filters] as const,
+    queryFn: ({ pageParam }) => getDataSource().listCompareCandidates(filters, pageParam, 60),
+    initialPageParam: 0,
+    getNextPageParam: (last) => last.next ?? undefined,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** The evaluations behind the selected players, keyed by the sorted id list so it only reloads when the selection changes. */
+export function useCompareAssessmentsQuery(athleteIds: string[]) {
+  const key = [...athleteIds].sort();
+  return useQuery({
+    queryKey: ['compare-assessments', key] as const,
+    queryFn: () => getDataSource().getCompareAssessments(key),
+    enabled: key.length > 0,
+    staleTime: 60_000,
+  });
+}
+
+export function useCompareBirthYearsQuery() {
+  return useQuery({
+    queryKey: ['compare-birth-years'] as const,
+    queryFn: () => getDataSource().listCompareBirthYears(),
+    staleTime: 10 * 60_000,
+  });
+}
+
+export function useSavedComparisonsQuery() {
+  return useQuery({
+    queryKey: savedComparisonsKey,
+    queryFn: () => getDataSource().listSavedComparisons(),
+  });
+}
+
+export function useSaveComparisonMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: import('@/data/compare').SavedComparisonInput) => getDataSource().saveComparison(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: savedComparisonsKey }),
+  });
+}
+
+export function useUpdateSavedComparisonMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { id: string; input: import('@/data/compare').SavedComparisonInput }) =>
+      getDataSource().updateSavedComparison(args.id, args.input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: savedComparisonsKey }),
+  });
+}
+
+export function useDeleteSavedComparisonMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getDataSource().deleteSavedComparison(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: savedComparisonsKey }),
+  });
+}
+
 export function useRubricLibraryQuery(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: rubricLibraryKey,

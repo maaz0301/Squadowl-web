@@ -333,6 +333,20 @@ export interface DataSource {
   createRubricLibraryItem(input: import('./types').RubricLibraryInput): Promise<import('./types').RubricLibraryItem>;
   updateRubricLibraryItem(id: string, input: import('./types').RubricLibraryInput): Promise<import('./types').RubricLibraryItem>;
   deleteRubricLibraryItem(id: string): Promise<void>;
+  listSavedComparisons(): Promise<import('./compare').SavedComparison[]>;
+  saveComparison(input: import('./compare').SavedComparisonInput): Promise<import('./compare').SavedComparison>;
+  updateSavedComparison(id: string, input: import('./compare').SavedComparisonInput): Promise<import('./compare').SavedComparison>;
+  deleteSavedComparison(id: string): Promise<void>;
+  /** One page of players for the Compare picker (any team, any season), filtered on the server. */
+  listCompareCandidates(
+    filters: import('./compare').CompareFilters,
+    offset: number,
+    limit: number,
+  ): Promise<{ rows: import('./compare').CompareCandidate[]; next: number | null }>;
+  /** The birth years that occur among the account's players, newest first. */
+  listCompareBirthYears(): Promise<string[]>;
+  /** Every evaluation each of up to 100 players was scored in, one 1 to 5 score per rubric. */
+  getCompareAssessments(athleteIds: string[]): Promise<import('./compare').CompareAssessments>;
   createLibraryItem(input: import('./types').LibraryItemInput, file?: File): Promise<import('./types').LibraryItem>;
   updateLibraryItem(id: string, updates: Partial<import('./types').LibraryItemInput>): Promise<import('./types').LibraryItem>;
   deleteLibraryItem(item: import('./types').LibraryItem): Promise<void>;

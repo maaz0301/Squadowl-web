@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { formatBenchmarkValue } from '@/data/benchmarks';
 import { parseHeightCm } from '@/lib/height';
 import { getSupabase } from '@/lib/supabase';
 import { applyNewerNotAttempted } from '@/lib/notAttempted';
@@ -9647,6 +9648,346 @@ export class SupabaseDataSource implements DataSource {
       createdAt: new Date(r.created_at as string).getTime(),
       updatedAt: new Date((r.updated_at ?? r.created_at) as string).getTime(),
     };
+  }
+
+  // ---- Compare (account-wide) ----
+
+  /**
+   * Compare's player list when `list_compare_candidates` is not deployed on this
+   * database yet: the same filters, read straight from the tables. Slower on a
+   * very large account (every row pays the access policy), so it is only the
+   * fallback; the function is the normal path.
+   */
+  private async listCompareCandidatesFallback(
+    supabase: SupabaseClient,
+    accountId: string,
+    filters: import('@/data/compare').CompareFilters,
+    offset: number,
+    limit: number,
+  ): Promise<{ rows: import('@/data/compare').CompareCandidate[]; next: number | null }> {
+    const clean = (t: string) => t.replace(/[%_,()\\*]/g, '');
+    const words = (filters.query ?? '').split(/\s+/).map(clean).filter(Boolean).slice(0, 5);
+    const year = filters.year && /^\d{4}$/.test(filters.year) ? filters.year : null;
+    const isDate = (v?: string) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const from = isDate(filters.from) ? filters.from! : null;
+    const to = isDate(filters.to) ? filters.to! : null;
+    const cols = 'id, first_name, last_name, year_of_birth, date_of_birth, avatar_url';
+
+    // Everything but the team filter is applied by the database.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyFilters = (q: any, prefix = '') => {
+      for (const w of words) q = q.or(`${prefix}first_name.ilike.%${w}%,${prefix}last_name.ilike.%${w}%`);
+      if (year) {
+        q = q.or(
+          `and(${prefix}date_of_birth.gte.${year}-01-01,${prefix}date_of_birth.lte.${year}-12-31),and(${prefix}date_of_birth.is.null,${prefix}year_of_birth.eq.${year})`,
+        );
+      }
+      if (from || to) {
+        const dob = [from ? `${prefix}date_of_birth.gte.${from}` : '', to ? `${prefix}date_of_birth.lte.${to}` : ''].filter(Boolean).join(',');
+        const yr = [from ? `${prefix}year_of_birth.gte.${from.slice(0, 4)}` : '', to ? `${prefix}year_of_birth.lte.${to.slice(0, 4)}` : ''].filter(Boolean).join(',');
+        q = q.or(`and(${dob}),and(${prefix}date_of_birth.is.null,${yr})`);
+      }
+      return q;
+    };
+
+    let people: Row[] = [];
+    const teamsByAthlete = new Map<string, import('@/data/compare').CompareTeamRef[]>();
+    const addTeam = (athleteId: string, ref: import('@/data/compare').CompareTeamRef) => {
+      const list = teamsByAthlete.get(athleteId) ?? [];
+      if (!list.some((t) => t.teamId === ref.teamId)) list.push(ref);
+      teamsByAthlete.set(athleteId, list);
+    };
+
+    if (filters.teamIds?.length) {
+      // Those teams' rosters are small (at most 15 teams), so read them whole and page here.
+      let q = supabase
+        .from('team_roster')
+        .select(`athlete_id, team_id, teams(name), athletes!inner(${cols})`)
+        .in('team_id', filters.teamIds.slice(0, 15))
+        .limit(5000);
+      q = applyFilters(q, 'athletes.');
+      const rows = unwrap(await q) as Row[];
+      const seen = new Map<string, Row>();
+      for (const r of rows) {
+        const a = Array.isArray(r.athletes) ? r.athletes[0] : r.athletes;
+        if (!a) continue;
+        seen.set(a.id, a);
+        const t = Array.isArray(r.teams) ? r.teams[0] : r.teams;
+        addTeam(a.id, { teamId: r.team_id, teamName: t?.name ?? 'Team' });
+      }
+      people = [...seen.values()].sort(
+        (a, b) => String(a.first_name ?? '').localeCompare(String(b.first_name ?? '')) || String(a.last_name ?? '').localeCompare(String(b.last_name ?? '')),
+      );
+      people = people.slice(offset, offset + limit + 1);
+    } else {
+      let q = supabase
+        .from('athletes')
+        .select(cols)
+        .eq('account_id', accountId)
+        // Id order uses the primary key index; ordering by name would sort the whole account
+        // under the access policy and run past the database's time limit on a large one.
+        .order('id')
+        .range(offset, offset + limit);
+      q = applyFilters(q);
+      people = unwrap(await q) as Row[];
+      const pageRows = people.slice(0, limit).sort(
+        (a, b) => String(a.first_name ?? '').localeCompare(String(b.first_name ?? '')) || String(a.last_name ?? '').localeCompare(String(b.last_name ?? '')),
+      );
+      people = [...pageRows, ...people.slice(limit)];
+      const ids = people.slice(0, limit).map((p) => p.id as string);
+      if (ids.length) {
+        const rosterRows = unwrap(
+          await supabase.from('team_roster').select('athlete_id, team_id, teams(name)').in('athlete_id', ids),
+        ) as Row[];
+        for (const r of rosterRows) {
+          const t = Array.isArray(r.teams) ? r.teams[0] : r.teams;
+          addTeam(r.athlete_id, { teamId: r.team_id, teamName: t?.name ?? 'Team' });
+        }
+      }
+    }
+
+    return {
+      rows: people.slice(0, limit).map((a) => ({
+        id: a.id,
+        first: a.first_name ?? '',
+        last: a.last_name ?? '',
+        dateOfBirth: a.date_of_birth ?? undefined,
+        yearOfBirth: a.year_of_birth ? String(a.year_of_birth) : undefined,
+        avatarUrl: a.avatar_url ?? undefined,
+        teams: (teamsByAthlete.get(a.id) ?? []).sort((x, y) => x.teamName.localeCompare(y.teamName)),
+      })),
+      next: people.length > limit ? offset + limit : null,
+    };
+  }
+
+  async listCompareBirthYears(): Promise<string[]> {
+    const { supabase, accountId } = await this.ctx();
+    const { data, error } = await supabase.rpc('list_compare_birth_years', { p_account_id: accountId });
+    if (error) {
+      if (error.code === 'PGRST202' || error.code === '42883') {
+        // Function not deployed: the years that appear in the first few thousand players.
+        const { data: rows } = await supabase
+          .from('athletes')
+          .select('year_of_birth, date_of_birth')
+          .eq('account_id', accountId)
+          .limit(5000);
+        const years = new Set<number>();
+        for (const r of (rows ?? []) as Row[]) {
+          const y = r.date_of_birth ? Number(String(r.date_of_birth).slice(0, 4)) : Number(r.year_of_birth);
+          if (Number.isFinite(y) && y > 0) years.add(y);
+        }
+        return [...years].sort((a, b) => b - a).map(String);
+      }
+      throw new Error(error.message);
+    }
+    return ((data ?? []) as Row[]).map((r) => String(r.birth_year)).filter((y) => /^\d{4}$/.test(y));
+  }
+
+  async listCompareCandidates(
+    filters: import('@/data/compare').CompareFilters,
+    offset: number,
+    limit: number,
+  ): Promise<{ rows: import('@/data/compare').CompareCandidate[]; next: number | null }> {
+    const { supabase, accountId } = await this.ctx();
+    const year = filters.year && /^\d{4}$/.test(filters.year) ? Number(filters.year) : null;
+    const { data, error } = await supabase.rpc('list_compare_candidates', {
+      p_account_id: accountId,
+      p_term: (filters.query ?? '').trim(),
+      p_team_ids: filters.teamIds?.length ? filters.teamIds.slice(0, 15) : null,
+      p_year: year,
+      p_dob_from: filters.from || null,
+      p_dob_to: filters.to || null,
+      p_offset: offset,
+      p_limit: limit,
+    });
+    if (error) {
+      if (error.code === 'PGRST202' || error.code === '42883') {
+        return this.listCompareCandidatesFallback(supabase, accountId, filters, offset, limit);
+      }
+      throw new Error(error.message);
+    }
+    const all = (data ?? []) as Row[];
+    return {
+      rows: all.slice(0, limit).map((a) => ({
+        id: a.id,
+        first: a.first_name ?? '',
+        last: a.last_name ?? '',
+        dateOfBirth: a.date_of_birth ?? undefined,
+        yearOfBirth: a.year_of_birth ? String(a.year_of_birth) : undefined,
+        avatarUrl: a.avatar_url ?? undefined,
+        teams: ((a.teams ?? []) as Row[]).map((t) => ({ teamId: t.team_id, teamName: t.team_name })),
+      })),
+      next: all.length > limit ? offset + limit : null,
+    };
+  }
+
+  /**
+   * Every evaluation each player was scored in, as one 1 to 5 score per rubric,
+   * for up to 100 players. Reads in a few chunked, parallel batches (never one
+   * request per player), so 100 players assemble in a handful of round trips.
+   */
+  async getCompareAssessments(athleteIds: string[]): Promise<import('@/data/compare').CompareAssessments> {
+    const { supabase } = await this.userCtx();
+    const ids = [...new Set(athleteIds)].slice(0, 100);
+    const out: import('@/data/compare').CompareAssessments = {};
+    for (const id of ids) out[id] = [];
+    if (!ids.length) return out;
+    const chunk = <T,>(list: T[], size: number): T[][] => {
+      const parts: T[][] = [];
+      for (let i = 0; i < list.length; i += size) parts.push(list.slice(i, i + size));
+      return parts;
+    };
+
+    const participants = (
+      await mapPool(chunk(ids, 50), 4, async (part) =>
+        unwrap(
+          await supabase
+            .from('tryout_participants')
+            .select('id, athlete_id, tryout_id, position')
+            .in('athlete_id', part)
+            .is('removed_at', null),
+        ) as Row[],
+      )
+    ).flat();
+    if (!participants.length) return out;
+
+    const tryoutIds = [...new Set(participants.map((p) => p.tryout_id as string))];
+    const participantIds = participants.map((p) => p.id as string);
+    const [tryoutRows, evalRows] = await Promise.all([
+      mapPool(chunk(tryoutIds, 50), 4, async (part) =>
+        unwrap(
+          await supabase
+            .from('tryouts')
+            .select('id, name, sport, settings, tryout_date, created_at, event_type, team_id, teams(name)')
+            .in('id', part)
+            .is('deleted_at', null),
+        ) as Row[],
+      ),
+      mapPool(chunk(participantIds, 50), 4, async (part) =>
+        unwrap(
+          await supabase.from('evaluations').select('*, evaluation_scores(rubric_key, value)').in('participant_id', part),
+        ) as Row[],
+      ),
+    ]);
+    const tryoutById = new Map(tryoutRows.flat().map((t) => [t.id as string, t]));
+    const evalsByParticipant = new Map<string, Evaluation[]>();
+    for (const row of evalRows.flat()) {
+      const ev = this.rowToEval(row);
+      const list = evalsByParticipant.get(ev.playerId) ?? [];
+      list.push(ev);
+      evalsByParticipant.set(ev.playerId, list);
+    }
+
+    for (const p of participants) {
+      const tryout = tryoutById.get(p.tryout_id);
+      if (!tryout) continue;
+      const evals = evalsByParticipant.get(p.id) ?? [];
+      const categories = getPlayerCategories(tryout.sport, p.position, tryout.settings?.customRubrics ?? []);
+      const weights = isGoaliePosition(p.position) ? tryout.settings?.goalieWeights ?? {} : tryout.settings?.skaterWeights ?? {};
+      const overall = evals.length ? weightedOverallAcrossEvals(evals, categories, weights) : 0;
+      const categoryScores = categoryAveragesAcrossEvals(evals, categories);
+      const scores: Record<string, number> = {};
+      const columns: Record<string, import('@/data/compare').CompareColumnMeta> = {};
+      for (const cat of categories) {
+        const score = categoryScores[cat.key];
+        if (score == null) continue;
+        const colId = cat.label.trim().toLowerCase();
+        scores[colId] = score;
+        const withBenchmark = cat.subskills.filter((s) => s.benchmark != null);
+        columns[colId] = {
+          label: cat.label,
+          benchmark:
+            cat.subskills.length === 1 && withBenchmark.length === 1
+              ? formatBenchmarkValue(withBenchmark[0], withBenchmark[0].benchmark as number)
+              : undefined,
+        };
+      }
+      out[p.athlete_id]?.push({
+        tryoutId: tryout.id,
+        tryoutName: tryout.name,
+        date: tryout.tryout_date ?? (tryout.created_at ? String(tryout.created_at).slice(0, 10) : undefined),
+        sport: tryout.sport,
+        teamName: (Array.isArray(tryout.teams) ? tryout.teams[0]?.name : tryout.teams?.name) ?? undefined,
+        overall,
+        evalCount: evals.length,
+        scores,
+        columns,
+      });
+    }
+    for (const id of ids) out[id].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+    return out;
+  }
+
+  private rowToSavedComparison(r: Row): import('@/data/compare').SavedComparison {
+    return {
+      id: r.id,
+      name: r.name,
+      athleteIds: (r.athlete_ids ?? []) as string[],
+      choices: (r.choices ?? {}) as Record<string, string>,
+      filters: (r.filters ?? {}) as import('@/data/compare').CompareFilters,
+      sort: ((r.sort && (r.sort as Row).key ? r.sort : { key: 'rank', dir: 'asc' }) as import('@/data/compare').CompareSort),
+      createdAt: new Date(r.created_at).getTime(),
+      updatedAt: new Date(r.updated_at).getTime(),
+    };
+  }
+
+  async listSavedComparisons(): Promise<import('@/data/compare').SavedComparison[]> {
+    const { supabase } = await this.userCtx();
+    const rows = unwrap(
+      await supabase.from('saved_comparisons').select('*').order('updated_at', { ascending: false }),
+    ) as Row[];
+    return rows.map((r) => this.rowToSavedComparison(r));
+  }
+
+  async saveComparison(input: import('@/data/compare').SavedComparisonInput): Promise<import('@/data/compare').SavedComparison> {
+    const { supabase, accountId } = await this.ctx();
+    const name = input.name.trim();
+    if (!name) throw new Error('Give the comparison a name.');
+    const res = await supabase
+      .from('saved_comparisons')
+      .insert({
+        account_id: accountId,
+        name,
+        athlete_ids: input.athleteIds.slice(0, 100),
+        choices: input.choices ?? {},
+        filters: input.filters ?? {},
+        sort: input.sort ?? {},
+      })
+      .select('*')
+      .single();
+    if (res.error) throw new Error(res.error.message);
+    return this.rowToSavedComparison(res.data as Row);
+  }
+
+  async updateSavedComparison(
+    id: string,
+    input: import('@/data/compare').SavedComparisonInput,
+  ): Promise<import('@/data/compare').SavedComparison> {
+    const { supabase } = await this.userCtx();
+    const name = input.name.trim();
+    if (!name) throw new Error('Give the comparison a name.');
+    const res = await supabase
+      .from('saved_comparisons')
+      .update({
+        name,
+        athlete_ids: input.athleteIds.slice(0, 100),
+        choices: input.choices ?? {},
+        filters: input.filters ?? {},
+        sort: input.sort ?? {},
+      })
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (res.error) throw new Error(res.error.message);
+    if (!res.data) throw new Error('You do not have permission to change this comparison.');
+    return this.rowToSavedComparison(res.data as Row);
+  }
+
+  async deleteSavedComparison(id: string): Promise<void> {
+    const { supabase } = await this.userCtx();
+    const res = await supabase.from('saved_comparisons').delete().eq('id', id).select('id');
+    if (res.error) throw new Error(res.error.message);
+    if (!res.data?.length) throw new Error('You do not have permission to delete this comparison.');
   }
 
   async listRubricLibrary(): Promise<import('@/data/types').RubricLibraryItem[]> {
