@@ -46,7 +46,7 @@ import {
 } from '@/features/queries';
 import { useSessionStore } from '@/state/sessionStore';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
-import { DURATION_OPTIONS, endFromDuration, formatDuration, isEndAfterStart } from '@/data/timeRange';
+import { DURATION_OPTIONS, endFromDuration, formatDuration } from '@/data/timeRange';
 import { MapLocationHint } from '@/components/MapLink';
 import { isAtAssessmentLimit } from '@/data/plans';
 import { buildLimitReachedMessage } from '@/lib/usageNudges';
@@ -173,6 +173,7 @@ function NewAssessmentForm() {
       },
     ]);
     setRubricError(null);
+    toast('Rubric added', 'success');
     setRubricLabel('');
     setRubricType('skill');
     setRubricScale('1-5');
@@ -190,6 +191,7 @@ function NewAssessmentForm() {
       return [...prev, ...picked.map(rubricFromLibrary).filter((r) => !have.has(r.key))];
     });
     setRubricError(null);
+    toast(picked.length === 1 ? 'Rubric added' : `${picked.length} rubrics added`, 'success');
     setShowRubricLibrary(false);
   };
 
@@ -221,8 +223,6 @@ function NewAssessmentForm() {
   const startTimeValue = watch('startTime');
   const tryoutDateValue = watch('tryoutDate');
   const endTimeValue = watch('endTime');
-  // A duration that carries past midnight would leave an end before the start.
-  const runsPastMidnight = !!duration && !!startTimeValue && !!endTimeValue && !isEndAfterStart(startTimeValue, endTimeValue);
   useEffect(() => {
     const end =
       duration && startTimeValue
@@ -399,7 +399,6 @@ function NewAssessmentForm() {
                 value={duration ? String(duration) : ''}
                 onChange={(e) => setDuration(e.target.value ? Number(e.target.value) : undefined)}
                 disabled={!startTimeValue}
-                error={runsPastMidnight ? 'This runs past midnight. Pick a shorter duration or an earlier start.' : undefined}
               >
                 <option value="">{startTimeValue ? 'Select a duration' : 'Pick a start time first'}</option>
                 {DURATION_OPTIONS.map((m) => (

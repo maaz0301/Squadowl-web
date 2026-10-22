@@ -649,7 +649,7 @@ export default function PlayerReportCardPage() {
           onChange={(e) => setCoachComments(e.target.value)}
           placeholder="What to tell the family: strengths, what to work on, next steps."
         />
-        <PlanGate feature="aiReportComments" title="AI comments (Club plan)" tierOverride={tier}>
+        <PlanGate feature="aiReportComments" title="AI comments (Coach+ plan)" tierOverride={tier}>
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
               <SectionLabel>AI comments</SectionLabel>

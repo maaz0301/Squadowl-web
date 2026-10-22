@@ -40,7 +40,7 @@ export interface PlanDefinition {
     customRubrics: number | 'unlimited';
     teamBuilder: boolean;
     aiSummaries: boolean;
-    /** AI-written comments on a player report card. Club only for now. */
+    /** AI-written comments on a player report card. Coach+ and Club. */
     aiReportComments: boolean;
     exports: ('csv' | 'pdf' | 'xlsx')[];
     shareLinks: boolean;
@@ -176,7 +176,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
       customRubrics: 'unlimited',
       teamBuilder: true,
       aiSummaries: true,
-      aiReportComments: false,
+      aiReportComments: true,
       exports: ['csv', 'pdf'],
       shareLinks: true,
       seasonHub: true,

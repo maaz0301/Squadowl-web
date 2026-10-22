@@ -625,9 +625,6 @@ export const CreateAssessmentFormSchema = z.object({
   teamId: z.string().optional(),
   headAssessor: z.string().optional(),
   headCoach: z.string().optional(),
-}).refine((data) => isEndAfterStart(data.startTime, data.endTime), {
-  message: END_BEFORE_START_MESSAGE,
-  path: ['endTime'],
 });
 
 export type CreateAssessmentForm = z.infer<typeof CreateAssessmentFormSchema>;

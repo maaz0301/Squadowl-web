@@ -31,7 +31,6 @@ import {
 } from '@/features/queries';
 import { getDataSource } from '@/data';
 import { useAssessmentHref, useAssessmentId } from '@/features/useAssessmentId';
-import { END_BEFORE_START_MESSAGE, isEndAfterStart } from '@/data/timeRange';
 import type { Assessor } from '@/data/types';
 import { useEffectivePlanTier } from '@/features/useEffectivePlanTier';
 import { isAtAssessmentLimit } from '@/data/plans';
@@ -104,10 +103,6 @@ export default function SettingsPage() {
   };
 
   const saveEdit = async () => {
-    if (!isEndAfterStart(startTime, endTime)) {
-      setEndTimeError(END_BEFORE_START_MESSAGE);
-      return;
-    }
     setEndTimeError('');
     await updateTryout.mutateAsync({
       id: tryout.id,

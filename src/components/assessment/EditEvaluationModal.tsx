@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import { MapLocationHint } from '@/components/MapLink';
 import { Button, DateField, Input, Modal, TimeField, useAlert } from '@/components/ui';
 import { useUpdateTryoutMutation } from '@/features/queries';
-import { END_BEFORE_START_MESSAGE, isEndAfterStart } from '@/data/timeRange';
 import type { TryoutSummary } from '@/data/types';
 
 /**
@@ -51,10 +50,6 @@ export function EditEvaluationModal({
 
   const save = async () => {
     if (!tryout) return;
-    if (!isEndAfterStart(startTime, endTime)) {
-      setEndTimeError(END_BEFORE_START_MESSAGE);
-      return;
-    }
     setEndTimeError('');
     try {
       // Same mapping as Evaluation Settings: a blank field is left as it was

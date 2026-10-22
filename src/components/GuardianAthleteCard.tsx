@@ -52,7 +52,7 @@ export function GuardianAthleteCard({
             type="button"
             onClick={handleDelete}
             disabled={removeAthlete.isPending}
-            className="ml-auto text-xs font-bold"
+            className="ml-auto px-2 py-1 text-xs font-bold"
             style={{ color: colors.danger }}
             aria-label={`Delete ${athlete.firstName} ${athlete.lastName}`}
           >

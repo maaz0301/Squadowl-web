@@ -67,7 +67,6 @@ import {
 import {
   POSITIONS_BY_SPORT,
   TEST_DATA_TAG,
-  clampScoreToRubric,
   generateDummyPlayers,
   generateDummyRegistration,
   generateDummyRubrics,
@@ -5331,13 +5330,14 @@ export class SupabaseDataSource implements DataSource {
     evals.forEach((e, idx) => {
       const g = generated[evalPlayerIndex[idx]];
       const subskills = getPlayerSubskills(tryout.sport, g.form.pos, rubrics);
-      // Prefer the AI-generated raw score per rubric (validated against its
-      // benchmarks); fall back to an ability-derived score for any rubric the
-      // AI didn't score, so ranking logic always has a full score set.
-      const derived = generateScoresForPlayer(subskills, g.ability);
+      // Every evaluation draws its own scores: the player's ability is nudged
+      // per evaluation and each rubric adds its own noise, so a player's
+      // sessions (and a team's players) don't all carry the same numbers. The
+      // AI's raw scores are not used here because they repeat across sessions.
+      const evalAbility = Math.min(1, Math.max(0, g.ability + (Math.random() - 0.5) * 0.5));
+      const derived = generateScoresForPlayer(subskills, evalAbility);
       for (const s of subskills) {
-        const aiScore = g.scores ? clampScoreToRubric(g.scores[s.key], s) : null;
-        const value = aiScore ?? derived[s.key];
+        const value = derived[s.key];
         if (value !== undefined) scoreRows.push({ evaluation_id: e.id, rubric_key: s.key, value });
       }
     });

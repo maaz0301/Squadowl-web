@@ -60,7 +60,7 @@ describe('dummy-data plan helpers', () => {
 describe('AI report card comments', () => {
   it('are on for the Club plan only', () => {
     expect(canUseFeature('club', 'aiReportComments')).toBe(true);
-    expect(canUseFeature('coach_plus', 'aiReportComments')).toBe(false);
+    expect(canUseFeature('coach_plus', 'aiReportComments')).toBe(true);
     expect(canUseFeature('coach', 'aiReportComments')).toBe(false);
     expect(canUseFeature('free', 'aiReportComments')).toBe(false);
   });

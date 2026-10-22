@@ -70,7 +70,15 @@ function resolveEnd(event: IcsEvent): { date: string; time?: string } {
   }
   if (event.endTime) {
     const parsed = parseTime(event.endTime);
-    if (parsed) return { date: event.date, time: `${pad(parsed.hours)}:${pad(parsed.minutes)}` };
+    const start = parseTime(event.startTime);
+    if (parsed) {
+      // An end at or before the start is an overnight event: it ends the next day.
+      const overnight = !!start && parsed.hours * 60 + parsed.minutes <= start.hours * 60 + start.minutes;
+      return {
+        date: overnight ? addDays(event.date, 1) : event.date,
+        time: `${pad(parsed.hours)}:${pad(parsed.minutes)}`,
+      };
+    }
   }
   const start = parseTime(event.startTime);
   if (!start) return { date: event.date };

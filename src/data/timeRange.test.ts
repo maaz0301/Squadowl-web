@@ -34,9 +34,9 @@ describe('form schemas', () => {
     const r = event({ endDate: '2026-09-20' });
     expect(r.success).toBe(false);
   });
-  it('applies to New Evaluation too', () => {
+  it('lets New Evaluation run overnight', () => {
     const base = { name: 'Volleyball', sport: 'Hockey', eventType: 'Tryout' };
-    expect(CreateAssessmentFormSchema.safeParse({ ...base, startTime: '15:00', endTime: '13:00' }).success).toBe(false);
+    expect(CreateAssessmentFormSchema.safeParse({ ...base, startTime: '22:30', endTime: '00:45' }).success).toBe(true);
     expect(CreateAssessmentFormSchema.safeParse({ ...base, startTime: '15:00', endTime: '17:00' }).success).toBe(true);
     expect(CreateAssessmentFormSchema.safeParse(base).success).toBe(true);
   });

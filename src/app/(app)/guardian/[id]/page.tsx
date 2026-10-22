@@ -204,6 +204,8 @@ export default function GuardianPortalPage() {
   const { alert } = useAlert();
   const user = useUser();
   const [tab, setTab] = useState('overview');
+  // Set when a team tile is opened: the Schedule tab then shows only that team's events.
+  const [scheduleSeasonId, setScheduleSeasonId] = useState<string | null>(null);
 
   const guardianQuery = useGuardianRostersQuery();
   // Keeps this page in sync with a coach's event edits without needing to
@@ -281,6 +283,15 @@ export default function GuardianPortalPage() {
     return aDate - bDate;
   });
 
+  const visibleEvents = scheduleSeasonId ? allEvents.filter((e) => e.seasonId === scheduleSeasonId) : allEvents;
+  const scheduleTeamName = scheduleSeasonId
+    ? athlete.seasons.find((se) => se.id === scheduleSeasonId)?.teamName
+    : undefined;
+  const openTeamSchedule = (seasonId: string) => {
+    setScheduleSeasonId(seasonId);
+    setTab('schedule');
+  };
+
   return (
     <>
       <PageHeader
@@ -318,6 +329,7 @@ export default function GuardianPortalPage() {
             router.push(`/guardian/${playerId}/chat/${athlete.seasons[0].id}`);
             return;
           }
+          setScheduleSeasonId(null);
           setTab(k);
         }}
         className="mb-4"
@@ -329,7 +341,24 @@ export default function GuardianPortalPage() {
         ) : (
           <div>
             {athlete.seasons.map((season) => (
-              <Card key={season.id} className="mb-3">
+              <div
+                key={season.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open ${season.teamName ?? season.name} schedule`}
+                className="cursor-pointer"
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest('button, a')) return;
+                  openTeamSchedule(season.id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    openTeamSchedule(season.id);
+                  }
+                }}
+              >
+              <Card className="mb-3">
                 <div className="flex items-start justify-between">
                   <div className="mr-2 flex-1">
                     <p
@@ -347,15 +376,24 @@ export default function GuardianPortalPage() {
                 {season.collectsFees ? <SeasonFeeRow season={season} playerId={playerId} /> : null}
                 <LeaveTeamRow season={season} />
               </Card>
+              </div>
             ))}
           </div>
         )
       ) : tab === 'schedule' ? (
-        allEvents.length === 0 ? (
+        visibleEvents.length === 0 ? (
           <EmptyState title="No events scheduled" message="There are no upcoming events for this athlete." />
         ) : (
           <div>
-            {allEvents.map((event) => (
+            {scheduleSeasonId ? (
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="text-sm font-bold" style={{ color: colors.primary }}>
+                  Showing {scheduleTeamName ?? 'this team'} only
+                </p>
+                <Button label="Show all teams" size="sm" variant="ghost" onClick={() => setScheduleSeasonId(null)} />
+              </div>
+            ) : null}
+            {visibleEvents.map((event) => (
               <EventCard key={event.id} item={event} playerId={playerId} colors={colors} />
             ))}
           </div>
