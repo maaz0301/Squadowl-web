@@ -416,7 +416,7 @@ export default function ExportPage() {
         <PlanGate feature="exports" title="Exports require Coach plan+" />
       )}
 
-      <PlanGate feature="shareLinks" title="Share Links (Club+)">
+      <PlanGate feature="shareLinks" title="Share Links (Coach+)">
         <Card accent className="flex flex-col gap-3">
           <span className="font-bold" style={{ color: colors.ink, fontFamily: 'var(--font-space-grotesk)' }}>
             Shareable Results Link

@@ -493,7 +493,7 @@ export default function TeamBuilderPage() {
         backHref={href('results')}
       />
 
-      <PlanGate feature="teamBuilder" title="Team Builder (Club+)">
+      <PlanGate feature="teamBuilder" title="Team Builder (Coach+)">
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="flex min-w-0 flex-col gap-5">
           <Card accent className="flex flex-col gap-3">

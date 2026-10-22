@@ -638,7 +638,7 @@ export default function PlayerHubPage() {
               Role fit: {heuristic.role_fit}
             </span>
 
-            <PlanGate feature="aiSummaries" title="Deep AI Insights (Club+)">
+            <PlanGate feature="aiSummaries" title="Deep AI Insights (Coach+)">
               {deepDive ? (
                 <div className="mt-2 border-t pt-3" style={{ borderColor: colors.border }}>
                   <div className="mb-2 flex items-center justify-between">
