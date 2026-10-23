@@ -1809,7 +1809,11 @@ export class SupabaseDataSource implements DataSource {
       customLabels: (account?.custom_labels as UserProfile['customLabels']) ?? undefined,
       avatarUrl: profile.avatar_url ?? undefined,
       planTier: (account?.plan_tier as UserProfile['planTier']) ?? 'free',
-      subscriptionStatus: account?.subscription_status,
+      // A paid account with no Stripe customer (billing moved to a new Stripe account, or a
+      // plan granted by hand) has no subscription for the portal to manage, so it reads as
+      // 'none' here and Upgrade sends it through Checkout. The access check above uses the
+      // raw row, so this never changes who can sign in.
+      subscriptionStatus: account && account.stripe_customer_id === null ? 'none' : account?.subscription_status,
       subscriptionCancelAt: account?.subscription_cancel_at
         ? toMs(account.subscription_cancel_at as string)
         : undefined,
@@ -9194,7 +9198,9 @@ export class SupabaseDataSource implements DataSource {
   async createConnectAccountLink(): Promise<{ url: string }> {
     assertNotViewingAs();
     const { supabase } = await this.ctx();
-    const { data, error } = await supabase.functions.invoke('create-connect-account');
+    const { data, error } = await supabase.functions.invoke('create-connect-account', {
+      body: { origin: webOrigin() },
+    });
     if (error) {
       let detail = '';
       try {
