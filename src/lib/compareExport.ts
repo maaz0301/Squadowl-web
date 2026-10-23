@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 
 import { formatCompareDate, isTopPerformer, type CompareTable } from '@/data/compare';
 import { embedLogos, pdfSafe } from '@/lib/reportPdf';
-import { planRosterPdfColumns } from '@/lib/rosterPdfLayout';
+import { planCompareBands, wrapHeader } from '@/lib/comparePdfLayout';
 
 /**
  * Compare exports: an Excel sheet (one row per player, one column per rubric,
@@ -99,26 +99,38 @@ export async function buildCompareFile(opts: {
     };
   }
 
+  // A4 landscape, always. The text stays a readable size; a table with more rubric
+  // columns than fit is split into bands of columns instead of shrinking or widening the page.
+  const PAGE_W = 842;
   const PAGE_H = 595;
   const MARGIN = 36;
+  const SIZE = 8.5;
+  const HEAD_SIZE = 7.5;
+  const HEAD_LINE = 9;
+  const ROW_H = 14;
+  const GAP = 8;
+  const SCORE_W = 62;
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const textRows = rows.map((r) => r.map((c) => String(c)));
-  const layout = planRosterPdfColumns({
-    headers,
-    rows: textRows,
-    measure: (text, size, bold) => (bold ? fontBold : font).widthOfTextAtSize(pdfSafe(text), size),
+  const fixedCount = COMPARE_FIXED_HEADERS.length;
+  const scoreCount = headers.length - fixedCount;
+
+  // Identity columns: as wide as their widest entry, capped so a long name or evaluation is cut.
+  const FIXED_CAP = [40, 130, 110, 66, 120, 66, 52];
+  const naturalFixed = COMPARE_FIXED_HEADERS.map((h, i) => {
+    let w = fontBold.widthOfTextAtSize(pdfSafe(h), HEAD_SIZE);
+    for (const r of textRows) w = Math.max(w, font.widthOfTextAtSize(pdfSafe(r[i] ?? ''), SIZE));
+    return Math.min(w, FIXED_CAP[i]) + GAP;
   });
-  const PAGE_W = layout.pageWidth;
-  const SIZE = layout.size;
-  const colX: number[] = [];
-  let x = MARGIN;
-  for (const w of layout.widths) {
-    colX.push(x);
-    x += w;
-  }
-  const colWidth = layout.widths.map((w) => w - 4);
+  // The columns repeated on every page: rank, player, evaluation, overall.
+  const REPEAT = [0, 1, 4, 6];
+  const firstFixed = naturalFixed.reduce((a, b) => a + b, 0);
+  const repeatFixed = REPEAT.reduce((a, i) => a + naturalFixed[i], 0);
+  const available = PAGE_W - MARGIN * 2;
+  const plan = planCompareBands({ available, firstFixed, repeatFixed, scoreWidth: SCORE_W, scoreCount });
+
   const fit = (text: string, width: number, f: PDFFont): string => {
     const out = pdfSafe(text);
     if (f.widthOfTextAtSize(out, SIZE) <= width) return out;
@@ -129,44 +141,85 @@ export async function buildCompareFile(opts: {
 
   const logos = await embedLogos(pdfDoc, opts.logoUrls);
   const LOGO_H = logos.length ? 30 : 0;
-  const drawTop = (page: ReturnType<typeof pdfDoc.addPage>, pageNo: number, pages: number) => {
-    let ty = PAGE_H - MARGIN;
-    if (logos.length) {
-      let lx = MARGIN;
-      for (const logo of logos) {
-        page.drawImage(logo.image, { x: lx, y: ty - logo.height, width: logo.width, height: logo.height });
-        lx += logo.width + 12;
-      }
-      ty -= LOGO_H + 8;
-    }
-    let headline = pdfSafe(opts.title);
-    while (headline.length > 1 && fontBold.widthOfTextAtSize(headline, 16) > PAGE_W - MARGIN * 2) headline = headline.slice(0, -1);
-    page.drawText(headline, { x: MARGIN, y: ty - 12, size: 16, font: fontBold });
-    ty -= 26;
-    page.drawText(
-      pdfSafe(`Compared ${comparedOn} - ${rows.length} ${rows.length === 1 ? 'player' : 'players'} - page ${pageNo} of ${pages}`),
-      { x: MARGIN, y: ty - 4, size: 10, font },
-    );
-    ty -= 22;
-    headers.forEach((h, i) => page.drawText(fit(h, colWidth[i], fontBold), { x: colX[i], y: ty, size: SIZE, font: fontBold }));
-    return ty - 14;
-  };
 
-  // How many rows fit on a page, so "page N of M" can be printed on each one.
-  const firstTop = PAGE_H - MARGIN - (logos.length ? LOGO_H + 8 : 0) - 26 - 22 - 14;
-  const perPage = Math.max(1, Math.floor((firstTop - MARGIN) / 13) + 1);
-  const pages = Math.max(1, Math.ceil(rows.length / perPage));
-  for (let p = 0; p < pages; p++) {
-    const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
-    let y = drawTop(page, p + 1, pages);
-    for (let i = p * perPage; i < Math.min(rows.length, (p + 1) * perPage); i++) {
-      textRows[i].forEach((cell, c) => {
-        const f = top[i][c] ? fontBold : font;
-        page.drawText(fit(cell, colWidth[c], f), { x: colX[c], y, size: SIZE, font: f });
-      });
-      y -= 13;
+  // The columns on one band: which identity columns, then its slice of the score columns.
+  let scoreStart = 0;
+  const bands = plan.bands.map((count, bandIndex) => {
+    const fixedIdx = bandIndex === 0 ? COMPARE_FIXED_HEADERS.map((_, i) => i) : REPEAT;
+    const scoreIdx = Array.from({ length: count }, (_, k) => fixedCount + scoreStart + k);
+    scoreStart += count;
+    const colIdx = [...fixedIdx, ...scoreIdx];
+    // Spare width on a band is shared out, so the table fills the page.
+    const natural = colIdx.map((ci) => (ci < fixedCount ? naturalFixed[ci] : SCORE_W));
+    const k = available / natural.reduce((a, b) => a + b, 0);
+    const widths = natural.map((w) => (k > 1 ? w * k : w));
+    return { colIdx, widths, scoreFrom: scoreIdx[0] != null ? scoreIdx[0] - fixedCount + 1 : 0, scoreTo: scoreIdx.length ? scoreIdx[scoreIdx.length - 1] - fixedCount + 1 : 0 };
+  });
+
+  const headerLines = (ci: number, width: number) =>
+    wrapHeader(headers[ci], width - 4, 4, (t) => fontBold.widthOfTextAtSize(pdfSafe(t), HEAD_SIZE));
+  const bandHeaderH = (band: (typeof bands)[number]) =>
+    Math.max(...band.colIdx.map((ci, j) => headerLines(ci, band.widths[j]).length)) * HEAD_LINE + 6;
+
+  const topBlock = PAGE_H - MARGIN - (logos.length ? LOGO_H + 8 : 0) - 26 - 22;
+  const pagesPerBand = bands.map((band) => {
+    const perPage = Math.max(1, Math.floor((topBlock - bandHeaderH(band) - MARGIN) / ROW_H) + 1);
+    return { perPage, pages: Math.max(1, Math.ceil(rows.length / perPage)) };
+  });
+  const totalPages = pagesPerBand.reduce((a, b) => a + b.pages, 0);
+
+  let pageNo = 0;
+  bands.forEach((band, b) => {
+    const { perPage, pages } = pagesPerBand[b];
+    const colX: number[] = [];
+    let x = MARGIN;
+    for (const w of band.widths) {
+      colX.push(x);
+      x += w;
     }
-  }
+    for (let p = 0; p < pages; p++) {
+      pageNo += 1;
+      const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+      let ty = PAGE_H - MARGIN;
+      if (logos.length) {
+        let lx = MARGIN;
+        for (const logo of logos) {
+          page.drawImage(logo.image, { x: lx, y: ty - logo.height, width: logo.width, height: logo.height });
+          lx += logo.width + 12;
+        }
+        ty -= LOGO_H + 8;
+      }
+      let headline = pdfSafe(opts.title);
+      while (headline.length > 1 && fontBold.widthOfTextAtSize(headline, 16) > PAGE_W - MARGIN * 2) headline = headline.slice(0, -1);
+      page.drawText(headline, { x: MARGIN, y: ty - 12, size: 16, font: fontBold });
+      ty -= 26;
+      const scoreNote =
+        scoreCount > 0 && bands.length > 1 && band.scoreTo
+          ? ` - rubrics ${band.scoreFrom}-${band.scoreTo} of ${scoreCount}`
+          : '';
+      page.drawText(
+        pdfSafe(`Compared ${comparedOn} - ${rows.length} ${rows.length === 1 ? 'player' : 'players'}${scoreNote} - page ${pageNo} of ${totalPages}`),
+        { x: MARGIN, y: ty - 4, size: 10, font },
+      );
+      ty -= 22;
+      // Column headings wrap onto up to four lines instead of being cut to a few letters.
+      const headH = bandHeaderH(band);
+      band.colIdx.forEach((ci, j) => {
+        const lines = headerLines(ci, band.widths[j]);
+        lines.forEach((line, li) =>
+          page.drawText(line, { x: colX[j], y: ty - HEAD_LINE * (li + 1) + 2, size: HEAD_SIZE, font: fontBold }),
+        );
+      });
+      let y = ty - headH;
+      for (let i = p * perPage; i < Math.min(rows.length, (p + 1) * perPage); i++) {
+        band.colIdx.forEach((ci, j) => {
+          const f = top[i][ci] ? fontBold : font;
+          page.drawText(fit(textRows[i][ci], band.widths[j] - GAP / 2, f), { x: colX[j], y, size: SIZE, font: f });
+        });
+        y -= ROW_H;
+      }
+    }
+  });
 
   return { fileName, content: await pdfDoc.saveAsBase64(), mimeType: 'application/pdf' };
 }
