@@ -9858,39 +9858,20 @@ export class SupabaseDataSource implements DataSource {
       return parts;
     };
 
-    // The other records of each selected player, found by name in the same account.
-    const nameRows = (
-      await mapPool(chunk(selectedIds, 50), 4, async (part) =>
-        unwrap(
-          await supabase.from('athletes').select('id, first_name, last_name, year_of_birth').in('id', part),
-        ) as Row[],
-      )
-    ).flat();
-    const quote = (v: string) => `"${v.replace(/[\\"]/g, '\\$&')}"`;
-    const pairs = new Map<string, [string, string]>();
-    for (const r of nameRows) {
-      const f = String(r.first_name ?? '').trim();
-      const l = String(r.last_name ?? '').trim();
-      if (f && l) pairs.set(`${f}|${l}`.toLowerCase(), [f, l]);
-    }
-    const siblingRows = (
-      await mapPool(chunk([...pairs.values()], 12), 4, async (part) => {
-        const clauses = part.flatMap(([f, l]) => [
-          `and(first_name.ilike.${quote(f)},last_name.ilike.${quote(l)})`,
-          `and(first_name.ilike.${quote(l)},last_name.ilike.${quote(f)})`,
-        ]);
-        return unwrap(
-          await supabase
-            .from('athletes')
-            .select('id, first_name, last_name, year_of_birth')
-            .eq('account_id', accountId)
-            .eq('archived', false)
-            .or(clauses.join(',')),
-        ) as Row[];
-      })
-    ).flat();
+    // The other records of each selected player, found by name in the same account. This
+    // only widens what a row shows, so if the lookup is unavailable or fails (an older
+    // database, a timeout) the comparison still loads, from the records that were picked.
     const records = new Map<string, Row>();
-    for (const r of [...nameRows, ...siblingRows]) records.set(r.id as string, r);
+    try {
+      const { data, error } = await supabase.rpc('list_same_name_athletes', {
+        p_account_id: accountId,
+        p_athlete_ids: selectedIds,
+      });
+      if (error) throw new Error(error.message);
+      for (const r of (data ?? []) as Row[]) records.set(r.id as string, r);
+    } catch (e) {
+      console.warn('Same-name lookup for Compare failed; comparing the selected records only.', e);
+    }
     const clusterOf = new Map<string, string[]>();
     for (const f of foldAthletes(
       [...records.values()].map((r) => ({
