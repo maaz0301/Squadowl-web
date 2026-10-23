@@ -25,9 +25,11 @@ import {
   addToSelection,
   buildComparison,
   candidateName,
+  foldCompareCandidates,
   formatCompareDate,
   isTopPerformer,
   nextSort,
+  sharedEvaluations,
   type CompareCandidate,
   type CompareFilters,
   type CompareSort,
@@ -96,7 +98,11 @@ export default function ComparePage() {
   const teamsQuery = useTeamsQuery();
   const yearsQuery = useCompareBirthYearsQuery();
   const candidatesQuery = useCompareCandidatesQuery(filters);
-  const pool = useMemo(() => candidatesQuery.data?.pages.flatMap((p) => p.rows) ?? [], [candidatesQuery.data]);
+  // One entry per person: the same child filed under several records shows once.
+  const pool = useMemo(
+    () => foldCompareCandidates(candidatesQuery.data?.pages.flatMap((p) => p.rows) ?? []),
+    [candidatesQuery.data],
+  );
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const toggle = useCallback((c: CompareCandidate) => {
     setKnown((prev) => (prev.has(c.id) ? prev : new Map(prev).set(c.id, c)));
@@ -108,12 +114,13 @@ export default function ComparePage() {
     try {
       // The filtered pool can be larger than what has scrolled in, so ask for the first 100.
       const page = await getDataSource().listCompareCandidates(filters, 0, MAX_COMPARE_PLAYERS);
+      const people = foldCompareCandidates(page.rows);
       setKnown((prev) => {
         const next = new Map(prev);
-        for (const c of page.rows) next.set(c.id, c);
+        for (const c of people) next.set(c.id, c);
         return next;
       });
-      setSelected((prev) => addToSelection(prev, page.rows.map((c) => c.id)));
+      setSelected((prev) => addToSelection(prev, people.map((c) => c.id)));
       if (page.next != null) {
         await alert('Selection limit', `Added the first ${MAX_COMPARE_PLAYERS} players. Narrow the filters to pick the rest.`);
       }
@@ -129,13 +136,23 @@ export default function ComparePage() {
 
   // Results
   const assessmentsQuery = useCompareAssessmentsQuery(tab === 'results' ? selected : []);
-  const candidates = useMemo(() => selected.map((id) => known.get(id)).filter((c): c is CompareCandidate => !!c), [selected, known]);
+  // Two copies of one child picked separately still make one row.
+  const candidates = useMemo(
+    () => foldCompareCandidates(selected.map((id) => known.get(id)).filter((c): c is CompareCandidate => !!c)),
+    [selected, known],
+  );
+  const rowIds = useMemo(() => candidates.map((c) => c.id), [candidates]);
+  const [forAll, setForAll] = useState<string | undefined>(undefined);
+  const shared = useMemo(
+    () => (assessmentsQuery.data ? sharedEvaluations(rowIds, assessmentsQuery.data) : []),
+    [assessmentsQuery.data, rowIds],
+  );
   const table = useMemo(
     () =>
       assessmentsQuery.data
-        ? buildComparison({ candidates, assessments: assessmentsQuery.data, selectedIds: selected, choices, sort })
+        ? buildComparison({ candidates, assessments: assessmentsQuery.data, selectedIds: rowIds, choices, evaluationForAll: forAll, sort })
         : null,
-    [assessmentsQuery.data, candidates, selected, choices, sort],
+    [assessmentsQuery.data, candidates, rowIds, choices, forAll, sort],
   );
 
   // Saved comparisons
@@ -241,6 +258,7 @@ export default function ComparePage() {
   const clearAll = () => {
     setSelected([]);
     setChoices({});
+    setForAll(undefined);
     setOpenSaved(null);
   };
 
@@ -370,6 +388,31 @@ export default function ComparePage() {
               <Button label="Export PDF" size="sm" loading={exporting === 'pdf'} onClick={() => exportAs('pdf')} />
               <Button label="Export Excel" size="sm" loading={exporting === 'xlsx'} onClick={() => exportAs('xlsx')} />
             </div>
+            {shared.length > 0 ? (
+              <label className="flex flex-wrap items-center gap-2 text-sm" style={{ color: colors.inkMuted }}>
+                <span className="font-bold uppercase" style={{ fontSize: 12 }}>
+                  Evaluation for everyone
+                </span>
+                <select
+                  aria-label="Evaluation shown for everyone"
+                  value={forAll ?? ''}
+                  onChange={(e) => {
+                    setForAll(e.target.value || undefined);
+                    setChoices({});
+                  }}
+                  className="rounded-md border bg-transparent px-2 py-1 text-sm"
+                  style={{ borderColor: colors.border, color: colors.ink }}
+                >
+                  <option value="">Automatic ({shared[0].label})</option>
+                  {shared.map((o) => (
+                    <option key={o.tryoutId} value={o.tryoutId}>
+                      {o.label}
+                      {o.date ? ` · ${formatCompareDate(o.date)}` : ''} · {o.players} players
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <ResultsTable table={table} sort={sort} onSort={(key) => setSort((s) => nextSort(s, key))} onChoose={(id, tryoutId) => setChoices((c) => ({ ...c, [id]: tryoutId }))} />
           </div>
         )

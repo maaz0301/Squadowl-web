@@ -7,6 +7,8 @@
  * both repos.
  */
 
+import { foldAthletes } from '@/data/duplicates';
+
 export const MAX_COMPARE_TEAMS = 15;
 export const MAX_COMPARE_PLAYERS = 100;
 
@@ -150,6 +152,53 @@ export function addToSelection(current: string[], toAdd: string[], limit = MAX_C
   return out;
 }
 
+/**
+ * One entry per person. Adding a player to several evaluations files a new athlete
+ * record each time, so the same child shows up as several candidates (one on the
+ * team, the others on no team). Records with the same name (either order) are one
+ * person unless both carry a birth year and the years differ, the same rule the
+ * Athlete Hub uses. The lead is the record that is on a team, so the row reads
+ * "Provincial Team" rather than "No team"; every team across the records is kept.
+ */
+export function foldCompareCandidates(candidates: CompareCandidate[]): (CompareCandidate & { alsoIds: string[] })[] {
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  const folded = foldAthletes(
+    candidates.map((c) => ({
+      id: c.id,
+      first: c.first,
+      last: c.last,
+      yearOfBirth: c.yearOfBirth ?? c.dateOfBirth?.slice(0, 4) ?? null,
+      avatarUrl: c.avatarUrl,
+    })),
+  );
+  return folded.map((f) => {
+    const members = [f.id, ...f.alsoIds].map((id) => byId.get(id)).filter((c): c is CompareCandidate => !!c);
+    const lead = members.find((m) => m.teams.length > 0) ?? members[0];
+    const teams = new Map<string, CompareTeamRef>();
+    for (const m of members) for (const t of m.teams) if (!teams.has(t.teamId)) teams.set(t.teamId, t);
+    return {
+      ...lead,
+      dateOfBirth: lead.dateOfBirth ?? members.find((m) => m.dateOfBirth)?.dateOfBirth,
+      yearOfBirth: lead.yearOfBirth ?? members.find((m) => m.yearOfBirth)?.yearOfBirth,
+      avatarUrl: lead.avatarUrl ?? members.find((m) => m.avatarUrl)?.avatarUrl,
+      teams: [...teams.values()],
+      alsoIds: members.filter((m) => m.id !== lead.id).map((m) => m.id),
+    };
+  });
+}
+
+/** The evaluations of every record of one person, one entry per evaluation, newest first. */
+export function mergeAssessments(lists: CompareAssessment[][]): CompareAssessment[] {
+  const byTryout = new Map<string, CompareAssessment>();
+  for (const list of lists) {
+    for (const a of list) {
+      const have = byTryout.get(a.tryoutId);
+      if (!have || a.evalCount > have.evalCount) byTryout.set(a.tryoutId, a);
+    }
+  }
+  return [...byTryout.values()].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+}
+
 // ---- The comparison -----------------------------------------------------
 
 export type CompareSortKey = 'rank' | 'name' | 'overall' | string;
@@ -194,14 +243,49 @@ export function defaultAssessment(list: CompareAssessment[] | undefined): Compar
   return list.find((a) => a.evalCount > 0) ?? list[0];
 }
 
+/** An evaluation that several of the selected players were scored in, for the "everyone" picker. */
+export interface CompareEvaluationOption {
+  tryoutId: string;
+  label: string;
+  date?: string;
+  /** How many of the selected players were scored in it. */
+  players: number;
+}
+
+/** Evaluations the selected players share, most-attended first. Only scored ones count. */
+export function sharedEvaluations(selectedIds: string[], assessments: CompareAssessments): CompareEvaluationOption[] {
+  const found = new Map<string, CompareEvaluationOption>();
+  for (const id of selectedIds) {
+    for (const a of assessments[id] ?? []) {
+      if (a.evalCount <= 0) continue;
+      const have = found.get(a.tryoutId);
+      if (have) have.players += 1;
+      else found.set(a.tryoutId, { tryoutId: a.tryoutId, label: a.tryoutName ?? 'Evaluation', date: a.date, players: 1 });
+    }
+  }
+  return [...found.values()]
+    .filter((o) => o.players >= 2)
+    .sort(
+      (a, b) =>
+        b.players - a.players || (b.date ?? '').localeCompare(a.date ?? '') || (a.label ?? '').localeCompare(b.label ?? ''),
+    );
+}
+
 export function buildComparison(input: {
   candidates: CompareCandidate[];
   assessments: CompareAssessments;
   selectedIds: string[];
-  /** Player id to tryout id, where the coach switched away from the newest evaluation. */
+  /** Player id to tryout id, where the coach switched away from the default evaluation. */
   choices?: Record<string, string>;
+  /**
+   * An evaluation to show for everyone who was scored in it, set by the coach. Left unset,
+   * the evaluation most of the players share is used, so a row is not on Long Jump while
+   * the next is on Vertical Jump just because each is newest for that player.
+   */
+  evaluationForAll?: string;
   sort?: CompareSort;
 }): CompareTable {
+  const forAll = input.evaluationForAll ?? sharedEvaluations(input.selectedIds, input.assessments)[0]?.tryoutId;
   const byId = new Map(input.candidates.map((c) => [c.id, c]));
   const rows: CompareRow[] = [];
   const columns = new Map<string, CompareColumn>();
@@ -211,7 +295,8 @@ export function buildComparison(input: {
     if (!c) continue;
     const evaluations = input.assessments[id] ?? [];
     const chosen = input.choices?.[id];
-    const assessment = (chosen && evaluations.find((a) => a.tryoutId === chosen)) || defaultAssessment(evaluations);
+    const shared = forAll ? evaluations.find((a) => a.tryoutId === forAll && a.evalCount > 0) : undefined;
+    const assessment = (chosen && evaluations.find((a) => a.tryoutId === chosen)) || shared || defaultAssessment(evaluations);
     const scored = !!assessment && assessment.evalCount > 0;
     const scores: Record<string, number | null> = {};
     if (assessment) {

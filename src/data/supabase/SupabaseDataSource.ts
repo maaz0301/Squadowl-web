@@ -1,5 +1,7 @@
 /// <reference types="node" />
 import { formatBenchmarkValue } from '@/data/benchmarks';
+import { foldAthletes } from '@/data/duplicates';
+import { mergeAssessments } from '@/data/compare';
 import { parseHeightCm } from '@/lib/height';
 import { getSupabase } from '@/lib/supabase';
 import { applyNewerNotAttempted } from '@/lib/notAttempted';
@@ -9837,18 +9839,73 @@ export class SupabaseDataSource implements DataSource {
    * Every evaluation each player was scored in, as one 1 to 5 score per rubric,
    * for up to 100 players. Reads in a few chunked, parallel batches (never one
    * request per player), so 100 players assemble in a handful of round trips.
+   *
+   * Adding a player to several evaluations files a new athlete record each time, so one
+   * child is often several records, each holding a different slice of their evaluations.
+   * Every selected player is therefore read together with the other records filed under
+   * the same name (same rule as foldAthletes), and the result under each selected id is
+   * all of that person's evaluations, one per evaluation.
    */
   async getCompareAssessments(athleteIds: string[]): Promise<import('@/data/compare').CompareAssessments> {
-    const { supabase } = await this.userCtx();
-    const ids = [...new Set(athleteIds)].slice(0, 100);
+    const { supabase, accountId } = await this.ctx();
+    const selectedIds = [...new Set(athleteIds)].slice(0, 100);
     const out: import('@/data/compare').CompareAssessments = {};
-    for (const id of ids) out[id] = [];
-    if (!ids.length) return out;
+    for (const id of selectedIds) out[id] = [];
+    if (!selectedIds.length) return out;
     const chunk = <T,>(list: T[], size: number): T[][] => {
       const parts: T[][] = [];
       for (let i = 0; i < list.length; i += size) parts.push(list.slice(i, i + size));
       return parts;
     };
+
+    // The other records of each selected player, found by name in the same account.
+    const nameRows = (
+      await mapPool(chunk(selectedIds, 50), 4, async (part) =>
+        unwrap(
+          await supabase.from('athletes').select('id, first_name, last_name, year_of_birth').in('id', part),
+        ) as Row[],
+      )
+    ).flat();
+    const quote = (v: string) => `"${v.replace(/[\\"]/g, '\\$&')}"`;
+    const pairs = new Map<string, [string, string]>();
+    for (const r of nameRows) {
+      const f = String(r.first_name ?? '').trim();
+      const l = String(r.last_name ?? '').trim();
+      if (f && l) pairs.set(`${f}|${l}`.toLowerCase(), [f, l]);
+    }
+    const siblingRows = (
+      await mapPool(chunk([...pairs.values()], 12), 4, async (part) => {
+        const clauses = part.flatMap(([f, l]) => [
+          `and(first_name.ilike.${quote(f)},last_name.ilike.${quote(l)})`,
+          `and(first_name.ilike.${quote(l)},last_name.ilike.${quote(f)})`,
+        ]);
+        return unwrap(
+          await supabase
+            .from('athletes')
+            .select('id, first_name, last_name, year_of_birth')
+            .eq('account_id', accountId)
+            .eq('archived', false)
+            .or(clauses.join(',')),
+        ) as Row[];
+      })
+    ).flat();
+    const records = new Map<string, Row>();
+    for (const r of [...nameRows, ...siblingRows]) records.set(r.id as string, r);
+    const clusterOf = new Map<string, string[]>();
+    for (const f of foldAthletes(
+      [...records.values()].map((r) => ({
+        id: r.id as string,
+        first: String(r.first_name ?? ''),
+        last: String(r.last_name ?? ''),
+        yearOfBirth: r.year_of_birth != null ? String(r.year_of_birth) : null,
+      })),
+    )) {
+      const members = [f.id, ...f.alsoIds];
+      for (const m of members) clusterOf.set(m, members);
+    }
+    const ids = [...new Set(selectedIds.flatMap((id) => clusterOf.get(id) ?? [id]))];
+    const byRecord: import('@/data/compare').CompareAssessments = {};
+    for (const id of ids) byRecord[id] = [];
 
     const participants = (
       await mapPool(chunk(ids, 50), 4, async (part) =>
@@ -9914,7 +9971,7 @@ export class SupabaseDataSource implements DataSource {
               : undefined,
         };
       }
-      out[p.athlete_id]?.push({
+      byRecord[p.athlete_id]?.push({
         tryoutId: tryout.id,
         tryoutName: tryout.name,
         date: tryout.tryout_date ?? (tryout.created_at ? String(tryout.created_at).slice(0, 10) : undefined),
@@ -9926,7 +9983,7 @@ export class SupabaseDataSource implements DataSource {
         columns,
       });
     }
-    for (const id of ids) out[id].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+    for (const id of selectedIds) out[id] = mergeAssessments((clusterOf.get(id) ?? [id]).map((m) => byRecord[m] ?? []));
     return out;
   }
 
